@@ -11,7 +11,7 @@ export const MOPSFIN_SERVER_INSTRUCTIONS = `
 
 數值解讀：綜合損益表與現金流量表是各季累計；quarterly 是 Mopsfin 的單季口徑，上市櫃 Q4 通常由全年累計減 Q3 累計，興櫃／公開發行 Q2 通常是前兩季累計、Q4 通常由全年累計減 Q2 累計；cumulative_yoy 是指定季度的累計同比，必須提供 yoy_quarter。產業統計是各季累計，產業趨勢同時涉及單季與累計口徑。比較不同公司或期間前，務必確認 unit、periods、basis、warnings 與 metric guidance。
 
-平均數：所選公司平均數是所選公司的簡單平均；產業平均數是依產業分類計算的上市與上櫃公司指標平均，不是市值加權，也不涵蓋所有市場別。
+平均數：公司指標的所選公司平均數是所選公司的簡單平均，產業平均數是依產業分類計算的上市與上櫃公司指標平均。金融機構指標可另外要求相應金控／銀行／票券業的產業平均，以及本次所選機構的簡單平均。所有平均數都由 Mopsfin 計算，不是市值加權；應依 series.label 分辨個別公司／機構與平均 series。
 
 更新與責任：Mopsfin 每日更新一次，可能較公開資訊觀測站最新申報落後約一日。本服務不是臺灣證券交易所官方 MCP，也不構成投資建議；重要判斷應回查公開資訊觀測站原始申報。
 
@@ -83,6 +83,16 @@ export const MOPSFIN_OFFICIAL_GUIDANCE = {
       name: "產業平均數",
       method:
         "依 Mopsfin 產業分類計算該產業上市與上櫃公司的指標平均；不代表興櫃、公開發行或所有公司的整體平均。",
+    },
+    {
+      name: "金融機構所選機構平均數",
+      method:
+        "對本次 institution_codes 選定的金融機構採簡單平均；Mopsfin 回應通常以「公司平均數」標示，不是市值加權。",
+    },
+    {
+      name: "金融業別產業平均數",
+      method:
+        "由 Mopsfin 依指標相應的金控、銀行或票券業母體計算；回應標籤可能是業別指標名稱，不一定直接包含「平均數」。",
     },
   ],
   interpretationNotes: [
@@ -491,8 +501,10 @@ export function industryWarnings(mode: "statistics" | "trend"): string[] {
 
 export function financialInstitutionWarnings(
   family: "fin" | "adequacy",
+  includeIndustryAverage = false,
+  includeInstitutionAverage = false,
 ): string[] {
-  return family === "adequacy"
+  const warnings = family === "adequacy"
     ? [
         "資本適足率僅適用相對應的金控、銀行或票券業，且通常只有 Q2、Q4 申報。",
         "部分公開發行機構依法不需申報；NO_DATA 或 null 不可解讀為 0。",
@@ -501,6 +513,18 @@ export function financialInstitutionWarnings(
         "金融業資產品質指標僅銀行業適用，資料來自財報附註「資產品質」。",
         "部分公開發行銀行依法不需申報；NO_DATA 或 null 不可解讀為 0。",
       ];
+
+  if (includeIndustryAverage) {
+    warnings.push(
+      "產業平均由 Mopsfin 依指標相應的金控、銀行或票券業母體計算，不是市值加權；series 標籤可能顯示業別指標名稱而不直接寫「平均數」。",
+    );
+  }
+  if (includeInstitutionAverage) {
+    warnings.push(
+      "所選機構平均是本次 institution_codes 所選金融機構的簡單平均，不是市值加權；上游 series 通常標示為「公司平均數」。",
+    );
+  }
+  return unique(warnings);
 }
 
 export function mergeWarnings(...groups: string[][]): string[] {

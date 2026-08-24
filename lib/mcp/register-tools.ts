@@ -328,7 +328,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢金融機構指標",
       description:
-        "查詢六項金融業資產品質或三項資本適足率。metric_code 必須取自 list_catalog 中 family=fin 或 adequacy，institution_codes 一次 1–10 家。資產品質指標只適用銀行業，資料來自財報附註「資產品質」；資本適足率依指標只適用金控、銀行或票券業，而且通常只有 Q2、Q4 申報。部分公開發行金融機構依法不需申報，因此 NO_DATA 或 null 不可視為 0。使用前應讀取 list_catalog 的公式、applicability 與本工具 warnings。",
+        "查詢六項金融業資產品質或三項資本適足率。metric_code 必須取自 list_catalog 中 family=fin 或 adequacy，institution_codes 一次 1–10 家。include_industry_average 可加入該指標相應金融業別的 Mopsfin 產業平均；include_institution_average 可加入本次所選機構的簡單平均，兩者都不是市值加權。資產品質指標只適用銀行業，資料來自財報附註「資產品質」；資本適足率依指標只適用金控、銀行或票券業，而且通常只有 Q2、Q4 申報。部分公開發行金融機構依法不需申報，因此 NO_DATA 或 null 不可視為 0。使用前應讀取 list_catalog 的公式、applicability 與本工具 warnings，並依 series.label 區分個別機構、所選機構平均與產業平均。",
       inputSchema: financialInstitutionInputSchema,
       outputSchema: financialInstitutionOutputSchema,
       annotations,
@@ -338,6 +338,8 @@ export function registerMopsfinTools(server: McpServer): void {
         const data = await mopsfinClient.getFinancialInstitutionMetric({
           metricCode: input.metric_code,
           institutionCodes: input.institution_codes,
+          includeIndustryAverage: input.include_industry_average,
+          includeInstitutionAverage: input.include_institution_average,
           range: {
             history: input.history,
             startPeriod: input.start_period,

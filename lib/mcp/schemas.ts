@@ -220,6 +220,18 @@ export const financialInstitutionInputSchema = z
       .min(1)
       .max(10)
       .describe("要比較的金融機構代號，1 至 10 家；需與指標適用的金控／銀行／票券業相符"),
+    include_industry_average: z
+      .boolean()
+      .default(false)
+      .describe(
+        "是否加入該指標相應金融業別的產業平均 series，例如銀行業資本適足性；不是市值加權，且平均母體由 Mopsfin 決定",
+      ),
+    include_institution_average: z
+      .boolean()
+      .default(false)
+      .describe(
+        "是否加入本次 institution_codes 所選金融機構的簡單平均 series；不是市值加權，只有一家時仍可能由上游回傳平均 series",
+      ),
     ...rangeShape,
   })
   .strict();
@@ -362,17 +374,20 @@ export const listCatalogOutputSchema = z
     ...sourceShape,
     query: z
       .object({
-        kind: z.enum([
-          "all",
-          "metrics",
-          "industries",
-          "financial_institutions",
-          "periods",
-        ]),
-        query: z.string().optional(),
-        limit: z.number().int(),
+        kind: z
+          .enum([
+            "all",
+            "metrics",
+            "industries",
+            "financial_institutions",
+            "periods",
+          ])
+          .describe("本次實際列出的目錄類型"),
+        query: z.string().optional().describe("本次實際套用的文字篩選"),
+        limit: z.number().int().describe("本次每種目錄套用的項目數上限"),
       })
-      .strict(),
+      .strict()
+      .describe("本次實際執行的目錄查詢條件"),
     discoveredAt: z.string().describe("本次即時目錄從 Mopsfin 首頁解析的時間"),
     counts: z
       .object({
@@ -381,7 +396,8 @@ export const listCatalogOutputSchema = z
         financialInstitutions: z.number().int().describe("篩選與 limit 前的金融機構總數"),
         periods: z.number().int().describe("首頁年度與季度組合出的期間總數"),
       })
-      .strict(),
+      .strict()
+      .describe("未套用 query 與 limit 前的即時目錄總數"),
     metrics: z.array(metricDefinitionSchema).describe("符合 kind/query/limit 的指標目錄及逐項 guidance"),
     industries: z.array(
       z
@@ -391,17 +407,19 @@ export const listCatalogOutputSchema = z
         })
         .strict(),
     ).describe("符合篩選的即時產業清單"),
-    financialInstitutions: z.array(
-      z
-        .object({
-          code: z.string().describe("金融機構工具使用的 institution_code"),
-          name: z.string().describe("金融機構名稱"),
-          sector: z
-            .enum(["holding", "bank", "bills", "unknown"])
-            .describe("holding=金控、bank=銀行、bills=票券；需與指標適用性相符"),
-        })
-        .strict(),
-    ),
+    financialInstitutions: z
+      .array(
+        z
+          .object({
+            code: z.string().describe("金融機構工具使用的 institution_code"),
+            name: z.string().describe("金融機構名稱"),
+            sector: z
+              .enum(["holding", "bank", "bills", "unknown"])
+              .describe("holding=金控、bank=銀行、bills=票券；需與指標適用性相符"),
+          })
+          .strict(),
+      )
+      .describe("符合篩選的即時金控、銀行與票券業機構清單"),
     periods: z.array(periodSchema).describe("首頁目前提供選擇的期別組合；不保證每家公司都有每一期"),
     officialGuidance: officialGuidanceSchema,
     ...warningShape,
@@ -529,6 +547,12 @@ export const financialInstitutionOutputSchema = z
         metricName: z.string().describe("金融指標中文名稱"),
         institutionCodes: z.array(z.string()).describe("實際查詢的金融機構代號"),
         institutions: z.array(z.string()).describe("代號解析後的金融機構名稱"),
+        includeIndustryAverage: z
+          .boolean()
+          .describe("本次是否要求 Mopsfin 加入相應金融業別的產業平均 series"),
+        includeInstitutionAverage: z
+          .boolean()
+          .describe("本次是否要求 Mopsfin 加入所選金融機構的簡單平均 series"),
         ...rangeOutputShape,
       })
       .strict()

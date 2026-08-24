@@ -110,4 +110,53 @@ describe("MopsfinClient", () => {
       }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   });
+
+  it("requests and explains financial-industry and selected-institution averages", async () => {
+    const fetchMock = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/") return response(catalogHtml);
+      if (parsed.pathname === "/compare/adequacy") {
+        const body = init?.body as URLSearchParams;
+        expect(body.get("compareItem")).toBe("BankCAR");
+        expect(body.getAll("finCompanyId")).toEqual(["0040000"]);
+        expect(body.get("bcodeAvg")).toBe("true");
+        expect(body.get("companyAvg")).toBe("true");
+        return response(
+          JSON.stringify({
+            ylabel: "%",
+            xaxisList: ["2025Q4"],
+            graphData: [
+              { label: "臺銀", data: [[0, 14.2]] },
+              { label: "公司平均數", data: [[0, 14.2]] },
+              { label: "銀行業資本適足性", data: [[0, 15.1]] },
+            ],
+          }),
+          "application/json",
+        );
+      }
+      throw new Error(`unexpected ${parsed.pathname}`);
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, { retryDelayMs: 0 }),
+    );
+
+    const result = await client.getFinancialInstitutionMetric({
+      metricCode: "BankCAR",
+      institutionCodes: ["0040000"],
+      includeIndustryAverage: true,
+      includeInstitutionAverage: true,
+      range: { history: "recent_12" },
+    });
+
+    expect(result.query).toMatchObject({
+      includeIndustryAverage: true,
+      includeInstitutionAverage: true,
+    });
+    expect(result.series.map((series) => series.label)).toEqual([
+      "臺銀",
+      "公司平均數",
+      "銀行業資本適足性",
+    ]);
+    expect(result.warnings.join(" ")).toContain("不是市值加權");
+  });
 });

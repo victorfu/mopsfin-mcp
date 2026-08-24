@@ -129,11 +129,20 @@ describe("MCP protocol integration", () => {
         metricName: "銀行業資本適足率",
         institutionCodes: ["0040000"],
         institutions: ["臺銀"],
+        includeIndustryAverage: true,
+        includeInstitutionAverage: true,
         history: "recent_12",
       },
       unit: "%",
       periods: ["2026Q1"],
-      series: [{ label: "臺銀", points: [{ period: "2026Q1", value: 14.2 }] }],
+      series: [
+        { label: "臺銀", points: [{ period: "2026Q1", value: 14.2 }] },
+        { label: "公司平均數", points: [{ period: "2026Q1", value: 14.2 }] },
+        {
+          label: "銀行業資本適足性",
+          points: [{ period: "2026Q1", value: 15.1 }],
+        },
+      ],
       warnings: [],
     });
 
@@ -184,6 +193,40 @@ describe("MCP protocol integration", () => {
         expect(property).toHaveProperty("description");
       }
     }
+    const financialTool = listed.tools.find(
+      (tool) => tool.name === "get_financial_institution_metric",
+    );
+    expect(
+      financialTool?.inputSchema.properties?.include_industry_average,
+    ).toMatchObject({
+      type: "boolean",
+      default: false,
+      description: expect.stringContaining("不是市值加權"),
+    });
+    expect(
+      financialTool?.inputSchema.properties?.include_institution_average,
+    ).toMatchObject({
+      type: "boolean",
+      default: false,
+      description: expect.stringContaining("簡單平均"),
+    });
+    const financialOutput = financialTool?.outputSchema as
+      | {
+          properties?: {
+            query?: {
+              properties?: Record<string, unknown>;
+            };
+          };
+        }
+      | undefined;
+    expect(
+      financialOutput?.properties?.query?.properties
+        ?.includeIndustryAverage,
+    ).toHaveProperty("description");
+    expect(
+      financialOutput?.properties?.query?.properties
+        ?.includeInstitutionAverage,
+    ).toHaveProperty("description");
 
     const calls = [
       ["find_companies", { query: "2330" }],
@@ -206,7 +249,12 @@ describe("MCP protocol integration", () => {
       ],
       [
         "get_financial_institution_metric",
-        { metric_code: "BankCAR", institution_codes: ["0040000"] },
+        {
+          metric_code: "BankCAR",
+          institution_codes: ["0040000"],
+          include_industry_average: true,
+          include_institution_average: true,
+        },
       ],
     ] as const;
 
@@ -232,6 +280,24 @@ describe("MCP protocol integration", () => {
         expect(structured.officialGuidance.updateCadence).toContain("每日更新一次");
         expect(structured.metrics[0].guidance.calculation).toContain("平均權益總額");
         expect(structured.metrics[0].guidance.applicability).toBeTruthy();
+      }
+      if (name === "get_financial_institution_metric") {
+        const structured = result.structuredContent as {
+          query: {
+            includeIndustryAverage: boolean;
+            includeInstitutionAverage: boolean;
+          };
+          series: Array<{ label: string }>;
+        };
+        expect(structured.query).toMatchObject({
+          includeIndustryAverage: true,
+          includeInstitutionAverage: true,
+        });
+        expect(structured.series.map((series) => series.label)).toEqual([
+          "臺銀",
+          "公司平均數",
+          "銀行業資本適足性",
+        ]);
       }
     }
 

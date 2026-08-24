@@ -53,9 +53,11 @@ describe("LLM-facing official guidance", () => {
     expect(MOPSFIN_OFFICIAL_GUIDANCE.interpretationNotes.join(" ")).toContain(
       "不可當成 0",
     );
-    expect(financialInstitutionWarnings("fin").join(" ")).toContain(
-      "僅銀行業適用",
-    );
+    const financialWarnings = financialInstitutionWarnings("fin", true, true);
+    expect(financialWarnings.join(" ")).toContain("僅銀行業適用");
+    expect(financialWarnings.join(" ")).toContain("不是市值加權");
+    expect(financialWarnings.join(" ")).toContain("公司平均數");
+    expect(MOPSFIN_OFFICIAL_GUIDANCE.averages).toHaveLength(4);
   });
 
   it("gives useful fallback guidance for report and note catalog entries", () => {

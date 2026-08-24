@@ -37,7 +37,7 @@ mopsfin.twse.com.tw
 | `get_financial_statement` | 資產負債表、綜合損益表、現金流量表 |
 | `get_financial_note` | 五類財報附註 |
 | `get_industry_data` | 產業統計與產業趨勢，支援營收／稅後純益 |
-| `get_financial_institution_metric` | 金融業資產品質與資本適足率 |
+| `get_financial_institution_metric` | 金融業資產品質與資本適足率，可加入產業平均及所選機構簡單平均 |
 
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
@@ -54,6 +54,8 @@ LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions �
 | `fin`, `adequacy` | `get_financial_institution_metric` |
 
 趨勢預設回最近 12 季，可用 `start_period`、`end_period` 或 `history: "all"`。大型 HTML 表格使用 `offset`、`limit` 分頁，預設 100 列、上限 500 列。期別格式為 `YYYYQn`。
+
+公司指標可用 `include_industry_average`、`include_company_average` 加入產業平均及所選公司簡單平均；金融機構指標可用 `include_industry_average`、`include_institution_average` 加入相應金融業別平均及所選機構簡單平均。這些平均數皆由 Mopsfin 計算，並非市值加權。
 
 回答資料問題時至少應保留 `unit`、實際 `periods`／`period`、查詢 `basis` 與 `warnings`。`null`、`NO_DATA` 或沒有某一季可能表示不適用、尚未申報或該市場本來不需申報，不能改寫成 0。
 

@@ -386,6 +386,8 @@ export class MopsfinClient {
   async getFinancialInstitutionMetric(options: {
     metricCode: string;
     institutionCodes: string[];
+    includeIndustryAverage: boolean;
+    includeInstitutionAverage: boolean;
     range: TrendRange;
   }) {
     if (options.institutionCodes.length === 0 || options.institutionCodes.length > 10) {
@@ -414,6 +416,8 @@ export class MopsfinClient {
     const response = await this.http.post(route, {
       ...defaultPostFields(metric),
       finCompanyId: institutions.map((institution) => institution.code),
+      bcodeAvg: options.includeIndustryAverage,
+      companyAvg: options.includeInstitutionAverage,
     });
     const trend = sliceTrend(normalizeTrendJson(parseJson(response.body)), options.range);
     this.assertTrendHasData(trend);
@@ -425,6 +429,8 @@ export class MopsfinClient {
         metricName: metric.name,
         institutionCodes: institutions.map((institution) => institution.code),
         institutions: institutions.map((institution) => institution.name),
+        includeIndustryAverage: options.includeIndustryAverage,
+        includeInstitutionAverage: options.includeInstitutionAverage,
         ...options.range,
       },
       unit: trend.unit || metric.unit,
@@ -434,6 +440,8 @@ export class MopsfinClient {
         this.trendWarnings(trend),
         financialInstitutionWarnings(
           metric.family === "adequacy" ? "adequacy" : "fin",
+          options.includeIndustryAverage,
+          options.includeInstitutionAverage,
         ),
       ),
     };

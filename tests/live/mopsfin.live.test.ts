@@ -108,15 +108,26 @@ liveDescribe("live Mopsfin contracts", () => {
     const first = await mopsfinClient.getFinancialInstitutionMetric({
       metricCode: assetQuality?.code as string,
       institutionCodes: [bank?.code as string],
+      includeIndustryAverage: false,
+      includeInstitutionAverage: false,
       range: { history: "recent_12" },
     });
     const second = await mopsfinClient.getFinancialInstitutionMetric({
       metricCode: bankAdequacy?.code as string,
       institutionCodes: [bank?.code as string],
+      includeIndustryAverage: true,
+      includeInstitutionAverage: true,
       range: { history: "recent_12" },
     });
 
     expect(first.series.length).toBeGreaterThan(0);
     expect(second.series.length).toBeGreaterThan(0);
+    expect(second.query).toMatchObject({
+      includeIndustryAverage: true,
+      includeInstitutionAverage: true,
+    });
+    expect(second.series.some((series) => /公司平均數/.test(series.label))).toBe(
+      true,
+    );
   }, 60_000);
 });
