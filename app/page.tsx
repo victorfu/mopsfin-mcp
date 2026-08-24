@@ -219,18 +219,18 @@ export default function Home() {
       </section>
 
       <section className="notice" aria-labelledby="notice-title">
+        <p className="sectionNumber">05</p>
         <div>
-          <p className="sectionNumber">05</p>
           <h2 id="notice-title">資料來源與注意事項</h2>
-        </div>
-        <div className="noticeContent">
-          <p>每次查詢皆直接讀取公開資訊觀測站「財務比較 E 點通」，本服務不另建財務資料庫。原站每日更新一次，因此可能與公司最新申報約有一日時間差。</p>
-          <p>上市櫃公司通常一年申報 4 次；興櫃與公開發行公司可能僅申報半年與年度，部分公司只需申報年度。查不到某季不一定代表連線失敗。</p>
-          <p>本服務不是臺灣證券交易所官方服務，僅供資訊查詢，不構成投資建議。重要決策前請回到原始申報資料查核。</p>
-          <div className="sourceLinks">
-            <a href="https://mopsfin.twse.com.tw/" target="_blank" rel="noreferrer">Mopsfin 原始資料 <span aria-hidden="true">↗</span></a>
-            <a href="https://mopsfin.twse.com.tw/terms" target="_blank" rel="noreferrer">官方使用說明 <span aria-hidden="true">↗</span></a>
-            <a href="/api/health">服務狀態 <span aria-hidden="true">→</span></a>
+          <div className="noticeContent">
+            <p>每次查詢皆直接讀取公開資訊觀測站「財務比較 E 點通」，本服務不另建財務資料庫。原站每日更新一次，因此可能與公司最新申報約有一日時間差。</p>
+            <p>上市櫃公司通常一年申報 4 次；興櫃與公開發行公司可能僅申報半年與年度，部分公司只需申報年度。查不到某季不一定代表連線失敗。</p>
+            <p>本服務不是臺灣證券交易所官方服務，僅供資訊查詢，不構成投資建議。重要決策前請回到原始申報資料查核。</p>
+            <div className="sourceLinks">
+              <a href="https://mopsfin.twse.com.tw/" target="_blank" rel="noreferrer">Mopsfin 原始資料 <span aria-hidden="true">↗</span></a>
+              <a href="https://mopsfin.twse.com.tw/terms" target="_blank" rel="noreferrer">官方使用說明 <span aria-hidden="true">↗</span></a>
+              <a href="/api/health">服務狀態 <span aria-hidden="true">→</span></a>
+            </div>
           </div>
         </div>
       </section>
