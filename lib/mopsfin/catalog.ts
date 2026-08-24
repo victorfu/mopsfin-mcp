@@ -1,0 +1,154 @@
+import { load } from "cheerio";
+
+import { CATALOG_TTL_MS } from "./constants";
+import { MopsfinError } from "./errors";
+import { MopsfinHttpClient } from "./http";
+import type {
+  Catalog,
+  EndpointFamily,
+  FinancialInstitutionDefinition,
+  IndustryDefinition,
+  MetricDefinition,
+} from "./types";
+
+function inferFamily(classes: string[]): EndpointFamily {
+  if (classes.includes("qaClass")) return "bcode";
+  if (classes.includes("capitalAdequacyClass")) return "adequacy";
+  if (classes.includes("compareFinClass")) return "fin";
+  if (
+    classes.includes("companyClass") &&
+    classes.includes("ysoClass")
+  ) {
+    return "report";
+  }
+  if (
+    classes.includes("companyClass") &&
+    !classes.includes("ystClass") &&
+    !classes.includes("ysoClass")
+  ) {
+    return "xb";
+  }
+  return "data";
+}
+
+export function parseCatalogHtml(html: string, now = new Date()): Catalog {
+  const $ = load(html);
+  const metrics: MetricDefinition[] = [];
+  const industries: IndustryDefinition[] = [];
+  const financialInstitutions: FinancialInstitutionDefinition[] = [];
+
+  $("a.compareClass[name]").each((_, element) => {
+    const anchor = $(element);
+    const code = anchor.attr("name")?.trim();
+    if (!code) return;
+
+    const classes = (anchor.attr("class") ?? "")
+      .split(/\s+/)
+      .filter(Boolean);
+    const category = anchor
+      .closest(".accordion-item")
+      .children(".accordion-title")
+      .first()
+      .text()
+      .replace(/\s+/g, " ")
+      .trim();
+
+    metrics.push({
+      code,
+      name: anchor.text().replace(/^●\s*/, "").replace(/\s+/g, " ").trim(),
+      unit: anchor.attr("label")?.trim() ?? "",
+      category,
+      family: inferFamily(classes),
+    });
+  });
+
+  $("input.bcodeClass[type='checkbox']").each((_, element) => {
+    const input = $(element);
+    const code = input.attr("value")?.trim();
+    if (!code) return;
+    const id = input.attr("id");
+    const name = (
+      input.closest("label").text() ||
+      (id ? $(`label[for='${id}']`).text() : "") ||
+      input.parent().text()
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+    if (name) industries.push({ code, name });
+  });
+
+  $("#setting-fin input[name='finCompanyId']").each((_, element) => {
+    const input = $(element);
+    const code = input.attr("value")?.trim();
+    if (!code) return;
+    const panel = input.closest(".tabs-panel").attr("id");
+    const sector: FinancialInstitutionDefinition["sector"] =
+      panel === "panel1"
+        ? "holding"
+        : panel === "panel2"
+          ? "bank"
+          : panel === "panel3"
+            ? "bills"
+            : "unknown";
+    const name = (input.closest("label").text() || input.parent().text())
+      .replace(/\s+/g, " ")
+      .trim();
+    if (name) financialInstitutions.push({ code, name, sector });
+  });
+
+  const years = $("#selectYear option")
+    .map((_, option) => Number($(option).attr("value")))
+    .get()
+    .filter(Number.isInteger);
+  const quarters = $("#selectSeason option")
+    .map((_, option) => Number($(option).attr("value")))
+    .get()
+    .filter((quarter) => Number.isInteger(quarter) && quarter >= 1 && quarter <= 4);
+
+  if (metrics.length === 0 || industries.length === 0) {
+    throw new MopsfinError(
+      "UPSTREAM_BAD_RESPONSE",
+      "無法從 Mopsfin 首頁解析資料目錄，網站結構可能已變更。",
+      { details: { metricCount: metrics.length, industryCount: industries.length } },
+    );
+  }
+
+  return {
+    metrics,
+    industries,
+    financialInstitutions,
+    years: [...new Set(years)].sort((a, b) => a - b),
+    quarters: [...new Set(quarters)].sort((a, b) => a - b),
+    discoveredAt: now.toISOString(),
+  };
+}
+
+export class CatalogService {
+  private cached?: { expiresAt: number; value: Catalog };
+  private pending?: Promise<Catalog>;
+
+  constructor(private readonly http: MopsfinHttpClient) {}
+
+  async getCatalog(force = false): Promise<Catalog> {
+    const now = Date.now();
+    if (!force && this.cached && this.cached.expiresAt > now) {
+      return this.cached.value;
+    }
+    if (!force && this.pending) {
+      return this.pending;
+    }
+
+    this.pending = this.http
+      .get("/")
+      .then(({ body }) => parseCatalogHtml(body))
+      .then((catalog) => {
+        this.cached = { value: catalog, expiresAt: Date.now() + CATALOG_TTL_MS };
+        return catalog;
+      })
+      .finally(() => {
+        this.pending = undefined;
+      });
+
+    return this.pending;
+  }
+}

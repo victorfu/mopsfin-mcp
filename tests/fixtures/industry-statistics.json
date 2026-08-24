@@ -1,0 +1,11 @@
+{
+  "ylabel": "新台幣仟元",
+  "year": 2026,
+  "season": 1,
+  "xaxisList": [[0, "半導體業"], [1, "水泥工業"]],
+  "graphData": [[0, 123456789], [1, -2500]],
+  "showNameList": [],
+  "checkedNameList": [],
+  "extraNameList": [],
+  "displayCompanyId": []
+}

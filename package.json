@@ -1,0 +1,41 @@
+{
+  "name": "mopsfin-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A read-only MCP server for Taiwan financial data from Mopsfin.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "type-check": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:client": "node scripts/test-client.mjs",
+    "test:live": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
+    "cheerio": "^1.1.2",
+    "mcp-handler": "^2.0.0",
+    "next": "^16.0.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^16.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "packageManager": "npm@11.16.0"
+}
