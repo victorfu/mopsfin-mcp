@@ -4,7 +4,9 @@ import {
 } from "@modelcontextprotocol/client";
 
 const endpoint = new URL(
-  process.argv[2] ?? process.env.MOPSFIN_MCP_URL ?? "http://localhost:3000/mcp",
+  process.argv[2] ??
+    process.env.MOPSFIN_MCP_URL ??
+    "http://localhost:3000/api/mcp",
 );
 const client = new Client({ name: "mopsfin-smoke-test", version: "1.0.0" });
 

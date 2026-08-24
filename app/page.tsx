@@ -16,7 +16,7 @@ export default function Home() {
         <h1>Mopsfin 台股 MCP Server</h1>
         <p className="lede">
           公開、唯讀、無資料庫的台灣公司財務資料介面。MCP endpoint：
-          <code>/mcp</code>
+          <code>/api/mcp</code>
         </p>
       </section>
 

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { registerMopsfinTools } from "@/lib/mcp/register-tools";
 import { mopsfinClient } from "@/lib/mopsfin/client";
+import { MOPSFIN_SERVER_INSTRUCTIONS } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
 
 const source = {
@@ -138,7 +139,10 @@ describe("MCP protocol integration", () => {
 
     const server = new McpServer(
       { name: "mopsfin-test", version: "0.1.0" },
-      { capabilities: { tools: {} } },
+      {
+        capabilities: { tools: {} },
+        instructions: MOPSFIN_SERVER_INSTRUCTIONS,
+      },
     );
     registerMopsfinTools(server);
     const client = new Client({ name: "vitest", version: "1.0.0" });
@@ -148,6 +152,9 @@ describe("MCP protocol integration", () => {
     await client.connect(clientTransport);
 
     expect(client.getServerVersion()?.name).toBe("mopsfin-test");
+    expect(client.getInstructions()).toContain("IFRSs");
+    expect(client.getInstructions()).toContain("NO_DATA");
+    expect(client.getInstructions()).toContain("cumulative_yoy");
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name)).toEqual([
       "find_companies",
@@ -167,6 +174,16 @@ describe("MCP protocol integration", () => {
           tool.annotations?.openWorldHint === false,
       ),
     ).toBe(true);
+    expect(
+      listed.tools.every((tool) => (tool.description?.length ?? 0) >= 180),
+    ).toBe(true);
+    for (const tool of listed.tools) {
+      const properties = tool.inputSchema.properties ?? {};
+      expect(Object.keys(properties).length).toBeGreaterThan(0);
+      for (const property of Object.values(properties)) {
+        expect(property).toHaveProperty("description");
+      }
+    }
 
     const calls = [
       ["find_companies", { query: "2330" }],
@@ -198,6 +215,24 @@ describe("MCP protocol integration", () => {
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toBeDefined();
       expect(result.content[0]).toMatchObject({ type: "text" });
+      if (name === "list_catalog") {
+        const structured = result.structuredContent as {
+          officialGuidance: {
+            filingCadence: unknown[];
+            updateCadence: string;
+          };
+          metrics: Array<{
+            guidance: {
+              calculation: string | null;
+              applicability: string;
+            };
+          }>;
+        };
+        expect(structured.officialGuidance.filingCadence).toHaveLength(3);
+        expect(structured.officialGuidance.updateCadence).toContain("每日更新一次");
+        expect(structured.metrics[0].guidance.calculation).toContain("平均權益總額");
+        expect(structured.metrics[0].guidance.applicability).toBeTruthy();
+      }
     }
 
     await client.close();

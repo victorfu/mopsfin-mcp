@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-公開、唯讀、無資料庫的台灣公司財務資料 MCP Server。服務以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/mcp` 暴露七個工具；每次財務查詢都直接存取 [公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)。
+公開、唯讀、無資料庫的台灣公司財務資料 MCP Server。服務以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露七個工具；每次財務查詢都直接存取 [公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)。
 
 這不是臺灣證券交易所官方 MCP Server，也不構成投資建議。
 
@@ -10,7 +10,7 @@
 LLM / MCP client
        │ Streamable HTTP
        ▼
-Next.js /mcp on Vercel
+Next.js /api/mcp on Vercel
        │ 固定 allowlist endpoint、form-urlencoded、無 cookie
        ▼
 mopsfin.twse.com.tw
@@ -41,6 +41,8 @@ mopsfin.twse.com.tw
 
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對七個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 會再帶入與本次查詢直接相關的申報頻率、單季／累計、缺值、平均數或分頁警示。
+
 不知道代號時先呼叫 `find_companies` 或 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
 | family | 使用工具 |
@@ -52,6 +54,8 @@ mopsfin.twse.com.tw
 | `fin`, `adequacy` | `get_financial_institution_metric` |
 
 趨勢預設回最近 12 季，可用 `start_period`、`end_period` 或 `history: "all"`。大型 HTML 表格使用 `offset`、`limit` 分頁，預設 100 列、上限 500 列。期別格式為 `YYYYQn`。
+
+回答資料問題時至少應保留 `unit`、實際 `periods`／`period`、查詢 `basis` 與 `warnings`。`null`、`NO_DATA` 或沒有某一季可能表示不適用、尚未申報或該市場本來不需申報，不能改寫成 0。
 
 ## 本機開發
 
@@ -65,7 +69,7 @@ npm run dev
 服務：
 
 - 首頁：`http://localhost:3000/`
-- MCP：`http://localhost:3000/mcp`
+- MCP：`http://localhost:3000/api/mcp`
 - 健康檢查：`http://localhost:3000/api/health`
 
 健康檢查不會呼叫 Mopsfin，避免監控流量變成對原站的固定查詢。
@@ -75,7 +79,7 @@ npm run dev
 ```bash
 npm run test:client
 # 或指定 Preview URL
-npm run test:client -- https://your-preview.vercel.app/mcp
+npm run test:client -- https://your-preview.vercel.app/api/mcp
 ```
 
 MCP client 設定範例：
@@ -84,7 +88,7 @@ MCP client 設定範例：
 {
   "mcpServers": {
     "mopsfin": {
-      "url": "https://your-domain.example/mcp"
+      "url": "https://your-domain.example/api/mcp"
     }
   }
 }
@@ -92,12 +96,12 @@ MCP client 設定範例：
 
 ### 在 ChatGPT 使用
 
-ChatGPT 需要可連線的公開 HTTPS `/mcp` URL；本機的 `localhost` 不能直接交給遠端 ChatGPT。
+ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` 不能直接交給遠端 ChatGPT。
 
-1. 先部署到 Vercel，取得 `https://<你的網域>/mcp`。
+1. 先部署到 Vercel，取得 `https://<你的網域>/api/mcp`。
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
-4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/mcp`。
+4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
 5. 建立後確認 ChatGPT 能辨識七個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
@@ -135,7 +139,7 @@ npm run test:live
 1. 將 repository 匯入 Vercel。
 2. Build command 使用 `npm run build`；Vercel 會依 `package-lock.json` 執行 npm 安裝。
 3. `package.json` 已固定 Node.js `24.x`；`vercel.json` 已啟用 Fluid Compute。
-4. 部署後以 `npm run test:client -- https://<preview>/mcp` 驗收。
+4. 部署後以 `npm run test:client -- https://<preview>/api/mcp` 驗收。
 5. 視公開流量在 Vercel Firewall 設定適當規則；應用本身不建立跨 instance rate-limit 資料庫。
 
 建議 Preview 驗收：台積電最近 12 季營收、台積電與聯發科 ROE、指定季資產負債表、半導體產業趨勢、臺銀資本適足率及台積電財報附註。

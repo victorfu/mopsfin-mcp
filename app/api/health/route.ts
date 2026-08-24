@@ -8,7 +8,7 @@ export function GET() {
       status: "ok",
       service: "mopsfin-taiwan-equities",
       version: "0.1.0",
-      mcpEndpoint: "/mcp",
+      mcpEndpoint: "/api/mcp",
       sourceUrl: "https://mopsfin.twse.com.tw/",
       checkedAt: new Date().toISOString(),
       note: "此端點只確認應用程式可回應，不會為健康檢查呼叫 Mopsfin。",

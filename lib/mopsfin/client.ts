@@ -4,6 +4,14 @@ import {
 } from "./constants";
 import { CatalogService } from "./catalog";
 import { MopsfinError, asMopsfinError } from "./errors";
+import {
+  companyMetricWarnings,
+  financialInstitutionWarnings,
+  industryWarnings,
+  mergeWarnings,
+  noteWarnings,
+  statementWarnings,
+} from "./guidance";
 import { parseHtmlTables, paginateTables } from "./html";
 import { MopsfinHttpClient } from "./http";
 import { normalizeTrendJson } from "./normalize";
@@ -232,7 +240,15 @@ export class MopsfinClient {
       unit: trend.unit || metric.unit,
       periods: trend.periods,
       series: trend.series,
-      warnings: this.trendWarnings(trend),
+      warnings: mergeWarnings(
+        this.trendWarnings(trend),
+        companyMetricWarnings(
+          metric,
+          options.basis,
+          options.includeIndustryAverage,
+          options.includeCompanyAverage,
+        ),
+      ),
     };
   }
 
@@ -254,6 +270,7 @@ export class MopsfinClient {
       requestedPeriod: options.period,
       page: options.page,
       query: { statement: options.statement },
+      warnings: statementWarnings(options.statement),
     });
   }
 
@@ -275,6 +292,7 @@ export class MopsfinClient {
       requestedPeriod: options.period,
       page: options.page,
       query: { note: options.note },
+      warnings: noteWarnings(),
     });
   }
 
@@ -332,7 +350,10 @@ export class MopsfinClient {
         unit: result.trend.unit || metric.unit,
         periods: result.trend.periods,
         series: result.trend.series,
-        warnings: this.trendWarnings(result.trend),
+        warnings: mergeWarnings(
+          this.trendWarnings(result.trend),
+          industryWarnings(options.mode),
+        ),
       };
     }
 
@@ -355,7 +376,10 @@ export class MopsfinClient {
       unit: trend.unit || metric.unit,
       periods: trend.periods,
       series: trend.series,
-      warnings: this.trendWarnings(trend),
+      warnings: mergeWarnings(
+        this.trendWarnings(trend),
+        industryWarnings(options.mode),
+      ),
     };
   }
 
@@ -406,7 +430,12 @@ export class MopsfinClient {
       unit: trend.unit || metric.unit,
       periods: trend.periods,
       series: trend.series,
-      warnings: this.trendWarnings(trend),
+      warnings: mergeWarnings(
+        this.trendWarnings(trend),
+        financialInstitutionWarnings(
+          metric.family === "adequacy" ? "adequacy" : "fin",
+        ),
+      ),
     };
   }
 
@@ -417,6 +446,7 @@ export class MopsfinClient {
     requestedPeriod: "latest" | string;
     page: TablePage;
     query: TQuery;
+    warnings: string[];
   }) {
     const companies = await this.resolveCompanies(options.companyCodes);
     const result = await this.probeHtmlReport({
@@ -438,9 +468,17 @@ export class MopsfinClient {
       reportNames: result.parsed.reportNames,
       tables: paginated.tables,
       pagination: paginated.pagination,
-      warnings: paginated.pagination.returnedRows === 0
-        ? ["此分頁沒有資料列；請檢查 offset。"]
-        : [],
+      warnings: mergeWarnings(
+        options.warnings,
+        paginated.pagination.returnedRows === 0
+          ? ["此分頁沒有資料列；請檢查 offset。"]
+          : [],
+        paginated.pagination.nextOffset !== null
+          ? [
+              `表格尚未讀完；如需完整內容，請以 offset=${paginated.pagination.nextOffset} 繼續查詢。`,
+            ]
+          : [],
+      ),
     };
   }
 
