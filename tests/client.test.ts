@@ -128,7 +128,13 @@ describe("MopsfinClient", () => {
             graphData: [
               { label: "臺銀", data: [[0, 14.2]] },
               { label: "公司平均數", data: [[0, 14.2]] },
-              { label: "銀行業資本適足性", data: [[0, 15.1]] },
+              {
+                label: "銀行業資本適足性",
+                data: [
+                  [0, 15.1],
+                  [null, 15.0622, "C"],
+                ],
+              },
             ],
           }),
           "application/json",
@@ -158,5 +164,10 @@ describe("MopsfinClient", () => {
       "銀行業資本適足性",
     ]);
     expect(result.warnings.join(" ")).toContain("不是市值加權");
+    expect(result.warnings.join(" ")).toContain("已忽略以避免錯置期別");
+    expect(
+      result.series.find((series) => series.label === "銀行業資本適足性")
+        ?.points,
+    ).toEqual([{ period: "2025Q4", value: 15.1 }]);
   });
 });

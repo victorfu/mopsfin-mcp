@@ -628,7 +628,7 @@ export class MopsfinClient {
   }
 
   private trendWarnings(trend: NormalizedTrend): string[] {
-    const warnings: string[] = [];
+    const warnings: string[] = [...trend.normalizationWarnings];
     if (trend.series.some((series) => series.points.some((point) => point.value === null))) {
       warnings.push("部分資料點缺值；可能是該公司不適用或尚未申報。 ");
     }

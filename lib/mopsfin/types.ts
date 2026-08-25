@@ -54,6 +54,7 @@ export interface TrendSeries {
 export interface NormalizedTrend {
   periods: string[];
   series: TrendSeries[];
+  normalizationWarnings: string[];
   unit: string;
   showNames: string[];
   checkedNames: string[];

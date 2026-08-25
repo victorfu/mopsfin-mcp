@@ -16,15 +16,30 @@ function asNumberOrNull(value: unknown): number | null {
 function normalizeLineSeries(
   graphData: unknown[],
   periods: string[],
-): TrendSeries[] {
-  return graphData.flatMap((item) => {
+): { series: TrendSeries[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const series = graphData.flatMap((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
     const record = item as Record<string, unknown>;
     if (!Array.isArray(record.data)) return [];
+    const label = String(record.label ?? "資料");
+    let droppedPointCount = 0;
     const points: TrendPoint[] = record.data.flatMap((rawPoint) => {
       if (!Array.isArray(rawPoint) || rawPoint.length < 2) return [];
-      const index = Number(rawPoint[0]);
-      if (!Number.isInteger(index) || !periods[index]) return [];
+      const rawIndex = rawPoint[0];
+      const index =
+        rawIndex === null || rawIndex === undefined || rawIndex === ""
+          ? Number.NaN
+          : Number(rawIndex);
+      if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= periods.length ||
+        !periods[index]
+      ) {
+        droppedPointCount += 1;
+        return [];
+      }
       return [
         {
           period: periods[index],
@@ -33,25 +48,53 @@ function normalizeLineSeries(
         },
       ];
     });
-    return [{ label: String(record.label ?? "資料"), points }];
+    if (droppedPointCount > 0) {
+      warnings.push(
+        `Mopsfin「${label}」有 ${droppedPointCount} 個資料點缺少有效期別索引；已忽略以避免錯置期別。`,
+      );
+    }
+    return [{ label, points }];
   });
+  return { series, warnings };
 }
 
 function normalizeBarSeries(
   graphData: unknown[],
   xaxis: unknown[],
-): { periods: string[]; series: TrendSeries[] } {
+): { periods: string[]; series: TrendSeries[]; warnings: string[] } {
   const labels = xaxis.map((item, index) => {
     if (Array.isArray(item) && item.length > 1) return String(item[1]);
     return String(index);
   });
+  let droppedPointCount = 0;
   const points: TrendPoint[] = graphData.flatMap((rawPoint) => {
     if (!Array.isArray(rawPoint) || rawPoint.length < 2) return [];
-    const index = Number(rawPoint[0]);
-    if (!Number.isInteger(index) || !labels[index]) return [];
+    const rawIndex = rawPoint[0];
+    const index =
+      rawIndex === null || rawIndex === undefined || rawIndex === ""
+        ? Number.NaN
+        : Number(rawIndex);
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= labels.length ||
+      !labels[index]
+    ) {
+      droppedPointCount += 1;
+      return [];
+    }
     return [{ period: labels[index], value: asNumberOrNull(rawPoint[1]) }];
   });
-  return { periods: labels, series: [{ label: "產業統計", points }] };
+  return {
+    periods: labels,
+    series: [{ label: "產業統計", points }],
+    warnings:
+      droppedPointCount > 0
+        ? [
+            `Mopsfin 產業統計有 ${droppedPointCount} 個資料點缺少有效期別索引；已忽略以避免錯置期別。`,
+          ]
+        : [],
+  };
 }
 
 export function normalizeTrendJson(raw: unknown): NormalizedTrend {
@@ -76,16 +119,16 @@ export function normalizeTrendJson(raw: unknown): NormalizedTrend {
     record.graphData.length > 0 && Array.isArray(record.graphData[0]);
   const normalized = isBar
     ? normalizeBarSeries(record.graphData, record.xaxisList)
-    : {
-        periods: record.xaxisList.map(String),
-        series: normalizeLineSeries(
-          record.graphData,
-          record.xaxisList.map(String),
-        ),
-      };
+    : (() => {
+        const periods = record.xaxisList.map(String);
+        const line = normalizeLineSeries(record.graphData, periods);
+        return { periods, series: line.series, warnings: line.warnings };
+      })();
 
   return {
-    ...normalized,
+    periods: normalized.periods,
+    series: normalized.series,
+    normalizationWarnings: normalized.warnings,
     unit: typeof record.ylabel === "string" ? record.ylabel : "",
     showNames: asStringArray(record.showNameList),
     checkedNames: asStringArray(record.checkedNameList),

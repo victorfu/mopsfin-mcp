@@ -56,4 +56,28 @@ describe("Mopsfin JSON normalization", () => {
     expect(() => normalizeTrendJson({ message: "查無資料" })).toThrow("查無資料");
     expect(() => normalizeTrendJson({ graphData: [] })).toThrow(/xaxisList/);
   });
+
+  it("drops null and out-of-range point indexes instead of mapping them to the first period", () => {
+    const trend = normalizeTrendJson({
+      ylabel: "%",
+      xaxisList: ["2013Q2", "2013Q4"],
+      graphData: [
+        {
+          label: "銀行業資本適足性",
+          data: [
+            [0, 11.9138, "C"],
+            [null, 15.0622, "C"],
+            [2, 99, "C"],
+          ],
+        },
+      ],
+    });
+
+    expect(trend.series[0].points).toEqual([
+      { period: "2013Q2", value: 11.9138, status: "C" },
+    ]);
+    expect(trend.normalizationWarnings).toEqual([
+      expect.stringContaining("2 個資料點缺少有效期別索引"),
+    ]);
+  });
 });

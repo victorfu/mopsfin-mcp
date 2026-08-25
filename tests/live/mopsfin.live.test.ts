@@ -267,7 +267,7 @@ liveDescribe("live Mopsfin contracts", () => {
     const bankResult = await mopsfinClient.getFinancialInstitutionMetric({
       metricCode: bankCapital?.code as string,
       institutionCodes: [taiwanBusinessBank?.code as string],
-      includeIndustryAverage: false,
+      includeIndustryAverage: true,
       includeInstitutionAverage: false,
       range: { history: "recent_12" },
     });
@@ -285,6 +285,14 @@ liveDescribe("live Mopsfin contracts", () => {
       bankResult.series
         .find((series) => series.label === "臺企銀")
         ?.points.some((point) => point.value !== null),
+    ).toBe(true);
+    expect(bankResult.warnings.join(" ")).toContain("已忽略以避免錯置期別");
+    expect(
+      bankResult.series.every(
+        (series) =>
+          new Set(series.points.map((point) => point.period)).size ===
+          series.points.length,
+      ),
     ).toBe(true);
   }, 60_000);
 });
