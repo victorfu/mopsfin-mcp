@@ -239,4 +239,52 @@ liveDescribe("live Mopsfin contracts", () => {
       true,
     );
   }, 60_000);
+
+  it("validates the README ROE and non-null bank-capital examples", async () => {
+    const catalog = await mopsfinClient.getCatalog();
+    const roe = catalog.metrics.find(
+      (metric) => metric.family === "data" && metric.name === "權益報酬率",
+    );
+    const bankCapital = catalog.metrics.find(
+      (metric) =>
+        metric.family === "adequacy" && metric.name === "銀行業資本適足率",
+    );
+    const taiwanBusinessBank = catalog.financialInstitutions.find(
+      (institution) => institution.name === "臺企銀",
+    );
+    expect(roe).toBeDefined();
+    expect(bankCapital).toBeDefined();
+    expect(taiwanBusinessBank).toBeDefined();
+
+    const roeResult = await mopsfinClient.getCompanyMetric({
+      metricCode: roe?.code as string,
+      companyCodes: ["2330", "2454"],
+      basis: "quarterly",
+      includeIndustryAverage: false,
+      includeCompanyAverage: false,
+      range: { history: "recent_12" },
+    });
+    const bankResult = await mopsfinClient.getFinancialInstitutionMetric({
+      metricCode: bankCapital?.code as string,
+      institutionCodes: [taiwanBusinessBank?.code as string],
+      includeIndustryAverage: false,
+      includeInstitutionAverage: false,
+      range: { history: "recent_12" },
+    });
+
+    expect(roeResult.series).toHaveLength(2);
+    expect(
+      roeResult.series.every((series) =>
+        series.points.some((point) => point.value !== null),
+      ),
+    ).toBe(true);
+    expect(bankResult.series).toContainEqual(
+      expect.objectContaining({ label: "臺企銀" }),
+    );
+    expect(
+      bankResult.series
+        .find((series) => series.label === "臺企銀")
+        ?.points.some((point) => point.value !== null),
+    ).toBe(true);
+  }, 60_000);
 });

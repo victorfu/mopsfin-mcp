@@ -148,15 +148,15 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 
 範例問題：
 
-- 「查台積電最近 12 季營業收入，整理成表格並指出趨勢。」
+- 「查台積電最近 12 季營業收入，整理成表格並標示期別、單位與 warnings。」
 - 「查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。」
-- 「列出最近完成交易日全部上市櫃公司的 OHLC。」
+- 「列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。」
 - 「列出全部上市公司代號，不要包含上櫃公司。」
 - 「列出全部上市與上櫃公司，排除金融業與 KY 公司。」
-- 「比較台積電和聯發科最近 8 季 ROE。」
-- 「列出台積電 2025Q4 資產負債表的主要項目。」
-- 「比較半導體業最近 12 季營收趨勢。」
-- 「查臺銀最近可用的銀行業資本適足率。」
+- 「比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。」
+- 「列出台積電 2025Q4 資產負債表的主要項目，標示單位與資料來源。」
+- 「比較半導體業最近 12 季營收趨勢，並說明單季／累計口徑與 warnings。」
+- 「查臺企銀最近可用的銀行業資本適足率；若最新期別為 null，往前找最近一個非 null，並標示期別、單位與 warnings。」
 
 ## 驗證
 
@@ -167,7 +167,7 @@ npm test
 npm run build
 ```
 
-一般測試只使用固定 fixtures，涵蓋 TWSE／TPEx 公司母體與 OHLC 正規化、上市／上櫃／全部路由、TDR 與金融／KY 排除、跨月游標、轉板、下市代號、無成交、日期／選擇完整性、暫時性 520、53 個 `compareItem` 分類、六個 endpoint family、timeout、429、5xx 及 MCP initialize/tools/list/tools/call。
+一般測試只使用固定 fixtures，涵蓋 README 已驗證範例清單、TWSE／TPEx 公司母體與 OHLC 正規化、上市／上櫃／全部路由、TDR 與金融／KY 排除、跨月游標、轉板、下市代號、無成交、日期／選擇完整性、暫時性 520、53 個 `compareItem` 分類、六個 endpoint family、timeout、429、5xx 及 MCP initialize/tools/list/tools/call。
 
 Live contract tests 預設跳過，只有明確設定時才會查詢原站：
 
@@ -185,7 +185,7 @@ npm run test:live
 4. 部署後以 `npm run test:client -- https://<preview>/api/mcp` 驗收。
 5. 視公開流量在 Vercel Firewall 設定適當規則；應用本身不建立跨 instance rate-limit 資料庫。
 
-建議 Preview 驗收：台積電最近 12 季營收、台積電與聯發科 ROE、指定季資產負債表、半導體產業趨勢、臺銀資本適足率及台積電財報附註。
+建議 Preview 驗收：台積電最近 12 季營收、台積電與聯發科 ROE、2026-08-24 上市櫃 OHLC、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
 
 ## 錯誤碼
 
