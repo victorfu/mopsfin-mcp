@@ -15,6 +15,7 @@ try {
   const { tools } = await client.listTools();
   const expected = [
     "find_companies",
+    "list_companies",
     "list_catalog",
     "get_company_metric",
     "get_financial_statement",

@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
+import { companyMasterClient } from "@/lib/company-master/client";
 import { MOPSFIN_SOURCE_URL } from "@/lib/mopsfin/constants";
 import { mopsfinClient } from "@/lib/mopsfin/client";
 import { asMopsfinError } from "@/lib/mopsfin/errors";
@@ -24,6 +25,8 @@ import {
   industryDataOutputSchema,
   listCatalogInputSchema,
   listCatalogOutputSchema,
+  listCompaniesInputSchema,
+  listCompaniesOutputSchema,
 } from "./schemas";
 
 const annotations = {
@@ -103,6 +106,35 @@ export function registerMopsfinTools(server: McpServer): void {
               : [],
         };
         return success(`找到 ${companies.length} 家符合「${query}」的公司。`, data);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "list_companies",
+    {
+      title: "列出上市櫃公司完整母體",
+      description:
+        "從 TWSE 上市公司基本資料與 TPEx 上櫃股票基本資料官方 OpenAPI 建立可供 Mopsfin 財務查詢使用的完整公司母體。market=listed 只回上市公司且包含創新板，market=otc 只回上櫃公司，market=all 同時取得兩個市場；任何必要來源失敗、同一來源出表日期不一致或筆數低於完整性基準時整體報錯，不會把部分結果當成完整市場。公司基本資料來源不包含 ETF、ETN、權證或特別股，上市來源中的 TDR 會固定排除，因為 Mopsfin 不涵蓋 TDR。include_financial 與 include_ky 可進一步排除金融保險業或 KY 公司。回傳不分頁的完整 companies、各市場出表日期、來源筆數、排除筆數、snapshotId 與 coverageComplete；公司存在於母體不保證每個 Mopsfin 指標或期別都有資料。",
+      inputSchema: listCompaniesInputSchema,
+      outputSchema: listCompaniesOutputSchema,
+      annotations,
+    },
+    async ({ market, include_financial, include_ky }) => {
+      try {
+        const data = await companyMasterClient.listCompanies({
+          market,
+          includeFinancial: include_financial,
+          includeKy: include_ky,
+        });
+        const marketLabel =
+          market === "listed" ? "上市" : market === "otc" ? "上櫃" : "上市及上櫃";
+        return success(
+          `${marketLabel}公司母體共 ${data.counts.returned} 家（上市 ${data.counts.listed}、上櫃 ${data.counts.otc}），coverageComplete=true。`,
+          data,
+        );
       } catch (error) {
         return failure(error);
       }

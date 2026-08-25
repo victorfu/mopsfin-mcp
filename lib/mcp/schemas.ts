@@ -68,6 +68,29 @@ export const findCompaniesInputSchema = z
   })
   .strict();
 
+export const listCompaniesInputSchema = z
+  .object({
+    market: z
+      .enum(["all", "listed", "otc"])
+      .default("all")
+      .describe(
+        "公司母體市場：all=上市與上櫃全部、listed=只取 TWSE 上市（含創新板）、otc=只取 TPEx 上櫃",
+      ),
+    include_financial: z
+      .boolean()
+      .default(true)
+      .describe(
+        "是否保留產業代號 17 的金融保險業公司；預設 true，設為 false 可建立排除金融業的掃描母體",
+      ),
+    include_ky: z
+      .boolean()
+      .default(true)
+      .describe(
+        "是否保留註冊地為 KY 或公司簡稱標示 -KY 的公司；預設 true，設為 false 可排除 KY 公司",
+      ),
+  })
+  .strict();
+
 export const listCatalogInputSchema = z
   .object({
     kind: z
@@ -299,6 +322,114 @@ export const findCompaniesOutputSchema = z
         })
         .strict(),
     ).describe("符合搜尋文字的公司候選清單"),
+    ...warningShape,
+  })
+  .strict();
+
+const masterCompanySchema = z
+  .object({
+    code: z
+      .string()
+      .describe("可直接交給 Mopsfin 公司財務工具使用的四碼公司代號"),
+    name: z.string().describe("TWSE／TPEx 官方公司全名"),
+    shortName: z.string().describe("TWSE／TPEx 官方公司簡稱"),
+    market: z
+      .enum(["listed", "otc"])
+      .describe("公司市場別：listed=上市、otc=上櫃"),
+    exchange: z.enum(["TWSE", "TPEx"]).describe("掛牌交易所或櫃買中心"),
+    industryCode: z
+      .string()
+      .describe("官方產業代號；可用 list_catalog 的 industries 對照即時產業名稱"),
+    listingDate: z
+      .string()
+      .describe("正規化為 YYYY-MM-DD 的上市或上櫃日期"),
+    domicileCode: z
+      .string()
+      .describe("公司註冊地國代碼；TW 表示本國公司，KY 表示開曼群島"),
+    isKy: z
+      .boolean()
+      .describe("是否為註冊地 KY 或官方簡稱標示 -KY 的公司"),
+    isFinancial: z
+      .boolean()
+      .describe("是否屬官方產業代號 17 的金融保險業"),
+  })
+  .strict();
+
+const companyMasterSourceSchema = z
+  .object({
+    market: z.enum(["listed", "otc"]).describe("此來源負責的上市或上櫃市場"),
+    exchange: z.enum(["TWSE", "TPEx"]).describe("此來源的官方市場機構"),
+    sourceName: z.string().describe("官方公司基本資料集名稱"),
+    sourceUrl: z.string().url().describe("本次使用的固定官方 OpenAPI URL"),
+    reportDate: z
+      .string()
+      .describe("上游資料列的出表日期，已由民國日期正規化為 YYYY-MM-DD"),
+    retrievedAt: z.string().describe("本服務實際取得這份來源快照的 ISO 8601 時間"),
+    rawCount: z.number().int().describe("此官方來源正規化與排除 TDR 前的原始筆數"),
+    excludedTdrCount: z
+      .number()
+      .int()
+      .describe("此來源為符合 Mopsfin 公司範圍而排除的 TDR 筆數"),
+    companyCount: z
+      .number()
+      .int()
+      .describe("此來源排除 TDR 後、套用使用者篩選前的公司數"),
+  })
+  .strict();
+
+export const listCompaniesOutputSchema = z
+  .object({
+    query: z
+      .object({
+        market: z
+          .enum(["all", "listed", "otc"])
+          .describe("本次實際取得的市場範圍"),
+        includeFinancial: z
+          .boolean()
+          .describe("本次是否保留金融保險業公司"),
+        includeKy: z.boolean().describe("本次是否保留 KY 公司"),
+      })
+      .strict()
+      .describe("正規化後實際套用的公司母體條件"),
+    generatedAt: z.string().describe("本服務組合並篩選回傳結果的 ISO 8601 時間"),
+    snapshotId: z
+      .string()
+      .describe("由市場別與各來源出表日期組成的可重現快照識別碼"),
+    coverageComplete: z
+      .literal(true)
+      .describe(
+        "true 表示要求的市場來源皆成功取得且通過日期與筆數完整性檢查；任一必要來源失敗時工具會整體報錯",
+      ),
+    sources: z
+      .array(companyMasterSourceSchema)
+      .describe("本次完整使用的 TWSE／TPEx 官方來源與各自日期、筆數"),
+    counts: z
+      .object({
+        raw: z.number().int().describe("官方來源合計原始筆數，可能包含隨後排除的 TDR"),
+        excludedTdr: z.number().int().describe("為符合 Mopsfin 範圍而排除的 TDR 總數"),
+        eligible: z
+          .number()
+          .int()
+          .describe("排除 TDR 後、套用金融與 KY 篩選前的上市櫃公司總數"),
+        excludedFinancial: z
+          .number()
+          .int()
+          .describe("因 include_financial=false 實際排除的金融保險業公司數"),
+        excludedKy: z
+          .number()
+          .int()
+          .describe("因 include_ky=false 在前述篩選後實際排除的 KY 公司數"),
+        listed: z.number().int().describe("最終回傳的上市公司數"),
+        otc: z.number().int().describe("最終回傳的上櫃公司數"),
+        returned: z.number().int().describe("companies 完整陣列的最終公司總數"),
+      })
+      .strict()
+      .describe("原始、排除與最終回傳筆數，可用來確認掃描母體完整性"),
+    companies: z
+      .array(masterCompanySchema)
+      .describe(
+        "符合市場與篩選條件的完整公司清單，不分頁；每個 code 可再依 get_company_metric 的每批 1–10 家限制分批查詢",
+      ),
     ...warningShape,
   })
   .strict();

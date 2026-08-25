@@ -9,9 +9,15 @@ export function GET() {
       service: "mopsfin-taiwan-equities",
       version: "0.1.0",
       mcpEndpoint: "/api/mcp",
-      sourceUrl: "https://mopsfin.twse.com.tw/",
+      sourceUrls: {
+        mopsfin: "https://mopsfin.twse.com.tw/",
+        twseCompanies:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+        tpexCompanies:
+          "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+      },
       checkedAt: new Date().toISOString(),
-      note: "此端點只確認應用程式可回應，不會為健康檢查呼叫 Mopsfin。",
+      note: "此端點只確認應用程式可回應，不會為健康檢查呼叫 Mopsfin、TWSE 或 TPEx。",
     },
     {
       headers: {

@@ -1,11 +1,49 @@
 import { describe, expect, it } from "vitest";
 
+import { companyMasterClient } from "@/lib/company-master/client";
 import { mopsfinClient } from "@/lib/mopsfin/client";
 
 const liveDescribe =
   process.env.RUN_LIVE_MOPSFIN_TESTS === "1" ? describe : describe.skip;
 
 liveDescribe("live Mopsfin contracts", () => {
+  it("lists complete official listed, OTC and combined company universes", async () => {
+    const listed = await companyMasterClient.listCompanies(
+      { market: "listed", includeFinancial: true, includeKy: true },
+      true,
+    );
+    const otc = await companyMasterClient.listCompanies(
+      { market: "otc", includeFinancial: true, includeKy: true },
+      true,
+    );
+    const all = await companyMasterClient.listCompanies({
+      market: "all",
+      includeFinancial: true,
+      includeKy: true,
+    });
+
+    expect(listed.coverageComplete).toBe(true);
+    expect(otc.coverageComplete).toBe(true);
+    expect(all.coverageComplete).toBe(true);
+    expect(listed.counts.returned).toBeGreaterThan(1_000);
+    expect(otc.counts.returned).toBeGreaterThan(800);
+    expect(all.counts.returned).toBe(
+      listed.counts.returned + otc.counts.returned,
+    );
+    expect(listed.companies).toContainEqual(
+      expect.objectContaining({ code: "2330", market: "listed" }),
+    );
+    expect(otc.companies).toContainEqual(
+      expect.objectContaining({ code: "3105", market: "otc" }),
+    );
+    expect(all.companies.every((company) => /^\d{4}$/.test(company.code))).toBe(
+      true,
+    );
+    expect(all.companies.some((company) => /-DR$/i.test(company.shortName))).toBe(
+      false,
+    );
+  }, 60_000);
+
   it("discovers the complete current catalog and company suggestions", async () => {
     const catalog = await mopsfinClient.getCatalog(true);
     const companies = await mopsfinClient.findCompanies("2330");

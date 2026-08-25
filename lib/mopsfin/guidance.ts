@@ -1,9 +1,11 @@
 import type { MetricDefinition } from "./types";
 
 export const MOPSFIN_SERVER_INSTRUCTIONS = `
-這是一個公開、唯讀、無資料庫的台灣公司財務資料 MCP Server，所有正式資料都在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」。
+這是一個公開、唯讀、無資料庫的台灣公司財務資料 MCP Server。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體清單直接取自 TWSE 與 TPEx 官方 OpenAPI。
 
-使用順序：不知道公司代號時先呼叫 find_companies；不知道 metric_code、industry_codes、institution_codes 或可用期別時先呼叫 list_catalog。list_catalog 也會回傳官方資料範圍、各指標公式、值的計算基礎與適用限制，回答前應讀取相關 guidance。
+使用順序：需要完整上市櫃母體或全市場掃描代號時先呼叫 list_companies；只知道特定公司名稱或代號時使用 find_companies。不要用 find_companies 枚舉全市場。list_companies 的 market=listed 只回上市（含創新板）、market=otc 只回上櫃、market=all 回兩者全部；include_financial=false 或 include_ky=false 可排除金融保險業或 KY 公司。不知道 metric_code、industry_codes、institution_codes 或可用期別時先呼叫 list_catalog。list_catalog 也會回傳官方資料範圍、各指標公式、值的計算基礎與適用限制，回答前應讀取相關 guidance。
+
+公司母體：list_companies 只列 TWSE／TPEx 公司普通股母體，不含 ETF、ETN、權證、特別股與 TDR。上市來源的 TDR 會固定排除，因為 Mopsfin 不涵蓋 TDR。market=all 只有在上市與上櫃兩個必要來源都成功，且各來源通過單一出表日期與最低筆數完整性檢查時才回傳 coverageComplete=true；應保留 sources、各自 reportDate、snapshotId、counts 與 warnings。公司列在母體只表示目前屬上市櫃公司，不保證每個 Mopsfin 指標或期別都有資料。
 
 資料範圍：涵蓋上市、上櫃、興櫃、公開發行公司，以及依法申報財報的未公開發行金融業；不含 TDR 發行公司。資料為採用 IFRSs 後的財務資訊，上市、上櫃、興櫃及金管會主管金融業通常自 2013 年起，公開發行公司通常自 2015 年起，特殊情況依實際採用 IFRSs 年度。
 
@@ -13,7 +15,7 @@ export const MOPSFIN_SERVER_INSTRUCTIONS = `
 
 平均數：公司指標的所選公司平均數是所選公司的簡單平均，產業平均數是依產業分類計算的上市與上櫃公司指標平均。金融機構指標可另外要求相應金控／銀行／票券業的產業平均，以及本次所選機構的簡單平均。所有平均數都由 Mopsfin 計算，不是市值加權；應依 series.label 分辨個別公司／機構與平均 series。
 
-更新與責任：Mopsfin 每日更新一次，可能較公開資訊觀測站最新申報落後約一日。本服務不是臺灣證券交易所官方 MCP，也不構成投資建議；重要判斷應回查公開資訊觀測站原始申報。
+更新與責任：Mopsfin 每日更新一次，可能較公開資訊觀測站最新申報落後約一日；公司母體應以 list_companies 回傳的各來源 reportDate 為準，不可把不同來源日期改寫成單一日期。本服務不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP，也不構成投資建議；重要判斷應回查官方公司名錄與公開資訊觀測站原始申報。
 
 錯誤語意：INVALID_ARGUMENT 表示參數不合法；NOT_FOUND 表示代號不在即時目錄；NO_DATA 表示該條件／期別無可用資料；UPSTREAM_TIMEOUT、UPSTREAM_RATE_LIMITED、UPSTREAM_BAD_RESPONSE 分別表示上游逾時、限流或格式／服務異常。
 `.trim();

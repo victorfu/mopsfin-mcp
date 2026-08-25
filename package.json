@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A read-only MCP server for Taiwan financial data from Mopsfin.",
+  "description": "A read-only MCP server for TWSE/TPEx company universes and Taiwan financial data from Mopsfin.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

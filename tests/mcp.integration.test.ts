@@ -2,6 +2,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { companyMasterClient } from "@/lib/company-master/client";
 import { registerMopsfinTools } from "@/lib/mcp/register-tools";
 import { mopsfinClient } from "@/lib/mopsfin/client";
 import { MOPSFIN_SERVER_INSTRUCTIONS } from "@/lib/mopsfin/guidance";
@@ -84,12 +85,85 @@ const table = {
   warnings: [],
 };
 
+const companyMaster = {
+  query: {
+    market: "all" as const,
+    includeFinancial: true,
+    includeKy: true,
+  },
+  generatedAt: "2026-08-25T00:00:00.000Z",
+  snapshotId: "listed-2026-08-24+otc-2026-08-24",
+  coverageComplete: true as const,
+  sources: [
+    {
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      sourceName: "臺灣證券交易所－上市公司基本資料",
+      sourceUrl: "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+      reportDate: "2026-08-24",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      rawCount: 2,
+      excludedTdrCount: 1,
+      companyCount: 1,
+    },
+    {
+      market: "otc" as const,
+      exchange: "TPEx" as const,
+      sourceName: "證券櫃檯買賣中心－上櫃股票基本資料",
+      sourceUrl: "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+      reportDate: "2026-08-24",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      rawCount: 1,
+      excludedTdrCount: 0,
+      companyCount: 1,
+    },
+  ],
+  counts: {
+    raw: 3,
+    excludedTdr: 1,
+    eligible: 2,
+    excludedFinancial: 0,
+    excludedKy: 0,
+    listed: 1,
+    otc: 1,
+    returned: 2,
+  },
+  companies: [
+    {
+      code: "2330",
+      name: "台灣積體電路製造股份有限公司",
+      shortName: "台積電",
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      industryCode: "24",
+      listingDate: "1994-09-05",
+      domicileCode: "TW",
+      isKy: false,
+      isFinancial: false,
+    },
+    {
+      code: "3105",
+      name: "穩懋半導體股份有限公司",
+      shortName: "穩懋",
+      market: "otc" as const,
+      exchange: "TPEx" as const,
+      industryCode: "24",
+      listingDate: "2002-01-02",
+      domicileCode: "TW",
+      isKy: false,
+      isFinancial: false,
+    },
+  ],
+  warnings: ["上市清單已排除 TDR。"],
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("MCP protocol integration", () => {
-  it("initializes, lists seven tools and calls each tool with structured output", async () => {
+  it("initializes, lists eight tools and calls each tool with structured output", async () => {
+    vi.spyOn(companyMasterClient, "listCompanies").mockResolvedValue(companyMaster);
     vi.spyOn(mopsfinClient, "findCompanies").mockResolvedValue([
       { code: "2330", name: "台積電", displayName: "2330 台積電" },
     ]);
@@ -164,9 +238,13 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("IFRSs");
     expect(client.getInstructions()).toContain("NO_DATA");
     expect(client.getInstructions()).toContain("cumulative_yoy");
+    expect(client.getInstructions()).toContain("list_companies");
+    expect(client.getInstructions()).toContain("TWSE");
+    expect(client.getInstructions()).toContain("TPEx");
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name)).toEqual([
       "find_companies",
+      "list_companies",
       "list_catalog",
       "get_company_metric",
       "get_financial_statement",
@@ -193,6 +271,29 @@ describe("MCP protocol integration", () => {
         expect(property).toHaveProperty("description");
       }
     }
+    const companyListTool = listed.tools.find(
+      (tool) => tool.name === "list_companies",
+    );
+    expect(companyListTool?.description).toContain("market=listed");
+    expect(companyListTool?.description).toContain("market=otc");
+    expect(companyListTool?.description).toContain("market=all");
+    expect(companyListTool?.description).toContain("coverageComplete");
+    expect(companyListTool?.description).toContain("TDR");
+    expect(companyListTool?.inputSchema.properties?.market).toMatchObject({
+      default: "all",
+      description: expect.stringContaining("listed=只取 TWSE 上市"),
+    });
+    const companyListOutput = companyListTool?.outputSchema as
+      | {
+          properties?: Record<string, { description?: string }>;
+        }
+      | undefined;
+    expect(companyListOutput?.properties?.coverageComplete?.description).toContain(
+      "必要來源失敗時工具會整體報錯",
+    );
+    expect(companyListOutput?.properties?.companies?.description).toContain(
+      "完整公司清單",
+    );
     const financialTool = listed.tools.find(
       (tool) => tool.name === "get_financial_institution_metric",
     );
@@ -230,6 +331,7 @@ describe("MCP protocol integration", () => {
 
     const calls = [
       ["find_companies", { query: "2330" }],
+      ["list_companies", { market: "all" }],
       ["list_catalog", { kind: "all" }],
       [
         "get_company_metric",
@@ -280,6 +382,19 @@ describe("MCP protocol integration", () => {
         expect(structured.officialGuidance.updateCadence).toContain("每日更新一次");
         expect(structured.metrics[0].guidance.calculation).toContain("平均權益總額");
         expect(structured.metrics[0].guidance.applicability).toBeTruthy();
+      }
+      if (name === "list_companies") {
+        const structured = result.structuredContent as {
+          coverageComplete: boolean;
+          counts: { listed: number; otc: number; returned: number };
+          companies: Array<{ code: string; market: string }>;
+        };
+        expect(structured.coverageComplete).toBe(true);
+        expect(structured.counts).toMatchObject({ listed: 1, otc: 1, returned: 2 });
+        expect(structured.companies.map((company) => company.code)).toEqual([
+          "2330",
+          "3105",
+        ]);
       }
       if (name === "get_financial_institution_metric") {
         const structured = result.structuredContent as {
