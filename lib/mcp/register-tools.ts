@@ -9,10 +9,13 @@ import {
   metricGuidance,
 } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
+import { priceClient } from "@/lib/price/client";
 
 import {
   companyMetricInputSchema,
   companyMetricOutputSchema,
+  dailyMarketOhlcInputSchema,
+  dailyMarketOhlcOutputSchema,
   financialInstitutionInputSchema,
   financialInstitutionOutputSchema,
   financialNoteInputSchema,
@@ -27,6 +30,8 @@ import {
   listCatalogOutputSchema,
   listCompaniesInputSchema,
   listCompaniesOutputSchema,
+  stockOhlcInputSchema,
+  stockOhlcOutputSchema,
 } from "./schemas";
 
 const annotations = {
@@ -106,6 +111,61 @@ export function registerMopsfinTools(server: McpServer): void {
               : [],
         };
         return success(`找到 ${companies.length} 家符合「${query}」的公司。`, data);
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_stock_ohlc",
+    {
+      title: "查詢單一台股歷史日線 OHLC",
+      description:
+        "查詢單一四碼公司股票在指定起訖日期內的官方原始日線開高低收。服務按月份讀取 TWSE／TPEx，支援目前上市櫃、已下市櫃與上櫃轉上市歷史；轉板月份會合併兩市場並拒絕同日衝突。TWSE 個股月資料自 2010-01-04、TPEx 自 1994-01-01 起支援。每頁最多處理 12 個日曆月份，coverage.coverageComplete=false 時必須以完全相同的 company_code、start_date、end_date 帶回 nextCursor 繼續，不能把單頁誤稱完整區間。價格固定為 TWD、Asia/Taipei、1d、raw_unadjusted，不含 adjusted close、成交量或成交金額；無成交列以 null OHLC 與 no_trade 表示，不補週末、休市或停牌日期。",
+      inputSchema: stockOhlcInputSchema,
+      outputSchema: stockOhlcOutputSchema,
+      annotations,
+    },
+    async ({ company_code, start_date, end_date, cursor }) => {
+      try {
+        const data = await priceClient.getStockOhlc({
+          companyCode: company_code,
+          startDate: start_date,
+          endDate: end_date,
+          ...(cursor ? { cursor } : {}),
+        });
+        return success(
+          `${company_code}：本頁 ${data.bars.length} 根日線，已覆蓋至 ${data.coverage.coveredThrough}，coverageComplete=${data.coverage.coverageComplete}。`,
+          data,
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_daily_market_ohlc",
+    {
+      title: "查詢單日台股市場 OHLC",
+      description:
+        "查詢最近完成交易日或指定 YYYY-MM-DD 的上市、上櫃或全部公司股票官方原始 OHLC。market=listed 只取 TWSE、market=otc 只取 TPEx、market=all 要求兩市場資料日期一致；latest 不是盤中即時價，指定假日或未來日期不會靜默退回前一日。company_codes 可選且最多 500 家，省略時回完整市場；指定代號部分缺失時以 selectionComplete=false、missingCompanyCodes 與 warnings 揭露，全部缺失則回 NO_DATA。latest 以目前 company master 過濾公司股票；歷史日期以四碼首碼非 0 且非 -DR 規則排除 ETF、ETN、TDR 等非公司商品。價格固定為 TWD、Asia/Taipei、1d、raw_unadjusted，不含 adjusted close、成交量或成交金額。",
+      inputSchema: dailyMarketOhlcInputSchema,
+      outputSchema: dailyMarketOhlcOutputSchema,
+      annotations,
+    },
+    async ({ market, date, company_codes }) => {
+      try {
+        const data = await priceClient.getDailyMarketOhlc({
+          market,
+          date,
+          ...(company_codes ? { companyCodes: company_codes } : {}),
+        });
+        return success(
+          `${data.dataDate} ${market} 市場：回傳 ${data.counts.returned} 家公司 OHLC，coverageComplete=true、selectionComplete=${data.selectionComplete}。`,
+          data,
+        );
       } catch (error) {
         return failure(error);
       }

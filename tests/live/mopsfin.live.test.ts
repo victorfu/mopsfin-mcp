@@ -2,11 +2,82 @@ import { describe, expect, it } from "vitest";
 
 import { companyMasterClient } from "@/lib/company-master/client";
 import { mopsfinClient } from "@/lib/mopsfin/client";
+import { priceClient } from "@/lib/price/client";
 
 const liveDescribe =
   process.env.RUN_LIVE_MOPSFIN_TESTS === "1" ? describe : describe.skip;
 
 liveDescribe("live Mopsfin contracts", () => {
+  it("merges live OTC-to-listed history and resolves a delisted code", async () => {
+    const transferred = await priceClient.getStockOhlc({
+      companyCode: "3416",
+      startDate: "2014-12-01",
+      endDate: "2015-01-31",
+    });
+    const delisted = await priceClient.getStockOhlc({
+      companyCode: "2475",
+      startDate: "2018-01-01",
+      endDate: "2018-01-31",
+    });
+
+    expect(transferred.coverage.coverageComplete).toBe(true);
+    expect(new Set(transferred.bars.map((bar) => bar.market))).toEqual(
+      new Set(["listed", "otc"]),
+    );
+    expect(transferred.bars.some((bar) => bar.date === "2015-01-22")).toBe(true);
+    expect(transferred.bars.some((bar) => bar.date === "2015-01-23")).toBe(true);
+    expect(delisted.bars.length).toBeGreaterThan(0);
+    expect(delisted.bars.every((bar) => bar.market === "listed")).toBe(true);
+  }, 60_000);
+
+  it("continues a live 13-month stock range through the time cursor", async () => {
+    const query = {
+      companyCode: "2330",
+      startDate: "2025-08-01",
+      endDate: "2026-08-25",
+    };
+    const first = await priceClient.getStockOhlc(query);
+    expect(first.coverage.coverageComplete).toBe(false);
+    expect(first.coverage.nextCursor).toBeTruthy();
+    expect(first.coverage.coveredThrough).toBe("2026-07-31");
+
+    const second = await priceClient.getStockOhlc({
+      ...query,
+      cursor: first.coverage.nextCursor as string,
+    });
+    expect(second.coverage).toMatchObject({
+      requestedStart: query.startDate,
+      requestedEnd: query.endDate,
+      coveredThrough: query.endDate,
+      coverageComplete: true,
+      nextCursor: null,
+    });
+    expect(first.bars.length).toBeGreaterThan(0);
+    expect(second.bars.length).toBeGreaterThan(0);
+    const firstLast = first.bars.at(-1);
+    const secondFirst = second.bars.at(0);
+    expect(firstLast).toBeDefined();
+    expect(secondFirst).toBeDefined();
+    expect((firstLast?.date ?? "") < (secondFirst?.date ?? "")).toBe(true);
+  }, 60_000);
+
+  it("queries an exact live all-market OHLC date with complete selection", async () => {
+    const result = await priceClient.getDailyMarketOhlc({
+      market: "all",
+      date: "2026-08-24",
+      companyCodes: ["2330", "3105"],
+    });
+
+    expect(result.coverageComplete).toBe(true);
+    expect(result.selectionComplete).toBe(true);
+    expect(result.dataDate).toBe("2026-08-24");
+    expect(result.bars.map((bar) => [bar.code, bar.market])).toEqual([
+      ["2330", "listed"],
+      ["3105", "otc"],
+    ]);
+    expect(result.bars.every((bar) => bar.close !== null)).toBe(true);
+  }, 60_000);
+
   it("lists complete official listed, OTC and combined company universes", async () => {
     const listed = await companyMasterClient.listCompanies(
       { market: "listed", includeFinancial: true, includeKy: true },

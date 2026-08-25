@@ -91,6 +91,77 @@ export const listCompaniesInputSchema = z
   })
   .strict();
 
+const calendarDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "日期必須是 YYYY-MM-DD")
+  .describe("西元日曆日期，格式 YYYY-MM-DD；實際交易日仍由官方行情決定");
+
+export const stockOhlcInputSchema = z
+  .object({
+    company_code: z
+      .string()
+      .regex(/^\d{4}$/)
+      .describe(
+        "四碼公司股票代號；可查目前上市櫃或已下市櫃代號，服務會依日期探測 TWSE／TPEx 並合併轉板歷史",
+      ),
+    start_date: calendarDateSchema.describe(
+      "查詢起始日期（含）；TWSE 個股月資料自 2010-01-04、TPEx 自 1994-01-01 起支援",
+    ),
+    end_date: calendarDateSchema.describe(
+      "查詢結束日期（含），不得早於 start_date 或晚於台北今日日期",
+    ),
+    cursor: z
+      .string()
+      .max(1000)
+      .optional()
+      .describe(
+        "上一頁回傳的 scope-bound 不透明時間游標；續查時 company_code、start_date、end_date 必須完全相同",
+      ),
+  })
+  .strict();
+
+export const dailyMarketOhlcInputSchema = z
+  .object({
+    market: z
+      .enum(["all", "listed", "otc"])
+      .default("all")
+      .describe(
+        "行情市場：all=上市與上櫃、listed=只取 TWSE 上市、otc=只取 TPEx 上櫃",
+      ),
+    date: z
+      .union([z.literal("latest"), calendarDateSchema])
+      .default("latest")
+      .describe(
+        "latest=最近完成交易日而非盤中即時價；也可指定 YYYY-MM-DD，假日不會退回前一交易日",
+      ),
+    company_codes: z
+      .array(
+        z
+          .string()
+          .regex(/^\d{4}$/)
+          .describe("要從指定市場日線篩選的四碼公司股票代號"),
+      )
+      .min(1)
+      .max(500)
+      .optional()
+      .describe(
+        "可選公司代號清單，最多 500 家；省略時回傳指定日期與市場的完整公司股票 OHLC",
+      ),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (
+      value.company_codes &&
+      new Set(value.company_codes).size !== value.company_codes.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["company_codes"],
+        message: "company_codes 不得包含重複代號",
+      });
+    }
+  });
+
 export const listCatalogInputSchema = z
   .object({
     kind: z
@@ -430,6 +501,146 @@ export const listCompaniesOutputSchema = z
       .describe(
         "符合市場與篩選條件的完整公司清單，不分頁；每個 code 可再依 get_company_metric 的每批 1–10 家限制分批查詢",
       ),
+    ...warningShape,
+  })
+  .strict();
+
+const ohlcBarSchema = z
+  .object({
+    date: calendarDateSchema.describe("此根官方日線代表的實際交易日期"),
+    open: z
+      .number()
+      .nullable()
+      .describe("原始未還原權值開盤價；null 表示無成交或官方缺值"),
+    high: z
+      .number()
+      .nullable()
+      .describe("原始未還原權值最高價；null 表示無成交或官方缺值"),
+    low: z
+      .number()
+      .nullable()
+      .describe("原始未還原權值最低價；null 表示無成交或官方缺值"),
+    close: z
+      .number()
+      .nullable()
+      .describe("原始未還原權值收盤價；null 表示無成交或官方缺值"),
+    market: z
+      .enum(["listed", "otc"])
+      .describe("此根日線實際來自 TWSE 上市或 TPEx 上櫃市場"),
+    status: z
+      .enum(["traded", "no_trade"])
+      .describe("traded=有有效 OHLC，no_trade=官方列出日期但沒有成交價格"),
+  })
+  .strict();
+
+const priceSourceSchema = z
+  .object({
+    market: z.enum(["listed", "otc"]).describe("此官方來源負責的市場"),
+    sourceName: z.string().describe("官方 OHLC 資料集或查詢頁名稱"),
+    sourceUrl: z.string().url().describe("本次使用的固定 TWSE／TPEx 官方 URL"),
+    retrievedAt: z.string().describe("本服務實際取得這份官方回應的 ISO 8601 時間"),
+    dataDate: calendarDateSchema
+      .optional()
+      .describe("單日市場來源實際回傳並核對成功的資料日期"),
+  })
+  .strict();
+
+const priceBasisShape = {
+  currency: z.literal("TWD").describe("所有 OHLC 價格的幣別為新台幣"),
+  timezone: z.literal("Asia/Taipei").describe("日期與 latest 判斷使用台北時區"),
+  interval: z.literal("1d").describe("每根 bar 是一個官方交易日"),
+  priceBasis: z
+    .literal("raw_unadjusted")
+    .describe("官方原始未還原權值價格；不等於 adjusted close"),
+};
+
+export const stockOhlcOutputSchema = z
+  .object({
+    query: z
+      .object({
+        companyCode: z.string().describe("本次查詢的四碼股票代號"),
+        startDate: calendarDateSchema.describe("完整 requested range 起始日（含）"),
+        endDate: calendarDateSchema.describe("完整 requested range 結束日（含）"),
+        cursor: z.string().optional().describe("本頁輸入時使用的續查游標"),
+      })
+      .strict()
+      .describe("正規化後實際執行的個股 OHLC 查詢"),
+    companyCode: z.string().describe("本次價格序列的股票代號"),
+    observedNames: z
+      .array(z.string())
+      .describe("目前公司母體與歷史官方回應中觀察到的所有公司簡稱"),
+    ...priceBasisShape,
+    bars: z
+      .array(ohlcBarSchema)
+      .describe("本頁日期範圍內按日期升冪排列的官方 OHLC；不補週末或休市日"),
+    coverage: z
+      .object({
+        requestedStart: calendarDateSchema.describe("使用者要求的完整起始日期"),
+        requestedEnd: calendarDateSchema.describe("使用者要求的完整結束日期"),
+        coveredThrough: calendarDateSchema.describe("本頁已完成探測到的日期上界"),
+        coverageComplete: z
+          .boolean()
+          .describe("是否已完整處理 requested range；false 時不可宣稱全區間完整"),
+        nextCursor: z
+          .string()
+          .nullable()
+          .describe("下一頁應原樣帶回的 scope-bound 游標；null 表示完整處理完畢"),
+      })
+      .strict()
+      .describe("跨頁時間覆蓋狀態；每頁最多處理 12 個日曆月份"),
+    sources: z.array(priceSourceSchema).describe("本頁實際使用的官方市場來源"),
+    ...warningShape,
+  })
+  .strict();
+
+export const dailyMarketOhlcOutputSchema = z
+  .object({
+    query: z
+      .object({
+        market: z.enum(["all", "listed", "otc"]).describe("本次市場範圍"),
+        date: z
+          .union([z.literal("latest"), calendarDateSchema])
+          .describe("本次 latest 或指定日期條件"),
+        companyCodes: z
+          .array(z.string())
+          .optional()
+          .describe("本次實際套用的可選公司代號篩選"),
+      })
+      .strict()
+      .describe("正規化後實際執行的單日市場 OHLC 查詢"),
+    dataDate: calendarDateSchema.describe("所有回傳 bars 共用且已核對的實際交易日"),
+    ...priceBasisShape,
+    classificationMethod: z
+      .enum(["current_master", "historical_code_rule"])
+      .describe(
+        "current_master=latest 以目前公司母體辨識；historical_code_rule=歷史日依四碼首碼非 0 且非 -DR 規則辨識",
+      ),
+    coverageComplete: z
+      .literal(true)
+      .describe("要求的市場來源都成功且資料日期一致；否則工具整體報錯"),
+    selectionComplete: z
+      .boolean()
+      .describe("指定 company_codes 是否全數出現在該市場交易日"),
+    missingCompanyCodes: z
+      .array(z.string())
+      .describe("指定但未出現在該市場交易日的公司代號"),
+    counts: z
+      .object({
+        listed: z.number().int().describe("最終回傳的上市公司 bars 數"),
+        otc: z.number().int().describe("最終回傳的上櫃公司 bars 數"),
+        returned: z.number().int().describe("最終完整 bars 陣列總數"),
+      })
+      .strict()
+      .describe("依市場拆分的回傳筆數"),
+    bars: z
+      .array(
+        ohlcBarSchema.extend({
+          code: z.string().describe("此根市場日線的四碼公司股票代號"),
+          name: z.string().describe("該交易日官方行情顯示的證券簡稱"),
+        }),
+      )
+      .describe("指定交易日的完整或經 company_codes 篩選後的公司 OHLC"),
+    sources: z.array(priceSourceSchema).describe("本次實際使用且日期已核對的官方來源"),
     ...warningShape,
   })
   .strict();

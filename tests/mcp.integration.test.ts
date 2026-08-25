@@ -7,6 +7,7 @@ import { registerMopsfinTools } from "@/lib/mcp/register-tools";
 import { mopsfinClient } from "@/lib/mopsfin/client";
 import { MOPSFIN_SERVER_INSTRUCTIONS } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
+import { priceClient } from "@/lib/price/client";
 
 const source = {
   sourceName: "公開資訊觀測站－財務比較 E 點通",
@@ -157,13 +158,167 @@ const companyMaster = {
   warnings: ["上市清單已排除 TDR。"],
 };
 
+const stockOhlc = {
+  query: {
+    companyCode: "2330",
+    startDate: "2026-01-01",
+    endDate: "2026-01-31",
+  },
+  companyCode: "2330",
+  observedNames: ["台積電"],
+  currency: "TWD" as const,
+  timezone: "Asia/Taipei" as const,
+  interval: "1d" as const,
+  priceBasis: "raw_unadjusted" as const,
+  bars: [
+    {
+      date: "2026-01-02",
+      open: 1555,
+      high: 1585,
+      low: 1545,
+      close: 1585,
+      market: "listed" as const,
+      status: "traded" as const,
+    },
+  ],
+  coverage: {
+    requestedStart: "2026-01-01",
+    requestedEnd: "2026-01-31",
+    coveredThrough: "2026-01-31",
+    coverageComplete: true,
+    nextCursor: null,
+  },
+  sources: [
+    {
+      market: "listed" as const,
+      sourceName: "臺灣證券交易所－個股日成交資訊",
+      sourceUrl:
+        "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260101&stockNo=2330&response=json",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+    },
+  ],
+  warnings: [],
+};
+
+const dailyMarketOhlc = {
+  query: { market: "all" as const, date: "2026-08-24" },
+  dataDate: "2026-08-24",
+  currency: "TWD" as const,
+  timezone: "Asia/Taipei" as const,
+  interval: "1d" as const,
+  priceBasis: "raw_unadjusted" as const,
+  classificationMethod: "historical_code_rule" as const,
+  coverageComplete: true as const,
+  selectionComplete: true,
+  missingCompanyCodes: [],
+  counts: { listed: 1, otc: 1, returned: 2 },
+  bars: [
+    {
+      code: "2330",
+      name: "台積電",
+      date: "2026-08-24",
+      open: 2410,
+      high: 2410,
+      low: 2375,
+      close: 2375,
+      market: "listed" as const,
+      status: "traded" as const,
+    },
+    {
+      code: "3105",
+      name: "穩懋",
+      date: "2026-08-24",
+      open: 370.5,
+      high: 372.5,
+      low: 355,
+      close: 355,
+      market: "otc" as const,
+      status: "traded" as const,
+    },
+  ],
+  sources: [
+    {
+      market: "listed" as const,
+      sourceName: "臺灣證券交易所－每日收盤行情",
+      sourceUrl:
+        "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20260824&type=ALLBUT0999&response=json",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      dataDate: "2026-08-24",
+    },
+    {
+      market: "otc" as const,
+      sourceName: "證券櫃檯買賣中心－上櫃股票行情",
+      sourceUrl:
+        "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026%2F08%2F24&response=json",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      dataDate: "2026-08-24",
+    },
+  ],
+  warnings: [],
+};
+
+interface JsonSchemaNode {
+  description?: string;
+  properties?: Record<string, JsonSchemaNode>;
+  items?: JsonSchemaNode;
+  anyOf?: JsonSchemaNode[];
+  oneOf?: JsonSchemaNode[];
+  allOf?: JsonSchemaNode[];
+}
+
+function missingPropertyDescriptions(
+  schema: JsonSchemaNode | undefined,
+  path: string,
+): string[] {
+  if (!schema) return [`${path}: schema missing`];
+  const missing: string[] = [];
+  for (const [name, property] of Object.entries(schema.properties ?? {})) {
+    const propertyPath = `${path}.${name}`;
+    if (!property.description?.trim()) missing.push(propertyPath);
+    missing.push(...missingPropertyDescriptionsInChildren(property, propertyPath));
+  }
+  return missing;
+}
+
+function missingPropertyDescriptionsInChildren(
+  schema: JsonSchemaNode,
+  path: string,
+): string[] {
+  const missing = missingPropertyDescriptions(schema, path);
+  if (schema.items) {
+    missing.push(...missingPropertyDescriptions(schema.items, `${path}[]`));
+    missing.push(
+      ...missingPropertyDescriptionsInCompositions(schema.items, `${path}[]`),
+    );
+  }
+  missing.push(...missingPropertyDescriptionsInCompositions(schema, path));
+  return missing;
+}
+
+function missingPropertyDescriptionsInCompositions(
+  schema: JsonSchemaNode,
+  path: string,
+): string[] {
+  const branches = [
+    ...(schema.anyOf ?? []),
+    ...(schema.oneOf ?? []),
+    ...(schema.allOf ?? []),
+  ];
+  return branches.flatMap((branch, index) => [
+    ...missingPropertyDescriptions(branch, `${path}<${index}>`),
+    ...missingPropertyDescriptionsInChildren(branch, `${path}<${index}>`),
+  ]);
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("MCP protocol integration", () => {
-  it("initializes, lists eight tools and calls each tool with structured output", async () => {
+  it("initializes, lists ten tools and calls each tool with structured output", async () => {
     vi.spyOn(companyMasterClient, "listCompanies").mockResolvedValue(companyMaster);
+    vi.spyOn(priceClient, "getStockOhlc").mockResolvedValue(stockOhlc);
+    vi.spyOn(priceClient, "getDailyMarketOhlc").mockResolvedValue(dailyMarketOhlc);
     vi.spyOn(mopsfinClient, "findCompanies").mockResolvedValue([
       { code: "2330", name: "台積電", displayName: "2330 台積電" },
     ]);
@@ -241,9 +396,13 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("list_companies");
     expect(client.getInstructions()).toContain("TWSE");
     expect(client.getInstructions()).toContain("TPEx");
+    expect(client.getInstructions()).toContain("get_stock_ohlc");
+    expect(client.getInstructions()).toContain("raw_unadjusted");
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name)).toEqual([
       "find_companies",
+      "get_stock_ohlc",
+      "get_daily_market_ohlc",
       "list_companies",
       "list_catalog",
       "get_company_metric",
@@ -264,6 +423,22 @@ describe("MCP protocol integration", () => {
     expect(
       listed.tools.every((tool) => (tool.description?.length ?? 0) >= 180),
     ).toBe(true);
+    expect(
+      listed.tools.every(
+        (tool) => (tool.title?.trim().length ?? 0) > 0,
+      ),
+    ).toBe(true);
+    const missingDescriptions = listed.tools.flatMap((tool) => [
+      ...missingPropertyDescriptions(
+        tool.inputSchema as JsonSchemaNode,
+        `${tool.name}.input`,
+      ),
+      ...missingPropertyDescriptions(
+        tool.outputSchema as JsonSchemaNode,
+        `${tool.name}.output`,
+      ),
+    ]);
+    expect(missingDescriptions).toEqual([]);
     for (const tool of listed.tools) {
       const properties = tool.inputSchema.properties ?? {};
       expect(Object.keys(properties).length).toBeGreaterThan(0);
@@ -294,6 +469,25 @@ describe("MCP protocol integration", () => {
     expect(companyListOutput?.properties?.companies?.description).toContain(
       "完整公司清單",
     );
+    const stockOhlcTool = listed.tools.find(
+      (tool) => tool.name === "get_stock_ohlc",
+    );
+    expect(stockOhlcTool?.description).toContain("coverageComplete=false");
+    expect(stockOhlcTool?.description).toContain("raw_unadjusted");
+    expect(stockOhlcTool?.inputSchema.properties?.cursor).toHaveProperty(
+      "description",
+    );
+    const stockOutput = stockOhlcTool?.outputSchema as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined;
+    expect(stockOutput?.properties?.coverage?.description).toContain(
+      "12 個日曆月份",
+    );
+    const dailyOhlcTool = listed.tools.find(
+      (tool) => tool.name === "get_daily_market_ohlc",
+    );
+    expect(dailyOhlcTool?.description).toContain("latest 不是盤中即時價");
+    expect(dailyOhlcTool?.description).toContain("selectionComplete=false");
     const financialTool = listed.tools.find(
       (tool) => tool.name === "get_financial_institution_metric",
     );
@@ -331,6 +525,15 @@ describe("MCP protocol integration", () => {
 
     const calls = [
       ["find_companies", { query: "2330" }],
+      [
+        "get_stock_ohlc",
+        {
+          company_code: "2330",
+          start_date: "2026-01-01",
+          end_date: "2026-01-31",
+        },
+      ],
+      ["get_daily_market_ohlc", { market: "all", date: "2026-08-24" }],
       ["list_companies", { market: "all" }],
       ["list_catalog", { kind: "all" }],
       [
@@ -395,6 +598,36 @@ describe("MCP protocol integration", () => {
           "2330",
           "3105",
         ]);
+      }
+      if (name === "get_stock_ohlc") {
+        const structured = result.structuredContent as {
+          priceBasis: string;
+          coverage: { coverageComplete: boolean; nextCursor: string | null };
+          bars: Array<{ date: string; close: number | null }>;
+        };
+        expect(structured.priceBasis).toBe("raw_unadjusted");
+        expect(structured.coverage).toMatchObject({
+          coverageComplete: true,
+          nextCursor: null,
+        });
+        expect(structured.bars[0]).toMatchObject({
+          date: "2026-01-02",
+          close: 1585,
+        });
+      }
+      if (name === "get_daily_market_ohlc") {
+        const structured = result.structuredContent as {
+          dataDate: string;
+          coverageComplete: boolean;
+          selectionComplete: boolean;
+          counts: { returned: number };
+        };
+        expect(structured).toMatchObject({
+          dataDate: "2026-08-24",
+          coverageComplete: true,
+          selectionComplete: true,
+          counts: { returned: 2 },
+        });
       }
       if (name === "get_financial_institution_metric") {
         const structured = result.structuredContent as {
