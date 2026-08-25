@@ -7,7 +7,7 @@ export function GET() {
     {
       status: "ok",
       service: "mopsfin-taiwan-equities",
-      version: "0.1.0",
+      version: "0.1.1",
       mcpEndpoint: "/api/mcp",
       sourceUrls: {
         mopsfin: "https://mopsfin.twse.com.tw/",
