@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server。服務以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十二個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、最新估值與月營收直接取自 TWSE 與 TPEx 官方資料。
+目前版本 `0.3.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十五個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收與大盤指數直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -17,11 +17,11 @@ Next.js /api/mcp on Vercel
        │    └─ HTML → 展開 rowspan/colspan 的二維 tables
        ├─ openapi.twse.com.tw → 上市公司母體
        ├─ www.tpex.org.tw/openapi → 上櫃公司母體
-       └─ TWSE／TPEx 官方資料 → 原始日線價量、最新估值與月營收
+       └─ TWSE／TPEx／MOPS 官方資料 → 原始日線價量、日估值、月營收與市場指數
 ```
 
 - 不使用資料庫、Redis 或已淘汰的 HTTP+SSE transport。
-- 財務資料不快取；Mopsfin 動態目錄快取 5 分鐘、TWSE／TPEx 公司母體快取 6 小時、OHLC 最新／當月快取 5 分鐘、OHLC 歷史月份／指定日期快取 24 小時，最新估值與月營收快照快取 5 分鐘。全部快取都只存在單一 Vercel instance 記憶體。
+- 財務資料不持久化；Mopsfin 動態目錄快取 5 分鐘、TWSE／TPEx 公司母體快取 6 小時、估值與月營收等官方 JSON／CSV 回應快取 5 分鐘，個股歷史 OHLC 月資料快取 24 小時。全部快取都只存在單一 Vercel instance 記憶體。
 - 上游 URL 完全固定，工具參數不能提供 URL，因此不會形成任意 proxy/SSRF。
 - 上游 timeout 20 秒；網路錯誤、429、5xx 或暫時性非 JSON 回應只做有限次重試，其他 4xx 不重試。
 - 不保留或轉送 Mopsfin cookies。
@@ -35,19 +35,22 @@ Next.js /api/mcp on Vercel
 | `find_companies` | 搜尋公司代號與名稱 |
 | `get_stock_ohlc` | 查詢單一目前或歷史公司股票的跨期原始日線 OHLC，支援時間游標與轉板合併 |
 | `get_daily_market_ohlc` | 查詢最近完成交易日或指定日期的上市、上櫃或全部市場日線價量 |
-| `get_daily_market_valuation` | 查詢上市、上櫃或全部市場最新本益比、股價淨值比與殖利率 |
-| `get_monthly_revenue` | 查詢上市、上櫃或全部市場最新月營收、MoM、YoY 與累計營收 |
+| `get_stock_reaction_signals` | 比較個股 5／20／60／120 交易日原始報酬、價格指數 benchmark、量能與回撤代理訊號 |
+| `get_daily_market_valuation` | 查詢上市、上櫃或全部市場 latest／指定日估值與參考財報欄位 |
+| `get_monthly_revenue` | 查詢上市、上櫃或全部市場 latest／指定月份營收、MoM、YoY 與累計營收 |
+| `get_monthly_revenue_trend` | 查詢 3–24 個月營收序列、滾動 YoY 與改善加速度 |
 | `list_companies` | 取得全部、僅上市或僅上櫃的完整公司母體；可排除金融業與 KY 公司 |
 | `list_catalog` | 即時列出指標、endpoint family、產業、金融機構及期間 |
 | `get_company_metric` | 一般公司財務趨勢、比率、YOY 與現金流指標 |
+| `get_company_metrics_batch` | 每頁批次取得多家公司 × 多項財務指標 |
 | `get_financial_statement` | 資產負債表、綜合損益表、現金流量表 |
 | `get_financial_note` | 五類財報附註 |
 | `get_industry_data` | 產業統計與產業趨勢，支援營收／稅後純益 |
 | `get_financial_institution_metric` | 金融業資產品質與資本適足率，可加入產業平均及所選機構簡單平均 |
 
-每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
+每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。成功結果固定包含 `ok=true` 與 `meta`；`meta.asOf`、`meta.quality`、`meta.page` 分別揭露實際資料時間、來源／母體／selection／值品質與續頁狀態。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
-LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對十二個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、申報頻率、缺值、平均數或分頁警示。
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對十五個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、申報頻率、缺值、平均數或分頁警示。
 
 需要完整上市櫃代號母體或全市場掃描時使用 `list_companies`；只知道特定公司名稱或代號時使用 `find_companies`，不要以 `find_companies` 枚舉全市場。不知道資料指標或期間時使用 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
@@ -71,7 +74,7 @@ LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions �
 
 `include_financial=false` 會依產業代號 17 排除金融保險業；`include_ky=false` 會排除註冊地為 KY 或官方簡稱標示 `-KY` 的公司。兩者預設皆為 `true`，因此預設母體不會默默漏掉金融業或 KY 公司。
 
-工具回傳不分頁的完整 `companies` 陣列，並附上 `coverageComplete`、`snapshotId`、各來源 `reportDate`、原始／排除／最終筆數及 `warnings`。TWSE 公司基本資料中的 TDR 會固定排除；ETF、ETN、權證與特別股不屬於此公司母體。同一來源若混入不同出表日期，或排除 TDR 後上市少於 1,000 家、上櫃少於 800 家，工具會拒絕把疑似截斷資料標示為完整。`coverageComplete=true` 只代表要求的市場名錄完整取得並通過這些檢查，不代表每家公司在每個 Mopsfin 指標與期別都有資料。
+省略 `page_size`／`cursor` 時，工具維持回傳完整 `companies` 陣列；提供 `page_size` 才按公司代號分頁。結果附上 `coverageComplete`、`snapshotId`、各來源 `reportDate`、原始／排除／最終筆數及 `warnings`，並提供目前 snapshot 的成立日、實收資本額、已發行普通股數、面額原文與財報類型 raw code。這些欄位不可拿來推算歷史市值。TWSE 公司基本資料中的 TDR 會固定排除；ETF、ETN、權證與特別股不屬於此公司母體。同一來源若混入不同出表日期，或排除 TDR 後上市少於 1,000 家、上櫃少於 800 家，工具會拒絕把疑似截斷資料標示為完整。
 
 ### MCP descriptions 是介面契約
 
@@ -82,7 +85,19 @@ MCP descriptions 必須與實際行為同步，不能只更新程式邏輯或 RE
 3. 每個 input/output 欄位的 Zod `.describe(...)`，包括 enum 各值的精確語意。
 4. README、首頁工具清單、設定 prompt、smoke client 與 MCP integration tests。
 
-整合測試會直接稽核 MCP `tools/list` 的實際輸出：每個工具必須有 title 與足夠完整的 tool description，所有 input/output 的巢狀 object、array item 與其欄位都必須有 description。測試也會特別鎖定 `list_companies` 的市場／TDR 完整性、兩個 OHLC 工具的 `raw_unadjusted`、價量單位、時間游標與完整性，以及最新估值／月營收工具的 strict master、逐欄缺值狀態與申報覆蓋語意。
+整合測試會直接稽核 MCP `tools/list` 的實際輸出：每個工具必須有 title 與足夠完整的 tool description，所有 input/output 的巢狀 object、array item 與其欄位都必須有 description。測試也會特別鎖定 `list_companies` 的市場／TDR 完整性、兩個 OHLC 工具的 `raw_unadjusted`、價量單位、時間游標與完整性，以及歷史估值、歷史月營收／趨勢、批次指標與 reaction signals 的來源、缺值、分頁及比較限制。
+
+### 統一結果、分頁與錯誤契約
+
+所有成功工具的 `structuredContent` 固定包含 `ok=true` 與 `meta.contractVersion=mopsfin.result.v1`：
+
+- `meta.asOf` 說明 requested selector、實際 resolved 時間範圍、`Asia/Taipei`、snapshot ID，以及每個來源的 cutoff、發布／出表與擷取時間。
+- `meta.quality` 分開揭露 source、universe、selection、values、freshness 與具體 `issues`；`status=complete` 不代表每個數值都非 null。
+- `meta.page` 統一表示 `none`、`offset` 或 `cursor` 分頁，以及下一頁 token。`list_companies`、單日全市場 OHLC、估值與月營收在省略 `page_size`／`cursor` 時維持完整回傳，提供 `page_size` 後才啟用 stateless cursor；批次指標與 reaction signals 則預設分頁。
+
+HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `coverage.nextCursor` 續頁，reaction signals 以 `pagination.nextCursor` 續頁。cursor 不需要資料庫，也不保存伺服器端 session；`meta.asOf.snapshotId` 表示該工具可驗證的 snapshot scope。會先取得完整 rowset 再切頁的工具可綁內容快照；`get_company_metrics_batch` 只綁 query／catalog，reaction 只綁 query／目前 master／benchmark，各頁財務值或個股 OHLC 仍於該頁即時取得，因此會以 `STATELESS_PAGE_VALUES_NOT_PINNED` 明示不具跨頁 point-in-time 保證。若錯誤 `reason` 是 `CURSOR_INVALID` 或 `SNAPSHOT_CHANGED`，依 `action=restart_pagination` 從第一頁重啟。
+
+工具 handler 失敗時仍會回傳 `structuredContent`，固定含 `ok=false`、原有 `error.code`，以及 `reason`、`category`、`retryable`、`retryAfterMs`、`action` 與已清理的 `details`。只有上游逾時／限流等可重試錯誤應依指示重試；Zod input 驗證失敗仍使用 MCP protocol `InvalidParams`。
 
 ### 官方 OHLC 價格
 
@@ -90,17 +105,31 @@ MCP descriptions 必須與實際行為同步，不能只更新程式邏輯或 RE
 
 `get_daily_market_ohlc` 的 `market=all | listed | otc` 與公司母體一致。`date=latest` 代表最近完成交易日，不是盤中即時價；也可指定 `YYYY-MM-DD`，但假日或未來日期不會退回前一日。指定日期的上市市場最早為 `2004-02-11`、上櫃與全部市場最早為 `2007-04-23`。`company_codes` 最多 500 家，省略時回完整市場；指定代號有缺漏時必須讀取 `selectionComplete` 與 `missingCompanyCodes`。
 
-兩個工具都固定回 `currency=TWD`、`timezone=Asia/Taipei`、`interval=1d`、`priceBasis=raw_unadjusted`，並正規化官方成交股數、成交金額、成交筆數與漲跌。TPEx 歷史個股的「張／仟元」會乘以 1,000 統一為 shares／TWD，每個 source 都保留原始單位與 multiplier。官方 `--`／無成交會正規化為 `null` OHLC 與 `status=no_trade`，官方零成交量值仍保留 0；`qualityStatus`、`missingFields` 與 `dataQualityComplete` 用來區分完整、部分缺欄及官方無成交。週末、休市與停牌日期不會補合成 bar，且不提供盤中報價、adjusted close 或 corporate actions。
+兩個工具都固定回 `currency=TWD`、`timezone=Asia/Taipei`、`interval=1d`、`priceBasis=raw_unadjusted`，並正規化官方成交股數、成交金額、成交筆數與漲跌。TPEx 歷史個股的「張／仟元」會乘以 1,000 統一為 shares／TWD；每個月、每個實際探測市場的 source 都分開保留 `dataMonth`、URL、原始單位與 multiplier，讓 `meta.asOf.sourceCutoffs` 能逐月追溯。官方 `--`／無成交會正規化為 `null` OHLC 與 `status=no_trade`，官方零成交量值仍保留 0；`qualityStatus`、`missingFields` 與 `dataQualityComplete` 用來區分完整、部分缺欄及官方無成交。週末、休市與停牌日期不會補合成 bar，且不提供盤中報價、adjusted close 或 corporate actions。
 
 `get_daily_market_ohlc` 的 `universe_policy=compatible` 維持 current-master 加四碼代號 fallback 行為，但各市場與目前 master 的 `matchRatio` 仍須至少 95%，以拒絕疑似截斷來源，並以 `classificationPolicy` 與 `reconciliation` 如實揭露差異；`strict_current_master` 只允許 `date=latest`，目前公司母體與行情不完全吻合時回 `INCOMPLETE_COVERAGE`。歷史日期固定採 `historical_code_rule`，不可將目前公司母體套用為歷史母體或據此宣稱無存續偏誤。
 
-### 最新估值與月營收
+### Benchmark 與市場反應代理
 
-`get_daily_market_valuation` 直接讀取 TWSE／TPEx 最新官方全市場本益比、殖利率與股價淨值比；`get_monthly_revenue` 直接讀取兩市場最新月營收彙總。兩工具 v1 都只接受 `latest`，並支援最多 500 個 `company_codes` 篩選。估值預設採 `compatible`，因目前公司母體可能包含暫停交易或當日無估值列的合法公司；結果會揭露 `reconciliation` 與 `universeCoverageVerified`，但各市場 `matchRatio` 低於 95% 仍拒絕疑似截斷來源，`strict_current_master` 則保留為要求集合完全吻合的 opt-in 診斷模式。月營收預設採 `strict_current_master` 排除目前母體外代號，但 master 尚未出現的申報列會以 `filingCoverage` 表示，不當成來源失敗。
+`get_stock_reaction_signals` 接受 1–50 個目前上市櫃四碼代號、`as_of=latest | YYYY-MM-DD`，以及不重複的 5／20／60／120 交易日 `horizons` 子集合。benchmark 歷史自 `1999-01-05` 起；每頁最多 10 家、最多 48 個「一個官方市場月份 request」工作單位，受限時必須沿 `pagination.nextCursor` 續查。`pagination.snapshotId` 在正常續頁保持相同，綁定 query、目前 master 與 benchmark；尚未查詢公司的個股 OHLC 不在此快照內。
 
-估值的空白、`-` 或 `N/A` 會回 `null` 與 `missing_or_not_meaningful`，不會擅自推論成虧損或轉為 0。月營收官方金額以新台幣仟元提供，服務統一乘以 1,000 回傳 TWD；`sourceReportDate` 是資料集出表日期，不代表個別公司的申報時間。最新資料列未覆蓋目前全部公司可能源於申報進度、資料適用性或公司狀態差異，應讀取 `filingCoverage` 並回查官方申報，不可只以筆數判定上游失敗。
+個股報酬使用 `raw_unadjusted` 收盤價，上市 benchmark 是 TAIEX、上櫃 benchmark 是櫃買指數，兩者皆為官方 `price_index`，不是 total-return index。N-session 視窗依 benchmark 交易日曆的 exact 起訖日期計算，個股缺少錨點不會以前一成交日代填。官方 `changeMarker` 只能提示部分公司行動；沒有 marker 不代表已證明沒有除權息、減資或其他公司行動。`comparability`、各 signal `status`、轉板／名稱變化與 `dataQualityComplete` 都必須保留；這些訊號只是可重算的市場反應代理，不是錯價證明或投資建議。
 
-趨勢預設回最近 12 季，可用 `start_period`、`end_period` 或 `history: "all"`。大型 HTML 表格使用 `offset`、`limit` 分頁，預設 100 列、上限 500 列。期別格式為 `YYYYQn`。
+### 歷史估值、月營收與趨勢
+
+`get_daily_market_valuation` 接受 `latest` 或單一 `YYYY-MM-DD`；指定假日不退回上一交易日。上市支援自 `2005-09-02`、上櫃與全部市場自 `2007-01-02`。latest 先以官方 OpenAPI 決定最近估值日，再以同日官方日端點補齊收盤價、每股股利、股利年度與參考財報期；成功時 `sources` 同時保留 discovery 與 exact-day lineage，同日補強失敗時則保留單一 OpenAPI 來源與其能提供的欄位。核心 PE／PB／殖利率 key 若從 eligible row 消失會視為上游 schema drift 並報錯；TWSE `total` 與 TPEx `totalCount` 也必須存在、是非負整數且等於實際資料列數，否則拒絕把截斷回應標示為完整。歷史查詢不以今天的 master 冒充當時母體，固定回 `classificationPolicy=historical_code_rule`、空 `reconciliation` 與 `universeCoverageVerified=false`。
+
+`get_monthly_revenue` 接受 `latest` 或 `2013-01` 起的 `YYYY-MM`。latest 以 OpenAPI 發現月份並與 MOPS archive 核對；歷史月份直接讀取 archive。歷史 archive 是目前可取得的修訂後檔案，不是當時發布內容的 vintage snapshot，不適合無偏誤 point-in-time backtest。MOPS CSV 沒有 declared row count、footer 或 checksum；工具會驗證 RFC 4180、必要欄位、資料年月／出表日、四碼 eligible 代號唯一性，並以 `sources[].integrity` 明示「結構可驗證、完整 rowset 不可證明」。`sourceCoverage` 與 `filingCoverage` 分別代表 rowset 完整性與 latest 申報進度，歷史月份的 `coverageComplete=false`、`filingCoverage.status=historical_cross_timepoint_unverified`。
+
+估值的空白、`-` 或 `N/A` 會回 `null` 與 `missing_or_not_meaningful`，來源沒有該欄位則為 `not_provided_by_source`；`rawValue` 保留官方 marker，不會擅自推論成虧損或轉為 0。月營收官方金額以新台幣仟元提供，服務統一乘以 1,000 回傳 TWD；`sourceReportDate` 是資料集出表日期，不代表個別公司的申報時間。最新資料列未覆蓋目前全部公司可能源於申報進度、資料適用性或公司狀態差異，應讀取 `filingCoverage` 並回查官方申報，不可只以筆數判定上游失敗。
+
+月營收趨勢必須指定 1–100 個四碼公司代號、3–24 個月視窗，固定使用 `compatible` 並保留 caller 公司順序。逐月 point 保留該月官方 `name`、`market` 與缺列；rolling 3／6 個月 YoY 是期間當月營收合計相對去年同月營收合計，YoY acceleration 是最新官方 YoY 減三個月前官方 YoY。所有必要值須為 reported 且去年同期合計須大於 0，否則衍生值為 null 並附 status；相鄰有資料月份若觀察到名稱或市場轉換，`comparability=needs_review` 且七個 derived 值全為 null，避免未經核對地串接改名、轉板或代號重用。工具不產生主觀的「基本面改善」分數。
+
+### 財務趨勢與批次指標
+
+一般財務趨勢預設回最近 12 季，可用 `start_period`、`end_period` 或 `history: "all"`。大型 HTML 表格使用 `offset`、`limit` 分頁，預設 100 列、上限 500 列。期別格式為 `YYYYQn`。
+
+`get_company_metrics_batch` 適合一次取得多家公司 × 多個基本面指標：接受 1–100 家公司與 1–8 個 `list_catalog` `family=data` 指標，按 caller 公司順序分頁且每頁最多 20 家，每家公司保留全部 requested metrics。預設每家公司每項指標最多回自己的最近 12 期，也可指定含首尾最多 12 季；每 10 家 × 每個指標計為一個上游工作，單頁上限 24 units、併發上限 3。本工具不提供產業平均或所選公司平均；`NO_DATA` 是可表達的 company × metric coverage，不會阻斷仍有下一頁的公司，只有上游傳輸或 identity 衝突才整頁失敗。page 內 `snapshotId` 會包含完整 identity、unit、period、point value/status 與 coverage；cursor scope 則只綁 query／catalog，跨頁值不具 point-in-time 保證。
 
 公司指標可用 `include_industry_average`、`include_company_average` 加入產業平均及所選公司簡單平均；金融機構指標可用 `include_industry_average`、`include_institution_average` 加入相應金融業別平均及所選機構簡單平均。這些平均數皆由 Mopsfin 計算，並非市值加權。
 
@@ -151,7 +180,7 @@ ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` �
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
 4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
-5. 建立後確認 ChatGPT 能辨識十二個工具。
+5. 建立後確認 ChatGPT 能辨識十五個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
 Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流程見 [OpenAI 官方連接說明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。
@@ -162,7 +191,12 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 - 「查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。」
 - 「列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。」
 - 「查最新上市櫃公司估值，列出台積電與穩懋的本益比、股價淨值比、殖利率及 valueStatus。」
+- 「查 2025-01-02 上市櫃公司估值，列出台積電與穩懋的 PE、PB、股利年度、參考財報期與 rawValue。」
 - 「查最新上市櫃月營收，列出台積電與穩懋的 MoM、YoY、資料年月及 filingCoverage。」
+- 「查台積電 2025-01 月營收，標示目前修訂後 archive、來源產業名稱與資料出表日。」
+- 「查台積電截至 2026-07 的最近 12 個月營收趨勢，列出 3／6 月 YoY 與加速度。」
+- 「查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。」
+- 「比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始報酬與量能訊號。」
 - 「列出全部上市公司代號，不要包含上櫃公司。」
 - 「列出全部上市與上櫃公司，排除金融業與 KY 公司。」
 - 「比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。」
@@ -179,7 +213,7 @@ npm test
 npm run build
 ```
 
-一般測試只使用固定 fixtures，涵蓋 README 已驗證範例清單、TWSE／TPEx 公司母體、OHLC 價量、最新估值與月營收正規化、上市／上櫃／全部路由、TDR 與金融／KY 排除、跨月游標、轉板、下市代號、無成交、日期／選擇／申報完整性、strict master、缺值狀態、暫時性 520、53 個 `compareItem` 分類、六個 endpoint family、timeout、429、5xx 及 MCP initialize/tools/list/tools/call。
+一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
 
 Live contract tests 預設跳過，只有明確設定時才會查詢原站：
 
@@ -197,7 +231,7 @@ npm run test:live
 4. 部署後以 `npm run test:client -- https://<preview>/api/mcp` 驗收。
 5. 視公開流量在 Vercel Firewall 設定適當規則；應用本身不建立跨 instance rate-limit 資料庫。
 
-建議 Preview 驗收：台積電最近 12 季營收、台積電與聯發科 ROE、2026-08-24 上市櫃 OHLC、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
+建議 Preview 驗收：台積電最近 12 季營收、台積電與聯發科 ROE、多家公司多指標 batch、2026-08-24 上市櫃 OHLC、指定日估值、歷史月營收／趨勢、台積電相對 TAIEX reaction signals、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
 
 ## 錯誤碼
 
@@ -211,9 +245,15 @@ npm run test:live
 
 不同市場別的申報季度不同：上市／上櫃公司通常有 Q1–Q4，興櫃及公開發行公司可能只有 Q2/Q4，部分公司只申報年度。`NO_DATA` 不必然表示公司不存在。
 
+工具 handler 錯誤另在 `structuredContent` 回傳 `ok=false`、原有 error code、細分 `reason`、`category`、`retryable`、`retryAfterMs` 與建議 `action`。Zod input 錯誤仍使用 MCP protocol `InvalidParams`。無伺服器端 cursor persistence；續頁會重新核對該工具宣告的 snapshot scope，能偵測的 scope 變更時要求從第一頁重啟，batch／reaction 尚未讀取的逐公司值則明確不宣稱被鎖定。
+
 ## 資料來源、更新與使用條件
 
-財務、報表、附註、產業與金融機構資料來源是 [Mopsfin](https://mopsfin.twse.com.tw/)。依其[網站使用說明](https://mopsfin.twse.com.tw/terms)，網站資料每日更新一次，可能較申報落後約一日。公司母體來源是 [TWSE 上市公司基本資料](https://openapi.twse.com.tw/v1/opendata/t187ap03_L)與 [TPEx 上櫃股票基本資料](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O)；OHLC 來源是 TWSE／TPEx 個股日成交與每日收盤行情。最新估值直接使用 [TWSE 上市股票本益比、殖利率及股價淨值比](https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL)與 [TPEx 上櫃股票本益比分析](https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis)；最新月營收直接使用 [TWSE 上市公司每月營業收入彙總表](https://openapi.twse.com.tw/v1/opendata/t187ap05_L)與 [TPEx 上櫃公司每月營業收入彙總表](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O)。每次結果會保留各官方來源、擷取時間、資料日期或年月與 coverage，不把不同日期、不同年月或局部頁面冒充完整資料。本服務不使用測試 fixtures 作為正式資料或 fallback。
+財務、報表、附註、產業與金融機構資料來源是 [Mopsfin](https://mopsfin.twse.com.tw/)。依其[網站使用說明](https://mopsfin.twse.com.tw/terms)，網站資料每日更新一次，可能較申報落後約一日。公司母體來源是 [TWSE 上市公司基本資料](https://openapi.twse.com.tw/v1/opendata/t187ap03_L)與 [TPEx 上櫃股票基本資料](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O)；OHLC 來源是 TWSE／TPEx 個股日成交與每日收盤行情。
+
+估值的 latest 日期由 [TWSE BWIBBU_ALL](https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL)與 [TPEx 本益比分析](https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis)發現，再以 TWSE `BWIBBU_d` 與 TPEx `peQryDate` 指定日端點補強；歷史日直接使用相同指定日端點。月營收 latest 由 [TWSE t187ap05_L](https://openapi.twse.com.tw/v1/opendata/t187ap05_L)與 [TPEx t187ap05_O](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O)發現月份，再與 `https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{民國年}_{月}.csv` archive 核對；指定月與趨勢直接讀 archive。benchmark 使用 TWSE `MI_5MINS_HIST` 與 TPEx `tradingIndex` 官方價格指數端點。
+
+每次結果會保留各官方來源、擷取時間、資料日期或年月、coverage 與統一 `meta`，不把不同日期、不同年月或局部頁面冒充完整資料。本服務不使用測試 fixtures 作為正式資料或 fallback。
 
 公開上線前，專案擁有者必須自行確認 TWSE、TPEx 與 Mopsfin 對公開代理、再散布及使用頻率的授權。公司基本資料集標示採政府資料開放授權條款第 1 版；Mopsfin 網站使用說明對資料範圍與更新頻率的描述，不等同明確授予再散布權。使用者也應以市場機構名錄與公開資訊觀測站原始申報作最後查核。
 

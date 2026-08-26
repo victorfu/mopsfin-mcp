@@ -110,6 +110,57 @@ function normalizeListingDate(raw: string): string {
   );
 }
 
+type OptionalProfileValue<T> = {
+  value: T | null;
+  status: "reported" | "missing" | "invalid_upstream";
+};
+
+function optionalText(value: unknown): OptionalProfileValue<string> {
+  if (value === undefined || value === null) return { value: null, status: "missing" };
+  if (typeof value !== "string") return { value: null, status: "invalid_upstream" };
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (!normalized || /^(?:－|-|—|N\/?A)$/i.test(normalized)) {
+    return { value: null, status: "missing" };
+  }
+  return { value: normalized, status: "reported" };
+}
+
+function optionalGregorianDate(value: unknown): OptionalProfileValue<string> {
+  const text = optionalText(value);
+  if (text.status !== "reported" || text.value === null) return text;
+  const match = /^(\d{4})(\d{2})(\d{2})$/.exec(text.value);
+  if (!match) return { value: null, status: "invalid_upstream" };
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    candidate.getUTCFullYear() !== year ||
+    candidate.getUTCMonth() !== month - 1 ||
+    candidate.getUTCDate() !== day
+  ) {
+    return { value: null, status: "invalid_upstream" };
+  }
+  return {
+    value: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`,
+    status: "reported",
+  };
+}
+
+function optionalSafeInteger(value: unknown): OptionalProfileValue<number> {
+  const text = optionalText(value);
+  if (text.status !== "reported" || text.value === null) {
+    return { value: null, status: text.status };
+  }
+  const normalized = text.value.replace(/,/g, "");
+  if (!/^\d+$/.test(normalized)) return { value: null, status: "invalid_upstream" };
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    return { value: null, status: "invalid_upstream" };
+  }
+  return { value: parsed, status: "reported" };
+}
+
 function normalizeDomicileCode(raw: string): string {
   const normalized = raw.trim();
   if (!normalized || /^(?:－|-|—)$/.test(normalized)) return "TW";
@@ -151,6 +202,29 @@ function normalizeCompany(
     field("外國企業註冊地國", "Registration"),
   );
   const listingDate = normalizeListingDate(field("上市日期", "DateOfListing"));
+  const incorporationDate = optionalGregorianDate(
+    record[config.market === "listed" ? "成立日期" : "DateOfIncorporation"],
+  );
+  const paidInCapitalTwd = optionalSafeInteger(
+    record[config.market === "listed" ? "實收資本額" : "Paidin.Capital.NTDollars"],
+  );
+  const issuedCommonShares = optionalSafeInteger(
+    record[
+      config.market === "listed"
+        ? "已發行普通股數或TDR原股發行股數"
+        : "IssueShares"
+    ],
+  );
+  const parValueText = optionalText(
+    record[config.market === "listed" ? "普通股每股面額" : "ParValueOfCommonStock"],
+  );
+  const financialReportTypeCode = optionalText(
+    record[
+      config.market === "listed"
+        ? "編制財務報表類型"
+        : "PreparationOfFinancialReportType"
+    ],
+  );
 
   return {
     reportDate,
@@ -163,6 +237,18 @@ function normalizeCompany(
       exchange: config.exchange,
       industryCode,
       listingDate,
+      incorporationDate: incorporationDate.value,
+      paidInCapitalTwd: paidInCapitalTwd.value,
+      issuedCommonShares: issuedCommonShares.value,
+      parValueText: parValueText.value,
+      financialReportTypeCode: financialReportTypeCode.value,
+      profileValueStatus: {
+        incorporationDate: incorporationDate.status,
+        paidInCapitalTwd: paidInCapitalTwd.status,
+        issuedCommonShares: issuedCommonShares.status,
+        parValueText: parValueText.status,
+        financialReportTypeCode: financialReportTypeCode.status,
+      },
       domicileCode,
       isKy: domicileCode === "KY" || /-KY(?:$|\b)/i.test(shortName),
       isFinancial: industryCode === "17",
@@ -312,6 +398,29 @@ export class CompanyMasterClient {
       excludedKy = companies.filter((company) => company.isKy).length;
       companies = companies.filter((company) => !company.isKy);
     }
+
+    const profileFields = [
+      "incorporationDate",
+      "paidInCapitalTwd",
+      "issuedCommonShares",
+      "parValueText",
+      "financialReportTypeCode",
+    ] as const;
+    const profileCoverage = Object.fromEntries(
+      profileFields.map((profileField) => {
+        const statuses = companies.map(
+          (company) => company.profileValueStatus[profileField],
+        );
+        return [
+          profileField,
+          {
+            reported: statuses.filter((status) => status === "reported").length,
+            missing: statuses.filter((status) => status === "missing").length,
+            invalid: statuses.filter((status) => status === "invalid_upstream").length,
+          },
+        ];
+      }),
+    ) as CompanyMasterResult["profileCoverage"];
     companies = [...companies].sort((left, right) => left.code.localeCompare(right.code));
 
     const sources = snapshots.map((snapshot) => snapshot.source);
@@ -348,6 +457,7 @@ export class CompanyMasterClient {
         otc: companies.filter((company) => company.market === "otc").length,
         returned: companies.length,
       },
+      profileCoverage,
       companies,
       warnings,
     };
@@ -386,7 +496,7 @@ export class CompanyMasterClient {
           signal: controller.signal,
           headers: {
             Accept: "application/json",
-            "User-Agent": "mopsfin-mcp/0.2.0 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": "mopsfin-mcp/0.3.0 (+https://mopsfin.twse.com.tw/)",
           },
         });
         const body = await response.text();

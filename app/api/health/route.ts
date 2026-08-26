@@ -7,7 +7,9 @@ export function GET() {
     {
       status: "ok",
       service: "mopsfin-taiwan-equities",
-      version: "0.2.0",
+      version: "0.3.0",
+      resultContractVersion: "mopsfin.result.v1",
+      toolCount: 15,
       mcpEndpoint: "/api/mcp",
       sourceUrls: {
         mopsfin: "https://mopsfin.twse.com.tw/",
@@ -26,6 +28,16 @@ export function GET() {
           "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
         tpexMonthlyRevenue:
           "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O",
+        mopsMonthlyRevenueArchive:
+          "https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{ROC_YEAR}_{MONTH}.csv",
+        twseHistoricalValuation:
+          "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d",
+        tpexHistoricalValuation:
+          "https://www.tpex.org.tw/www/zh-tw/afterTrading/peQryDate",
+        twseBenchmark:
+          "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST",
+        tpexBenchmark:
+          "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingIndex",
       },
       checkedAt: new Date().toISOString(),
       note: "此端點只確認應用程式可回應，不會為健康檢查呼叫 Mopsfin、TWSE 或 TPEx 財務／行情來源。",

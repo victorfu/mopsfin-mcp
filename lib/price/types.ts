@@ -41,6 +41,7 @@ export interface PriceSource {
   sourceUrl: string;
   retrievedAt: string;
   dataDate?: string;
+  dataMonth?: string;
   normalization: {
     volumeShares: PriceUnitNormalization;
     turnoverTwd: PriceUnitNormalization;

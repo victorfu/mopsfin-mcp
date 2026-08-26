@@ -8,7 +8,7 @@ const endpoint = new URL(
     process.env.MOPSFIN_MCP_URL ??
     "http://localhost:3000/api/mcp",
 );
-const client = new Client({ name: "mopsfin-smoke-test", version: "1.0.0" });
+const client = new Client({ name: "mopsfin-smoke-test", version: "0.3.0" });
 
 try {
   await client.connect(new StreamableHTTPClientTransport(endpoint));
@@ -17,11 +17,14 @@ try {
     "find_companies",
     "get_stock_ohlc",
     "get_daily_market_ohlc",
+    "get_stock_reaction_signals",
     "get_daily_market_valuation",
     "get_monthly_revenue",
+    "get_monthly_revenue_trend",
     "list_companies",
     "list_catalog",
     "get_company_metric",
+    "get_company_metrics_batch",
     "get_financial_statement",
     "get_financial_note",
     "get_industry_data",
@@ -36,6 +39,10 @@ try {
   for (const name of expected) {
     if (!names.includes(name)) throw new Error(`Missing tool: ${name}`);
   }
+  const server = client.getServerVersion();
+  if (server?.version !== "0.3.0") {
+    throw new Error(`Expected server version 0.3.0, received ${server?.version ?? "unknown"}`);
+  }
 
   const result = await client.callTool({
     name: "find_companies",
@@ -49,7 +56,7 @@ try {
     `${JSON.stringify(
       {
         endpoint: endpoint.href,
-        server: client.getServerVersion(),
+        server,
         tools: names,
         findCompanies: result.structuredContent,
       },

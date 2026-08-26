@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import { companyMasterClient } from "@/lib/company-master/client";
 import { MOPSFIN_SOURCE_URL } from "@/lib/mopsfin/constants";
+import { companyMetricsBatchClient } from "@/lib/mopsfin/batch";
 import { mopsfinClient } from "@/lib/mopsfin/client";
 import { asMopsfinError } from "@/lib/mopsfin/errors";
 import {
@@ -10,12 +11,21 @@ import {
 } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
 import { priceClient } from "@/lib/price/client";
+import { reactionClient } from "@/lib/reaction/client";
 import { monthlyRevenueClient } from "@/lib/revenue/client";
 import { valuationClient } from "@/lib/valuation/client";
+import {
+  buildResultMeta,
+  structuredError,
+  type ResultMetaHints,
+} from "./result-contract";
+import { fingerprint, paginateByCompany } from "./cursor";
 
 import {
   companyMetricInputSchema,
   companyMetricOutputSchema,
+  companyMetricsBatchInputSchema,
+  companyMetricsBatchOutputSchema,
   dailyMarketOhlcInputSchema,
   dailyMarketOhlcOutputSchema,
   dailyMarketValuationInputSchema,
@@ -36,6 +46,10 @@ import {
   listCompaniesOutputSchema,
   monthlyRevenueInputSchema,
   monthlyRevenueOutputSchema,
+  monthlyRevenueTrendInputSchema,
+  monthlyRevenueTrendOutputSchema,
+  stockReactionSignalsInputSchema,
+  stockReactionSignalsOutputSchema,
   stockOhlcInputSchema,
   stockOhlcOutputSchema,
 } from "./schemas";
@@ -57,17 +71,23 @@ function source(route: string) {
   };
 }
 
-function success<T extends object>(summary: string, data: T) {
+function success<T extends object>(summary: string, data: T, hints: ResultMetaHints = {}) {
+  const structuredContent = {
+    ok: true as const,
+    meta: buildResultMeta(data as Record<string, unknown>, hints),
+    ...data,
+  };
   return {
     content: [{ type: "text" as const, text: summary }],
-    structuredContent: data,
+    structuredContent,
   };
 }
 
 function failure(error: unknown) {
   const normalized = asMopsfinError(error);
-  const details = normalized.details
-    ? ` ${JSON.stringify(normalized.details)}`
+  const structuredContent = structuredError(normalized);
+  const details = Object.keys(structuredContent.error.details as object).length
+    ? ` ${JSON.stringify(structuredContent.error.details)}`
     : "";
   return {
     isError: true as const,
@@ -77,6 +97,7 @@ function failure(error: unknown) {
         text: `${normalized.code}: ${normalized.message}${details}`,
       },
     ],
+    structuredContent,
   };
 }
 
@@ -91,6 +112,15 @@ function catalogPeriods(catalog: Catalog): string[] {
   return catalog.years.flatMap((year) =>
     catalog.quarters.map((quarter) => `${year}Q${quarter}`),
   );
+}
+
+function resolvedQuarterRange(periods: string[]) {
+  const ordered = [...periods].sort();
+  return {
+    granularity: "quarter" as const,
+    from: ordered[0] ?? null,
+    through: ordered.at(-1) ?? null,
+  };
 }
 
 export function registerMopsfinTools(server: McpServer): void {
@@ -161,7 +191,7 @@ export function registerMopsfinTools(server: McpServer): void {
       outputSchema: dailyMarketOhlcOutputSchema,
       annotations,
     },
-    async ({ market, date, company_codes, universe_policy }) => {
+    async ({ market, date, company_codes, universe_policy, page_size, cursor }) => {
       try {
         const data = await priceClient.getDailyMarketOhlc({
           market,
@@ -169,9 +199,152 @@ export function registerMopsfinTools(server: McpServer): void {
           universePolicy: universe_policy,
           ...(company_codes ? { companyCodes: company_codes } : {}),
         });
+        const snapshotId = fingerprint({
+          dataDate: data.dataDate,
+          sources: data.sources.map((item) => ({
+            market: item.market,
+            sourceUrl: item.sourceUrl,
+            dataDate: item.dataDate,
+          })),
+          bars: data.bars,
+        });
+        const paginated = paginateByCompany({
+          tool: "get_daily_market_ohlc",
+          query: {
+            market,
+            date,
+            company_codes: company_codes ? [...company_codes].sort() : undefined,
+            universe_policy,
+          },
+          snapshotId,
+          items: data.bars,
+          pageSize: page_size,
+          cursor,
+          maximumPageSize: 500,
+          legacyUnpaged: true,
+        });
+        const pageData = paginated.page.mode === "none"
+          ? data
+          : {
+              ...data,
+              bars: paginated.items,
+              counts: {
+                listed: paginated.items.filter((bar) => bar.market === "listed").length,
+                otc: paginated.items.filter((bar) => bar.market === "otc").length,
+                returned: paginated.items.length,
+              },
+            };
         return success(
-          `${data.dataDate} ${market} 市場：回傳 ${data.counts.returned} 家公司價量資料，coverageComplete=true、universeCoverageVerified=${data.universeCoverageVerified}、selectionComplete=${data.selectionComplete}。`,
+          `${pageData.dataDate} ${market} 市場：本頁回傳 ${pageData.counts.returned} 家公司價量資料，coverageComplete=true、universeCoverageVerified=${pageData.universeCoverageVerified}、selectionComplete=${pageData.selectionComplete}。`,
+          pageData,
+          {
+            page: paginated.page,
+            snapshotId,
+            freshness: date === "latest" ? "within_expected_window" : "not_applicable",
+          },
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_stock_reaction_signals",
+    {
+      title: "比較台股與市場 benchmark 的 reaction signals",
+      description:
+        "比較 1–50 家目前上市櫃公司與其官方市場價格指數在 5／20／60／120 個 benchmark 交易日視窗的原始報酬，並回傳 excess return、平均成交股數、平均成交金額、短長窗量能比、最大回撤及距區間高點。個股固定使用 raw_unadjusted 收盤價，benchmark 固定使用 TAIEX／櫃買 price index，不含股息再投資，也不把日曆日或前一成交日代填 exact session。官方 change marker、轉板／歷史市場不符或多個 observed names 會保留 raw stock 與 benchmark return，但 excessReturnPercentagePoints=null 並列明不可比原因。每頁最多 10 家且受 48 個官方市場月份請求單位限制；cursor 與 meta snapshotId 綁定 query、目前 master 與 benchmark，不會把尚未查詢公司的個股 OHLC 值冒充 point-in-time 快照。這些是可重算的市場反應代理，不是主觀 score，也不能單獨證明市場尚未反應或股票錯價；回答前須檢查 comparability、status、meta.quality 與 meta.page。",
+      inputSchema: stockReactionSignalsInputSchema,
+      outputSchema: stockReactionSignalsOutputSchema,
+      annotations,
+    },
+    async ({ company_codes, as_of, horizons, page_size, cursor }) => {
+      try {
+        const data = await reactionClient.getStockReactionSignals({
+          companyCodes: company_codes,
+          asOf: as_of,
+          horizons,
+          pageSize: page_size,
+          ...(cursor ? { cursor } : {}),
+        });
+        const resolvedDates = data.asOf.resolvedByMarket
+          .map((item) => item.date)
+          .sort();
+        const notComparableCodes = data.companies
+          .filter((company) => company.comparability.status !== "provisional_raw")
+          .map((company) => company.companyCode);
+        const valuesComplete =
+          data.coverage.dataQualityComplete && notComparableCodes.length === 0;
+        const page = {
+          mode: "cursor" as const,
+          unit: "company" as const,
+          limit: data.pagination.requestedPageSize,
+          returned: data.pagination.returnedCompanyCount,
+          total: data.pagination.requestedCompanyCount,
+          next: data.pagination.nextCursor
+            ? { kind: "cursor" as const, cursor: data.pagination.nextCursor }
+            : null,
+        };
+        return success(
+          `本頁完成 ${data.pagination.returnedCompanyCount}/${data.pagination.requestedCompanyCount} 家 reaction signals；dataQualityComplete=${data.coverage.dataQualityComplete}，仍須逐家公司檢查 comparability。`,
           data,
+          {
+            selector: as_of === "latest" ? "latest" : "explicit",
+            resolved: {
+              granularity: "date",
+              from: resolvedDates[0] ?? null,
+              through: resolvedDates.at(-1) ?? null,
+            },
+            page,
+            snapshotId: data.pagination.snapshotId,
+            universe: "verified",
+            selection: "complete",
+            values: valuesComplete ? "complete" : "partial",
+            freshness: as_of === "latest" ? "within_expected_window" : "not_applicable",
+            issues: [
+              {
+                code: "RAW_UNADJUSTED_PRICE_BASIS",
+                severity: "info",
+                scope: "value",
+                message: "個股為 raw unadjusted、benchmark 為 price index；結果不是 total shareholder return。",
+                refs: {
+                  companyCodes: data.companies.map((company) => company.companyCode),
+                  fields: ["returns", "pricePath", "comparability"],
+                  periods: resolvedDates,
+                  sourceUrls: [],
+                },
+              },
+              {
+                code: "STATELESS_PAGE_VALUES_NOT_PINNED",
+                severity: "info",
+                scope: "page",
+                message: "無狀態 cursor 固定 query、目前 master 與 benchmark；各頁個股 OHLC 於該頁即時取得，不保證跨頁 point-in-time 一致。",
+                refs: {
+                  companyCodes: data.companies.map((company) => company.companyCode),
+                  fields: ["companies", "stockSources"],
+                  periods: resolvedDates,
+                  sourceUrls: data.stockSources.map((item) => item.sourceUrl),
+                },
+              },
+              ...(notComparableCodes.length > 0
+                ? [
+                    {
+                      code: "REACTION_EXCESS_NOT_COMPARABLE",
+                      severity: "warning" as const,
+                      scope: "value" as const,
+                      message: "部分公司因官方 marker、轉板或 identity 風險而不能使用 excess return。",
+                      refs: {
+                        companyCodes: notComparableCodes,
+                        fields: ["excessReturnPercentagePoints"],
+                        periods: resolvedDates,
+                        sourceUrls: [],
+                      },
+                    },
+                  ]
+                : []),
+            ],
+          },
         );
       } catch (error) {
         return failure(error);
@@ -182,14 +355,14 @@ export function registerMopsfinTools(server: McpServer): void {
   server.registerTool(
     "get_daily_market_valuation",
     {
-      title: "查詢最新台股市場估值",
+      title: "查詢台股市場單日估值",
       description:
-        "查詢 TWSE／TPEx 官方最近完成交易日的上市、上櫃或全部公司本益比、股價淨值比與殖利率。v1 的 date 固定為 latest，不是盤中即時估值，也不提供歷史估值序列；market=all 要求兩個來源資料日期一致。預設 universe_policy=compatible，因目前公司 master 可能包含暫停交易或當日無估值列的合法公司，結果會保留四碼公司代號 fallback 並揭露 reconciliation、coverageComplete 與 universeCoverageVerified，但各市場 matchRatio 低於 95% 仍以 INCOMPLETE_COVERAGE 拒絕疑似截斷來源；strict_current_master 是要求集合完全吻合的 opt-in 診斷模式。company_codes 可選且最多 500 家，部分缺失透過 selectionComplete 與 missingCompanyCodes 揭露。官方空白、N/A 或不具計算意義的估值回 null 與逐欄 valueStatus，不可改寫為 0；本工具不自行重算財報分母或股利。",
+        "查詢 TWSE／TPEx 官方 latest 或指定 YYYY-MM-DD 的上市、上櫃或全部公司本益比、股價淨值比、殖利率，以及來源可提供的收盤價、每股股利、股利年度與估值參考財報期。指定日採 exact-date，假日不退回前一交易日；上市自 2005-09-02、上櫃與 market=all 自 2007-01-02。latest 預設 universe_policy=compatible 並揭露 reconciliation；strict_current_master 只允許 latest。歷史日採 historical_code_rule，不用今天 master 冒充歷史母體。company_codes 最多 500 家，省略 page_size/cursor 維持完整回傳，提供 page_size 才分頁。核心 PE／PB／殖利率 key 若從 eligible row 消失會視為上游 schema drift 並報錯；官方空白、N/A、不具意義或補強來源未提供的欄位則回 null、valueStatus 與 rawValue，不重算財報分母或股利。回答前應檢查 meta.asOf、meta.quality 與 meta.page。",
       inputSchema: dailyMarketValuationInputSchema,
       outputSchema: dailyMarketValuationOutputSchema,
       annotations,
     },
-    async ({ market, date, company_codes, universe_policy }) => {
+    async ({ market, date, company_codes, universe_policy, page_size, cursor }) => {
       try {
         const data = await valuationClient.getDailyMarketValuation({
           market,
@@ -197,9 +370,64 @@ export function registerMopsfinTools(server: McpServer): void {
           universePolicy: universe_policy,
           ...(company_codes ? { companyCodes: company_codes } : {}),
         });
+        const snapshotId = fingerprint({
+          dataDate: data.dataDate,
+          sources: data.sources.map((item) => ({
+            market: item.market,
+            sourceUrl: item.sourceUrl,
+            dataDate: item.dataDate,
+            rawCount: item.rawCount,
+            eligibleRowCount: item.eligibleRowCount,
+          })),
+          rows: data.rows,
+        });
+        const paginated = paginateByCompany({
+          tool: "get_daily_market_valuation",
+          query: {
+            market,
+            date,
+            company_codes: company_codes ? [...company_codes].sort() : undefined,
+            universe_policy,
+          },
+          snapshotId,
+          items: data.rows,
+          pageSize: page_size,
+          cursor,
+          maximumPageSize: 500,
+          legacyUnpaged: true,
+        });
+        const pageRows = paginated.items;
+        const valuesComplete = pageRows.every((row) =>
+          Object.values(row.valueStatus).every(
+            (status) => status !== "invalid_upstream",
+          ),
+        );
+        const pageData = paginated.page.mode === "none"
+          ? data
+          : {
+              ...data,
+              rows: pageRows,
+              counts: {
+                ...data.counts,
+                returned: pageRows.length,
+                withPe: pageRows.filter((row) => row.valueStatus.peRatio === "reported").length,
+                withPb: pageRows.filter((row) => row.valueStatus.priceToBookRatio === "reported").length,
+                withDividendYield: pageRows.filter((row) => row.valueStatus.dividendYieldPercent === "reported").length,
+                withClosePrice: pageRows.filter((row) => row.valueStatus.closePriceTwd === "reported").length,
+                withDividendPerShare: pageRows.filter((row) => row.valueStatus.dividendPerShareTwd === "reported").length,
+                withDividendFiscalYear: pageRows.filter((row) => row.valueStatus.dividendFiscalYear === "reported").length,
+                withReferenceFiscalPeriod: pageRows.filter((row) => row.valueStatus.referenceFiscalPeriod === "reported").length,
+              },
+            };
         return success(
-          `${data.dataDate} ${market} 市場：回傳 ${data.counts.returned} 家公司估值，universeCoverageVerified=${data.universeCoverageVerified}、selectionComplete=${data.selectionComplete}。`,
-          data,
+          `${pageData.dataDate} ${market} 市場：本頁回傳 ${pageData.counts.returned} 家公司估值，universeCoverageVerified=${pageData.universeCoverageVerified}、selectionComplete=${pageData.selectionComplete}。`,
+          pageData,
+          {
+            page: paginated.page,
+            snapshotId,
+            values: valuesComplete ? "complete" : "partial",
+            freshness: date === "latest" ? "within_expected_window" : "not_applicable",
+          },
         );
       } catch (error) {
         return failure(error);
@@ -210,24 +438,250 @@ export function registerMopsfinTools(server: McpServer): void {
   server.registerTool(
     "get_monthly_revenue",
     {
-      title: "查詢最新台股月營收",
+      title: "查詢台股單月營收",
       description:
-        "查詢公開資訊觀測站官方最新資料年月的上市、上櫃或全部公司月營收、月增率、年增率與累計營收年增率。v1 的 data_month 固定為 latest，不提供歷史月序列；market=all 要求 TWSE／TPEx 來源資料年月一致。官方金額原始單位為仟元，本工具固定乘以 1,000 並輸出 TWD，百分比沿用官方值；每個數值都有 valueStatus，缺值與無法解析值回 null，不可當成 0。預設 universe_policy=strict_current_master，市場外代號會排除；coverageComplete 代表必要來源完整，filingCoverage 則比較最新資料列與目前 company master，未達 100% 可能源於申報進度、資料適用性或公司狀態差異，兩者不可混用。company_codes 可選且最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt。",
+        "查詢上市、上櫃或全部公司在 latest 或 2013-01 起指定 YYYY-MM 的官方單月營收、月增率、年增率與累計營收年增率。latest 以 TWSE／TPEx OpenAPI 發現月份，再與同月或前一月 MOPS archive 核對共同有效月份；explicit month 採 exact archive，不退回其他月份。歷史 archive 是目前可取得的修訂後檔案，不是 point-in-time vintage，current master 的 industryCode／reconciliation 只能輔助，應以該月 sourceIndustryName 辨識歷史產業。官方金額原始單位為仟元，本工具固定乘以 1,000 輸出 TWD；每欄 valueStatus 區分 reported、missing、invalid_upstream，null 不可當 0。latest 省略 universe_policy 時使用 strict_current_master，歷史月份使用 compatible 且不允許 strict。coverageComplete 是相容欄位：latest 成功完成必要來源、格式與 snapshot identity 核對時為 true，歷史 archive 因無 declared row count 固定為 false；另以 sourceCoverage 說明 rowset 是否能由目前 master 核對，filingCoverage 則只讓 latest 輔助判讀申報進度，歷史值固定是跨時點不可驗證。company_codes 最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt；省略 page_size/cursor 維持完整回傳。",
       inputSchema: monthlyRevenueInputSchema,
       outputSchema: monthlyRevenueOutputSchema,
       annotations,
     },
-    async ({ market, data_month, company_codes, universe_policy }) => {
+    async ({ market, data_month, company_codes, universe_policy, page_size, cursor }) => {
       try {
+        const resolvedUniversePolicy =
+          universe_policy ??
+          (data_month === "latest" ? "strict_current_master" : "compatible");
         const data = await monthlyRevenueClient.getMonthlyRevenue({
           market,
           dataMonth: data_month,
-          universePolicy: universe_policy,
+          universePolicy: resolvedUniversePolicy,
           ...(company_codes ? { companyCodes: company_codes } : {}),
         });
+        const snapshotId = fingerprint({
+          dataMonth: data.dataMonth,
+          sources: data.sources.map((item) => ({
+            market: item.market,
+            sourceUrl: item.sourceUrl,
+            dataMonth: item.dataMonth,
+            sourceReportDate: item.sourceReportDate,
+            rawCount: item.rawCount,
+            eligibleRowCount: item.eligibleRowCount,
+          })),
+          rows: data.rows,
+        });
+        const paginated = paginateByCompany({
+          tool: "get_monthly_revenue",
+          query: {
+            market,
+            data_month,
+            company_codes: company_codes ? [...company_codes].sort() : undefined,
+            universe_policy: resolvedUniversePolicy,
+          },
+          snapshotId,
+          items: data.rows,
+          pageSize: page_size,
+          cursor,
+          maximumPageSize: 500,
+          legacyUnpaged: true,
+        });
+        const pageRows = paginated.items;
+        const valuesComplete = pageRows.every((row) =>
+          Object.values(row.valueStatus).every(
+            (status) => status !== "invalid_upstream",
+          ),
+        );
+        const pageData = paginated.page.mode === "none"
+          ? data
+          : {
+              ...data,
+              rows: pageRows,
+              counts: {
+                listed: pageRows.filter((row) => row.market === "listed").length,
+                otc: pageRows.filter((row) => row.market === "otc").length,
+                returned: pageRows.length,
+              },
+            };
         return success(
-          `${data.dataMonth} ${market} 市場：回傳 ${data.counts.returned} 家公司月營收，申報覆蓋 ${data.filingCoverage.reportedCompanyCount}/${data.filingCoverage.expectedCompanyCount}、selectionComplete=${data.selectionComplete}。`,
-          data,
+          `${pageData.dataMonth} ${market} 市場：本頁回傳 ${pageData.counts.returned} 家公司月營收，申報覆蓋 ${pageData.filingCoverage.reportedCompanyCount}/${pageData.filingCoverage.expectedCompanyCount}、selectionComplete=${pageData.selectionComplete}。`,
+          pageData,
+          {
+            selector: data_month === "latest" ? "latest" : "explicit",
+            resolved: {
+              granularity: "month",
+              from: pageData.dataMonth,
+              through: pageData.dataMonth,
+            },
+            page: paginated.page,
+            snapshotId,
+            source: data.sourceCoverage.complete ? "complete" : "partial",
+            universe:
+              data_month !== "latest"
+                ? "unverified"
+                : data.reconciliation.every((item) => item.coverageComplete)
+                  ? "verified"
+                  : "compatible",
+            selection: data.selectionComplete ? "complete" : "partial",
+            values: valuesComplete ? "complete" : "partial",
+            freshness: data_month === "latest" ? "within_expected_window" : "not_applicable",
+            issues: [
+              ...(!data.sourceCoverage.complete
+                ? [
+                    {
+                      code: "SOURCE_ROWSET_UNVERIFIED",
+                      severity: "warning" as const,
+                      scope: "source" as const,
+                      message: "官方月營收來源沒有 declared row count，且本次 rowset 未能以目前 master 完全核對。",
+                      refs: {
+                        companyCodes: [],
+                        fields: ["sourceCoverage", "sources.integrity"],
+                        periods: [pageData.dataMonth],
+                        sourceUrls: data.sources.map((item) => item.sourceUrl),
+                      },
+                    },
+                  ]
+                : []),
+              ...(!data.filingCoverage.complete
+                ? [
+                    {
+                    code: "FILING_COVERAGE_PARTIAL",
+                    severity: "info" as const,
+                    scope: "period" as const,
+                    message:
+                      data_month === "latest"
+                        ? "目前 master 尚有公司未出現在 latest 月營收資料；可能仍在申報窗口或不適用。"
+                        : "歷史月份與目前 master 不同時點，filingCoverage 不代表當時漏申報。",
+                    refs: {
+                      companyCodes: data.filingCoverage.missingCompanyCodes,
+                      fields: ["filingCoverage"],
+                      periods: [pageData.dataMonth],
+                      sourceUrls: data.sources.map((item) => item.sourceUrl),
+                    },
+                    },
+                  ]
+                : []),
+            ],
+          },
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_monthly_revenue_trend",
+    {
+      title: "查詢台股歷史月營收趨勢",
+      description:
+        "查詢 1–100 家上市櫃公司、連續 3–24 個月的官方月營收序列，支援 latest 或 2013-01 起 exact YYYY-MM 終點。每個月份保留當月營收、去年同月營收、官方 MoM／YoY、公司 name／market、sourceIndustryName、sourceReportDate 與逐欄 valueStatus；缺月明確回 null，不補值。每家公司另提供可由 points 重算的最新 YoY、rolling 3／6 月營收 YoY、相較三個月前 YoY 加速度、正 YoY 月數、已申報 YoY 月數與連續正 YoY 月數；若相鄰有資料月份觀察到名稱或市場轉換，comparability=needs_review，所有 derived 回 null，避免把改名、轉板或代號重用直接串成同一公司。歷史 archive 是目前可取得的修訂後檔案，不是 point-in-time vintage，且無 declared row count，所以 coverageComplete=false、sourceCoverage=unverified；industryCode 是目前 master 輔助欄位，歷史產業應讀 sourceIndustryName。每頁最多 20 家且保留 caller 公司順序，不拆散單一公司的完整月份視窗；這些透明趨勢不是主觀基本面改善分數，回答前應檢查 comparability、公式、缺月、meta.quality 與 meta.page。",
+      inputSchema: monthlyRevenueTrendInputSchema,
+      outputSchema: monthlyRevenueTrendOutputSchema,
+      annotations,
+    },
+    async ({ market, company_codes, end_month, lookback_months, universe_policy, page_size, cursor }) => {
+      try {
+        const companyCodes = [...company_codes];
+        const data = await monthlyRevenueClient.getMonthlyRevenueTrend({
+          market,
+          companyCodes,
+          endMonth: end_month,
+          lookbackMonths: lookback_months,
+          universePolicy: universe_policy,
+        });
+        const snapshotId = fingerprint({
+          startMonth: data.startMonth,
+          endMonth: data.endMonth,
+          sources: data.sources.map((item) => ({
+            market: item.market,
+            sourceUrl: item.sourceUrl,
+            dataMonth: item.dataMonth,
+            sourceReportDate: item.sourceReportDate,
+            rawCount: item.rawCount,
+            eligibleRowCount: item.eligibleRowCount,
+          })),
+          companies: data.companies,
+        });
+        const paginated = paginateByCompany({
+          tool: "get_monthly_revenue_trend",
+          query: {
+            market,
+            company_codes: companyCodes,
+            end_month,
+            lookback_months,
+            universe_policy,
+          },
+          snapshotId,
+          items: data.companies,
+          pageSize: page_size,
+          cursor,
+          maximumPageSize: 20,
+        });
+        const pageCompanies = paginated.items;
+        const valuesComplete = pageCompanies.every(
+          (company) =>
+            company.comparability.status === "comparable" &&
+            company.missingMonths.length === 0 &&
+            company.points.every((point) =>
+              Object.values(point.valueStatus).every(
+                (status) => status !== "invalid_upstream",
+              ),
+            ),
+        );
+        const pageData = {
+          ...data,
+          companies: pageCompanies,
+          counts: {
+            ...data.counts,
+            returnedCompanies: pageCompanies.length,
+          },
+        };
+        return success(
+          `${pageData.startMonth} 至 ${pageData.endMonth}：本頁回傳 ${pageCompanies.length} 家公司的 ${pageData.counts.requestedMonths} 個月營收趨勢。`,
+          pageData,
+          {
+            selector: end_month === "latest" ? "latest" : "explicit",
+            resolved: {
+              granularity: "month",
+              from: pageData.startMonth,
+              through: pageData.endMonth,
+            },
+            page: paginated.page,
+            snapshotId,
+            source: data.sourceCoverage.complete ? "complete" : "partial",
+            universe: "unverified",
+            selection: data.selectionComplete ? "complete" : "partial",
+            values: valuesComplete ? "complete" : "partial",
+            freshness: end_month === "latest" ? "within_expected_window" : "not_applicable",
+            issues: [
+              {
+                code: "SOURCE_ROWSET_UNVERIFIED",
+                severity: "warning",
+                scope: "source",
+                message: "歷史 MOPS archive 沒有 declared row count、footer 或 checksum；格式與 snapshot identity 可驗證，但完整 rowset 不可證明。",
+                refs: {
+                  companyCodes: pageCompanies.map((company) => company.code),
+                  fields: ["sourceCoverage", "sources.integrity"],
+                  periods: [pageData.startMonth, pageData.endMonth],
+                  sourceUrls: data.sources.map((item) => item.sourceUrl),
+                },
+              },
+              ...pageCompanies
+                .filter((company) => company.comparability.status === "needs_review")
+                .map((company) => ({
+                  code: "REVENUE_IDENTITY_TRANSITION",
+                  severity: "warning" as const,
+                  scope: "value" as const,
+                  message: "公司代號在 requested 視窗觀察到名稱或市場轉換；derived 已停用並等待 identity 核對。",
+                  refs: {
+                    companyCodes: [company.code],
+                    fields: ["comparability", "derived"],
+                    periods: company.comparability.transitions.map(
+                      (transition) => transition.dataMonth,
+                    ),
+                    sourceUrls: [],
+                  },
+                })),
+            ],
+          },
         );
       } catch (error) {
         return failure(error);
@@ -240,23 +694,52 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "列出上市櫃公司完整母體",
       description:
-        "從 TWSE 上市公司基本資料與 TPEx 上櫃股票基本資料官方 OpenAPI 建立可供 Mopsfin 財務查詢使用的完整公司母體。market=listed 只回上市公司且包含創新板，market=otc 只回上櫃公司，market=all 同時取得兩個市場；任何必要來源失敗、同一來源出表日期不一致或筆數低於完整性基準時整體報錯，不會把部分結果當成完整市場。公司基本資料來源不包含 ETF、ETN、權證或特別股，上市來源中的 TDR 會固定排除，因為 Mopsfin 不涵蓋 TDR。include_financial 與 include_ky 可進一步排除金融保險業或 KY 公司。回傳不分頁的完整 companies、各市場出表日期、來源筆數、排除筆數、snapshotId 與 coverageComplete；公司存在於母體不保證每個 Mopsfin 指標或期別都有資料。",
+        "從 TWSE 上市公司基本資料與 TPEx 上櫃股票基本資料官方 OpenAPI 建立可供財務與市場工具使用的目前公司母體。market=listed 只回上市公司且包含創新板，market=otc 只回上櫃公司，market=all 同時取得兩市場；任何必要來源失敗、同一來源出表日期不一致或筆數低於完整性基準時整體報錯。來源不包含 ETF、ETN、權證或特別股，上市 TDR 固定排除；include_financial 與 include_ky 可排除金融保險業或 KY 公司。公司列另提供成立日期、實收資本額 TWD、已發行普通股數、面額原文、財報類型 raw code 與逐欄 profileValueStatus；這些是目前 snapshot，不可當歷史股數或直接推算歷史市值。省略 page_size/cursor 時維持完整 companies 回傳；提供 page_size 後以 snapshot-bound cursor 分頁。各市場出表日期、來源／排除筆數、profileCoverage、snapshotId 與 coverageComplete 都是答案的一部分；公司存在於母體不保證每個財務指標或期別有資料。",
       inputSchema: listCompaniesInputSchema,
       outputSchema: listCompaniesOutputSchema,
       annotations,
     },
-    async ({ market, include_financial, include_ky }) => {
+    async ({ market, include_financial, include_ky, page_size, cursor }) => {
       try {
         const data = await companyMasterClient.listCompanies({
           market,
           includeFinancial: include_financial,
           includeKy: include_ky,
         });
+        const snapshotId = fingerprint({
+          masterSnapshotId: data.snapshotId,
+          companies: data.companies,
+          profileCoverage: data.profileCoverage,
+        });
+        const paginated = paginateByCompany({
+          tool: "list_companies",
+          query: { market, include_financial, include_ky },
+          snapshotId,
+          items: data.companies,
+          pageSize: page_size,
+          cursor,
+          maximumPageSize: 500,
+          legacyUnpaged: true,
+        });
+        const pageCompanies = paginated.items;
+        const pageData = paginated.page.mode === "none"
+          ? data
+          : {
+              ...data,
+              companies: pageCompanies,
+              counts: {
+                ...data.counts,
+                listed: pageCompanies.filter((company) => company.market === "listed").length,
+                otc: pageCompanies.filter((company) => company.market === "otc").length,
+                returned: pageCompanies.length,
+              },
+            };
         const marketLabel =
           market === "listed" ? "上市" : market === "otc" ? "上櫃" : "上市及上櫃";
         return success(
-          `${marketLabel}公司母體共 ${data.counts.returned} 家（上市 ${data.counts.listed}、上櫃 ${data.counts.otc}），coverageComplete=true。`,
-          data,
+          `${marketLabel}公司母體本頁 ${pageData.counts.returned} 家（上市 ${pageData.counts.listed}、上櫃 ${pageData.counts.otc}），coverageComplete=true。`,
+          pageData,
+          { page: paginated.page, snapshotId, universe: "verified" },
         );
       } catch (error) {
         return failure(error);
@@ -382,6 +865,101 @@ export function registerMopsfinTools(server: McpServer): void {
         return success(
           `${data.query.metricName}：${data.series.length} 組 series、${data.periods.length} 個期別，單位 ${data.unit || "未標示"}。`,
           data,
+          {
+            selector: "range",
+            resolved: resolvedQuarterRange(data.periods),
+            selection: data.coverage.selectionComplete ? "complete" : "partial",
+            values: data.series.some((series) =>
+              series.points.some((point) => point.valueStatus === "invalid_upstream"),
+            )
+              ? "partial"
+              : "complete",
+          },
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_company_metrics_batch",
+    {
+      title: "批次查詢多家公司多項財務指標",
+      description:
+        "以單一呼叫取得 1–100 家公司、1–8 個 list_catalog family=data 指標；每個公司頁面都包含全部 requested metrics，不按指標拆頁。預設每家公司每項指標最多回自己的最近 12 期，也可指定最多 12 季的成對 start_period/end_period。basis 與 yoy_quarter 語意沿用 get_company_metric；本工具不提供產業平均或所選公司平均。每頁最多 20 家、最多 24 個上游工作單位；合法缺值以逐點 status 與 coverage 揭露，上游傳輸或 identity 衝突則整頁失敗。無狀態 cursor 綁 query 與 catalog 定義，但各頁財務值於該頁即時取得，不是跨頁 point-in-time 快照；回答前應檢查 meta.quality 與 meta.page.next。",
+      inputSchema: companyMetricsBatchInputSchema,
+      outputSchema: companyMetricsBatchOutputSchema,
+      annotations,
+    },
+    async (input) => {
+      try {
+        const companyCodes = [...input.company_codes];
+        const metricCodes = [...input.metric_codes];
+        const catalog = await mopsfinClient.getCatalog();
+        const cursorScopeId = fingerprint({
+          metrics: metricCodes.map((code) =>
+            catalog.metrics.find((metric) => metric.code === code),
+          ),
+          years: catalog.years,
+          quarters: catalog.quarters,
+        });
+        const paginated = paginateByCompany({
+          tool: "get_company_metrics_batch",
+          query: {
+            company_codes: companyCodes,
+            metric_codes: metricCodes,
+            basis: input.basis,
+            yoy_quarter: input.yoy_quarter,
+            start_period: input.start_period,
+            end_period: input.end_period,
+          },
+          snapshotId: cursorScopeId,
+          items: companyCodes,
+          pageSize: input.page_size,
+          cursor: input.cursor,
+          maximumPageSize: 20,
+        });
+        const data = await companyMetricsBatchClient.getCompanyMetricsBatch({
+          companyCodes: paginated.items,
+          metricCodes,
+          basis: input.basis,
+          yoyQuarter: input.yoy_quarter,
+          startPeriod: input.start_period,
+          endPeriod: input.end_period,
+        });
+        const returnedPeriods = data.companies.flatMap((company) =>
+          company.metrics.flatMap((metric) => metric.periods),
+        );
+        return success(
+          `本頁 ${data.companies.length} 家公司、${data.metricDefinitions.length} 項財務指標；selectionComplete=${data.coverage.selectionComplete}。`,
+          data,
+          {
+            page: paginated.page,
+            snapshotId: cursorScopeId,
+            universe: "not_applicable",
+            selection: data.coverage.selectionComplete ? "complete" : "partial",
+            values: data.companies.some((company) =>
+              company.metrics.some((metric) => metric.coverage.invalidPoints > 0),
+            )
+              ? "partial"
+              : "complete",
+            resolved: resolvedQuarterRange(returnedPeriods),
+            issues: [
+              {
+                code: "STATELESS_PAGE_VALUES_NOT_PINNED",
+                severity: "info",
+                scope: "page",
+                message: "無狀態 cursor 固定 query 與 catalog；各頁 Mopsfin 財務值在該頁查詢時取得，不保證跨頁 point-in-time 一致。",
+                refs: {
+                  companyCodes: data.companies.map((company) => company.companyCode),
+                  fields: data.metricDefinitions.map((metric) => metric.code),
+                  periods: [...new Set(returnedPeriods)].sort(),
+                  sourceUrls: data.sources.map((item) => item.sourceUrl),
+                },
+              },
+            ],
+          },
         );
       } catch (error) {
         return failure(error);
@@ -410,6 +988,14 @@ export function registerMopsfinTools(server: McpServer): void {
         return success(
           `${data.period} ${input.statement}：回傳 ${data.pagination.returnedRows}/${data.pagination.totalRows} 列。`,
           data,
+          {
+            selector: input.period === "latest" ? "latest" : "explicit",
+            resolved: {
+              granularity: "quarter",
+              from: data.period,
+              through: data.period,
+            },
+          },
         );
       } catch (error) {
         return failure(error);
@@ -438,6 +1024,14 @@ export function registerMopsfinTools(server: McpServer): void {
         return success(
           `${data.period} ${input.note}：回傳 ${data.pagination.returnedRows}/${data.pagination.totalRows} 列。`,
           data,
+          {
+            selector: input.period === "latest" ? "latest" : "explicit",
+            resolved: {
+              granularity: "quarter",
+              from: data.period,
+              through: data.period,
+            },
+          },
         );
       } catch (error) {
         return failure(error);
@@ -471,6 +1065,20 @@ export function registerMopsfinTools(server: McpServer): void {
         return success(
           `${input.mode}：${data.series.length} 組 series、${data.periods.length} 個期別。`,
           data,
+          {
+            selector:
+              input.mode === "statistics"
+                ? input.period === "latest"
+                  ? "latest"
+                  : "explicit"
+                : "range",
+            resolved: resolvedQuarterRange(data.periods),
+            values: data.series.some((series) =>
+              series.points.some((point) => point.valueStatus === "invalid_upstream"),
+            )
+              ? "partial"
+              : "complete",
+          },
         );
       } catch (error) {
         return failure(error);
@@ -504,6 +1112,15 @@ export function registerMopsfinTools(server: McpServer): void {
         return success(
           `${data.query.metricName}：${data.series.length} 組 series、${data.periods.length} 個期別。`,
           data,
+          {
+            selector: "range",
+            resolved: resolvedQuarterRange(data.periods),
+            values: data.series.some((series) =>
+              series.points.some((point) => point.valueStatus === "invalid_upstream"),
+            )
+              ? "partial"
+              : "complete",
+          },
         );
       } catch (error) {
         return failure(error);

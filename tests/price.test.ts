@@ -7,6 +7,7 @@ import {
   dailyMarketOhlcOutputSchema,
   stockOhlcOutputSchema,
 } from "@/lib/mcp/schemas";
+import { buildResultMeta } from "@/lib/mcp/result-contract";
 import { PriceClient } from "@/lib/price/client";
 
 function response(payload: unknown, status = 200) {
@@ -30,6 +31,18 @@ function company(
     exchange: market === "listed" ? "TWSE" : "TPEx",
     industryCode: "24",
     listingDate,
+    incorporationDate: null,
+    paidInCapitalTwd: null,
+    issuedCommonShares: null,
+    parValueText: null,
+    financialReportTypeCode: null,
+    profileValueStatus: {
+      incorporationDate: "missing",
+      paidInCapitalTwd: "missing",
+      issuedCommonShares: "missing",
+      parValueText: "missing",
+      financialReportTypeCode: "missing",
+    },
     domicileCode: "TW",
     isKy: false,
     isFinancial: false,
@@ -53,6 +66,13 @@ function master(companies: MasterCompany[]) {
         listed: companies.filter((item) => item.market === "listed").length,
         otc: companies.filter((item) => item.market === "otc").length,
         returned: companies.length,
+      },
+      profileCoverage: {
+        incorporationDate: { reported: 0, missing: companies.length, invalid: 0 },
+        paidInCapitalTwd: { reported: 0, missing: companies.length, invalid: 0 },
+        issuedCommonShares: { reported: 0, missing: companies.length, invalid: 0 },
+        parValueText: { reported: 0, missing: companies.length, invalid: 0 },
+        financialReportTypeCode: { reported: 0, missing: companies.length, invalid: 0 },
       },
       companies,
       warnings: [],
@@ -199,7 +219,9 @@ describe("PriceClient getStockOhlc", () => {
         }),
       ]),
     );
-    expect(stockOhlcOutputSchema.safeParse(result).success).toBe(true);
+    expect(
+      stockOhlcOutputSchema.safeParse({ ok: true, meta: buildResultMeta(result), ...result }).success,
+    ).toBe(true);
   });
 
   it("parses reordered TWSE headers instead of relying on fixed indexes", async () => {
@@ -366,6 +388,7 @@ describe("PriceClient getStockOhlc", () => {
 
     const first = await client.getStockOhlc(query);
     expect(first.bars.map((bar) => bar.date)).toEqual(["2025-12-31"]);
+    expect(first.sources.map((source) => source.dataMonth)).toEqual(["2025-12"]);
     expect(first.coverage.coverageComplete).toBe(false);
     expect(first.coverage.nextCursor).toBeTruthy();
 
@@ -374,6 +397,7 @@ describe("PriceClient getStockOhlc", () => {
       cursor: first.coverage.nextCursor as string,
     });
     expect(second.bars.map((bar) => bar.date)).toEqual(["2026-01-02"]);
+    expect(second.sources.map((source) => source.dataMonth)).toEqual(["2026-01"]);
     expect(second.coverage).toMatchObject({
       coveredThrough: "2026-01-06",
       coverageComplete: true,
@@ -386,7 +410,12 @@ describe("PriceClient getStockOhlc", () => {
         endDate: "2026-01-07",
         cursor: first.coverage.nextCursor as string,
       }),
-    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    ).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      reason: "CURSOR_INVALID",
+      category: "pagination",
+      action: "restart_pagination",
+    });
     const cursor = first.coverage.nextCursor as string;
     await expect(
       client.getStockOhlc({
@@ -415,6 +444,54 @@ describe("PriceClient getStockOhlc", () => {
         cursor: `ohlc1.${invalidMonthBody}.${invalidMonthChecksum}`,
       }),
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+  });
+
+  it("keeps a distinct source cutoff for every requested stock month", async () => {
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      const isDecember = (url.searchParams.get("date") as string).startsWith(
+        "202512",
+      );
+      return response(
+        twseMonth(
+          "2330",
+          "台積電",
+          [
+            [
+              isDecember ? "114/12/31" : "115/01/02",
+              "1,000",
+              "1,000,000",
+              "100",
+              "101",
+              "99",
+              "100",
+              "+1",
+              "10",
+              "",
+            ],
+          ],
+          isDecember ? "114年12月" : "115年01月",
+        ),
+      );
+    });
+    const client = new PriceClient(
+      fetchMock as typeof fetch,
+      now,
+      master([company("2330", "台積電", "listed", "1994-09-05")]),
+      { retryDelayMs: 0 },
+    );
+
+    const result = await client.getStockOhlc({
+      companyCode: "2330",
+      startDate: "2025-12-01",
+      endDate: "2026-01-31",
+    });
+
+    expect(result.sources.map((source) => source.dataMonth)).toEqual([
+      "2025-12",
+      "2026-01",
+    ]);
+    expect(result.sources).toHaveLength(2);
   });
 
   it("probes both markets for a delisted code that is absent from current master", async () => {
@@ -720,7 +797,9 @@ describe("PriceClient getDailyMarketOhlc", () => {
         }),
       ]),
     );
-    expect(dailyMarketOhlcOutputSchema.safeParse(result).success).toBe(true);
+    expect(
+      dailyMarketOhlcOutputSchema.safeParse({ ok: true, meta: buildResultMeta(result), ...result }).success,
+    ).toBe(true);
   });
 
   it("filters latest data through current master and reports missing selections", async () => {
@@ -794,7 +873,9 @@ describe("PriceClient getDailyMarketOhlc", () => {
         "change",
       ],
     });
-    expect(dailyMarketOhlcOutputSchema.safeParse(result).success).toBe(true);
+    expect(
+      dailyMarketOhlcOutputSchema.safeParse({ ok: true, meta: buildResultMeta(result), ...result }).success,
+    ).toBe(true);
   });
 
   it("supports exact strict-master reconciliation and rejects any mismatch", async () => {

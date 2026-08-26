@@ -8,7 +8,6 @@ import type {
   CompanyMarket,
   MasterCompany,
 } from "@/lib/company-master/types";
-import { monthlyRevenueOutputSchema } from "@/lib/mcp/schemas";
 import { MonthlyRevenueClient } from "@/lib/revenue/client";
 
 const twseFixture = JSON.parse(
@@ -45,6 +44,18 @@ function company(
     exchange: market === "listed" ? "TWSE" : "TPEx",
     industryCode,
     listingDate: "2000-01-01",
+    incorporationDate: null,
+    paidInCapitalTwd: null,
+    issuedCommonShares: null,
+    parValueText: null,
+    financialReportTypeCode: null,
+    profileValueStatus: {
+      incorporationDate: "missing",
+      paidInCapitalTwd: "missing",
+      issuedCommonShares: "missing",
+      parValueText: "missing",
+      financialReportTypeCode: "missing",
+    },
     domicileCode: "TW",
     isKy: false,
     isFinancial: false,
@@ -68,6 +79,17 @@ function master(companies: MasterCompany[]) {
         listed: companies.filter((value) => value.market === "listed").length,
         otc: companies.filter((value) => value.market === "otc").length,
         returned: companies.length,
+      },
+      profileCoverage: {
+        incorporationDate: { reported: 0, missing: companies.length, invalid: 0 },
+        paidInCapitalTwd: { reported: 0, missing: companies.length, invalid: 0 },
+        issuedCommonShares: { reported: 0, missing: companies.length, invalid: 0 },
+        parValueText: { reported: 0, missing: companies.length, invalid: 0 },
+        financialReportTypeCode: {
+          reported: 0,
+          missing: companies.length,
+          invalid: 0,
+        },
       },
       companies,
       warnings: [],
@@ -120,6 +142,7 @@ describe("MonthlyRevenueClient", () => {
       missingCompanyCodes: ["9998"],
       coverageRatio: 0.8,
       complete: false,
+      status: "partial",
     });
     expect(result.rows.find((row) => row.code === "2330")).toMatchObject({
       industryCode: "24",
@@ -147,7 +170,9 @@ describe("MonthlyRevenueClient", () => {
       outputAmountUnit: "TWD",
       amountMultiplier: 1000,
     });
-    expect(() => monthlyRevenueOutputSchema.parse(result)).not.toThrow();
+    expect(result.warnings.some((warning) => warning.includes("OpenAPI fallback"))).toBe(
+      true,
+    );
   });
 
   it("treats incomplete filings as normal and reports missing requested companies", async () => {
@@ -278,6 +303,8 @@ describe("MonthlyRevenueClient", () => {
     });
 
     expect(result.rows).toHaveLength(2);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("openapi.twse.com.tw"),
+    )).toHaveLength(2);
   });
 });

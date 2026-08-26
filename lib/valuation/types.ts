@@ -12,11 +12,21 @@ import type {
 export type ValuationValueStatus =
   | "reported"
   | "missing_or_not_meaningful"
+  | "not_provided_by_source"
   | "invalid_upstream";
+
+export type LegacyValuationValueStatus = Exclude<
+  ValuationValueStatus,
+  "not_provided_by_source"
+>;
+
+export type ValuationClassificationPolicy =
+  | CurrentMasterClassificationPolicy
+  | "historical_code_rule";
 
 export interface DailyMarketValuationQuery {
   market: CompanyMarketSelection;
-  date: "latest";
+  date: "latest" | string;
   companyCodes?: string[];
   universePolicy: UniversePolicy;
 }
@@ -28,10 +38,27 @@ export interface ValuationRow {
   peRatio: number | null;
   priceToBookRatio: number | null;
   dividendYieldPercent: number | null;
+  closePriceTwd: number | null;
+  dividendPerShareTwd: number | null;
+  dividendFiscalYear: number | null;
+  referenceFiscalPeriod: string | null;
   valueStatus: {
-    peRatio: ValuationValueStatus;
-    priceToBookRatio: ValuationValueStatus;
-    dividendYieldPercent: ValuationValueStatus;
+    peRatio: LegacyValuationValueStatus;
+    priceToBookRatio: LegacyValuationValueStatus;
+    dividendYieldPercent: LegacyValuationValueStatus;
+    closePriceTwd: ValuationValueStatus;
+    dividendPerShareTwd: ValuationValueStatus;
+    dividendFiscalYear: ValuationValueStatus;
+    referenceFiscalPeriod: ValuationValueStatus;
+  };
+  rawValue: {
+    peRatio: string | null;
+    priceToBookRatio: string | null;
+    dividendYieldPercent: string | null;
+    closePriceTwd: string | null;
+    dividendPerShareTwd: string | null;
+    dividendFiscalYear: string | null;
+    referenceFiscalPeriod: string | null;
   };
 }
 
@@ -43,7 +70,7 @@ export interface DailyMarketValuationResult {
   query: DailyMarketValuationQuery;
   dataDate: string;
   currency: "TWD";
-  classificationPolicy: CurrentMasterClassificationPolicy;
+  classificationPolicy: ValuationClassificationPolicy;
   coverageComplete: boolean;
   universeCoverageVerified: boolean;
   selectionComplete: boolean;
@@ -55,6 +82,10 @@ export interface DailyMarketValuationResult {
     withPe: number;
     withPb: number;
     withDividendYield: number;
+    withClosePrice: number;
+    withDividendPerShare: number;
+    withDividendFiscalYear: number;
+    withReferenceFiscalPeriod: number;
   };
   rows: ValuationRow[];
   sources: ValuationSource[];

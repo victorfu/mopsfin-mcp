@@ -67,6 +67,7 @@ describe("CompanyMasterClient", () => {
       expect(result.counts).toMatchObject({ returned, listed, otc });
       expect(result.companies.map((company) => company.code)).toEqual(codes);
       expect(result.sources).toHaveLength(market === "all" ? 2 : 1);
+      expect(result.profileCoverage.incorporationDate.reported).toBeGreaterThanOrEqual(0);
       expect(fetchMock).toHaveBeenCalledTimes(market === "all" ? 2 : 1);
     },
   );
@@ -118,6 +119,61 @@ describe("CompanyMasterClient", () => {
       "3105",
       "6488",
     ]);
+  });
+
+  it("normalizes current-snapshot profile fields without deriving par value or market cap", async () => {
+    const client = new CompanyMasterClient(
+      fixtureFetch() as typeof fetch,
+      () => new Date("2026-08-25T00:00:00.000Z"),
+      testOptions,
+    );
+
+    const result = await client.listCompanies({
+      market: "all",
+      includeFinancial: true,
+      includeKy: true,
+    });
+    const twse = result.companies.find((company) => company.code === "2330");
+    const tpex = result.companies.find((company) => company.code === "3105");
+
+    expect(twse).toMatchObject({
+      incorporationDate: "1987-02-21",
+      paidInCapitalTwd: 280_000_000_000,
+      issuedCommonShares: 25_930_380_458,
+      parValueText: "新台幣 10.0000元",
+      financialReportTypeCode: "1",
+    });
+    expect(tpex).toMatchObject({
+      incorporationDate: "1994-07-05",
+      paidInCapitalTwd: 10_000_000_000,
+      issuedCommonShares: 1_000_000_000,
+    });
+    expect(result.profileCoverage.issuedCommonShares.reported).toBe(2);
+  });
+
+  it("keeps optional profile parse failures as null with invalid_upstream status", async () => {
+    const rows = JSON.parse(twseFixture) as Array<Record<string, string>>;
+    rows[1]["成立日期"] = "20260230";
+    rows[1]["實收資本額"] = "999999999999999999999";
+    const client = new CompanyMasterClient(
+      vi.fn().mockResolvedValue(jsonResponse(JSON.stringify(rows))) as typeof fetch,
+      () => new Date("2026-08-25T00:00:00.000Z"),
+      testOptions,
+    );
+
+    const result = await client.listCompanies({
+      market: "listed",
+      includeFinancial: true,
+      includeKy: true,
+    });
+    const company = result.companies.find((item) => item.code === "2330");
+    expect(company?.incorporationDate).toBeNull();
+    expect(company?.paidInCapitalTwd).toBeNull();
+    expect(company?.profileValueStatus).toMatchObject({
+      incorporationDate: "invalid_upstream",
+      paidInCapitalTwd: "invalid_upstream",
+    });
+    expect(result.profileCoverage.incorporationDate.invalid).toBe(1);
   });
 
   it("caches each official market snapshot independently", async () => {

@@ -13,7 +13,12 @@ const verifiedExamplePrompts = [
   "查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。",
   "列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。",
   "查最新上市櫃公司估值，列出台積電與穩懋的本益比、股價淨值比、殖利率及 valueStatus。",
+  "查 2025-01-02 上市櫃公司估值，列出台積電與穩懋的 PE、PB、股利年度、參考財報期與 rawValue。",
   "查最新上市櫃月營收，列出台積電與穩懋的 MoM、YoY、資料年月及 filingCoverage。",
+  "查台積電 2025-01 月營收，標示目前修訂後 archive、來源產業名稱與資料出表日。",
+  "查台積電截至 2026-07 的最近 12 個月營收趨勢，列出 3／6 月 YoY 與加速度。",
+  "查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。",
+  "比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始報酬與量能訊號。",
   "列出全部上市公司代號，不要包含上櫃公司。",
   "列出全部上市與上櫃公司，排除金融業與 KY 公司。",
   "比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。",
@@ -34,11 +39,36 @@ describe("README example prompts", () => {
     expect(readme).not.toContain("列出最近完成交易日全部上市櫃公司的 OHLC");
   });
 
-  it("documents the twelve-tool market-data contract and official sources", () => {
-    expect(readme).toContain("十二個工具");
-    expect(readme).toContain("`get_daily_market_valuation`");
-    expect(readme).toContain("`get_monthly_revenue`");
+  it("documents the v0.3.0 fifteen-tool contract and official sources", () => {
+    const tools = [
+      "find_companies",
+      "get_stock_ohlc",
+      "get_daily_market_ohlc",
+      "get_stock_reaction_signals",
+      "get_daily_market_valuation",
+      "get_monthly_revenue",
+      "get_monthly_revenue_trend",
+      "list_companies",
+      "list_catalog",
+      "get_company_metric",
+      "get_company_metrics_batch",
+      "get_financial_statement",
+      "get_financial_note",
+      "get_industry_data",
+      "get_financial_institution_metric",
+    ];
+    expect(readme).toContain("目前版本 `0.3.0`");
+    expect(readme).toContain("十五個工具");
+    for (const tool of tools) expect(readme).toContain(`\`${tool}\``);
+    expect(readme).toContain("meta.contractVersion=mopsfin.result.v1");
+    expect(readme).toContain("meta.asOf");
+    expect(readme).toContain("action=restart_pagination");
     expect(readme).toContain("成交股數、成交金額、成交筆數與漲跌");
+    expect(readme).toContain("BWIBBU_d");
+    expect(readme).toContain("peQryDate");
+    expect(readme).toContain("t21sc03_{民國年}_{月}.csv");
+    expect(readme).toContain("MI_5MINS_HIST");
+    expect(readme).toContain("tradingIndex");
     expect(readme).toContain(
       "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL",
     );
@@ -51,6 +81,14 @@ describe("README example prompts", () => {
     expect(readme).toContain(
       "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O",
     );
+    expect(readme).toContain("不是當時發布內容的 vintage snapshot");
+    expect(readme).toContain("不是 total-return index");
+    expect(readme).toContain("sourceCoverage");
+    expect(readme).toContain("STATELESS_PAGE_VALUES_NOT_PINNED");
+    expect(readme).toContain("comparability=needs_review");
+    expect(readme).toContain("declared row count");
+    expect(readme).not.toContain("v1 都只支援 latest");
+    expect(readme).not.toContain("第一版只提供官方最新");
     expect(readme).not.toContain("不提供盤中即時報價、成交量、成交金額");
   });
 });

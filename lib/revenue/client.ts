@@ -13,7 +13,6 @@ import {
   parseOfficialNumber,
   reconcileMarket,
   selectedMarkets,
-  validateLatestQuery,
   type JsonSnapshot,
   type OfficialSourceConfig,
 } from "@/lib/market-data/client-utils";
@@ -21,12 +20,24 @@ import type {
   CurrentCompanyMasterLike,
   OfficialMarketClientOptions,
 } from "@/lib/market-data/types";
+import { MopsfinError } from "@/lib/mopsfin/errors";
+
+import { parseRevenueCsv, RevenueCsvParseError } from "./csv";
 
 import type {
   MonthlyRevenueQuery,
   MonthlyRevenueResult,
   MonthlyRevenueRow,
   MonthlyRevenueSource,
+  MonthlyRevenueIdentityTransition,
+  MonthlyRevenueTrendCompany,
+  MonthlyRevenueTrendComparability,
+  MonthlyRevenueTrendDerivedValues,
+  MonthlyRevenueTrendPoint,
+  MonthlyRevenueTrendQuery,
+  MonthlyRevenueTrendResult,
+  RevenueIdentityTransitionReason,
+  RevenueSourceCoverage,
   RevenueValueStatus,
 } from "./types";
 
@@ -36,9 +47,24 @@ interface ParsedRevenueSource {
   sourceReportDate: string;
   rows: MonthlyRevenueRow[];
   source: MonthlyRevenueSource;
+  sourceKind: "openapi" | "archive";
 }
 
-const SOURCE_CONFIGS: Record<CompanyMarket, OfficialSourceConfig> = {
+interface CsvSnapshot {
+  payload: Array<Record<string, string>>;
+  retrievedAt: string;
+}
+
+interface RevenueCsvSourceConfig extends OfficialSourceConfig {
+  dataMonth: string;
+}
+
+interface LoadedRevenueSources {
+  sourceResults: ParsedRevenueSource[];
+  warnings: string[];
+}
+
+const OPENAPI_SOURCE_CONFIGS: Record<CompanyMarket, OfficialSourceConfig> = {
   listed: {
     market: "listed",
     exchange: "TWSE",
@@ -53,11 +79,17 @@ const SOURCE_CONFIGS: Record<CompanyMarket, OfficialSourceConfig> = {
   },
 };
 
+const ARCHIVE_SUPPORTED_FROM = "2013-01";
+const YEAR_MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
+const TREND_COMPANY_LIMIT = 100;
+const TREND_CONCURRENCY = 4;
+
 const FIELDS = {
   reportDate: "出表日期",
   dataMonth: "資料年月",
   code: "公司代號",
   name: "公司名稱",
+  industryCode: "產業別",
   currentMonthRevenue: "營業收入-當月營收",
   previousMonthRevenue: "營業收入-上月營收",
   sameMonthLastYearRevenue: "營業收入-去年當月營收",
@@ -69,14 +101,127 @@ const FIELDS = {
   note: "備註",
 } as const;
 
+const CSV_FIELD_ALIASES: Partial<Record<(typeof FIELDS)[keyof typeof FIELDS], string>> = {
+  [FIELDS.currentMonthRevenue]: "當月營收",
+  [FIELDS.previousMonthRevenue]: "上月營收",
+  [FIELDS.sameMonthLastYearRevenue]: "去年當月營收",
+  [FIELDS.momPercent]: "上月比較增減(%)",
+  [FIELDS.yoyPercent]: "去年同月增減(%)",
+  [FIELDS.currentYearCumulativeRevenue]: "當月累計營收",
+  [FIELDS.previousYearCumulativeRevenue]: "去年累計營收",
+  [FIELDS.cumulativeYoyPercent]: "前期比較增減(%)",
+};
+
+const NUMERIC_ROW_FIELDS = [
+  "currentMonthRevenueTwd",
+  "previousMonthRevenueTwd",
+  "sameMonthLastYearRevenueTwd",
+  "momPercent",
+  "yoyPercent",
+  "currentYearCumulativeRevenueTwd",
+  "previousYearCumulativeRevenueTwd",
+  "cumulativeYoyPercent",
+] as const satisfies ReadonlyArray<keyof MonthlyRevenueRow>;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function validateUniversePolicy(universePolicy: unknown): asserts universePolicy is MonthlyRevenueQuery["universePolicy"] {
+  if (universePolicy !== "compatible" && universePolicy !== "strict_current_master") {
+    fail(
+      "INVALID_ARGUMENT",
+      "universe_policy 必須是 compatible 或 strict_current_master。",
+      { universePolicy },
+    );
+  }
+}
+
+function parseYearMonth(value: unknown, field: string): string {
+  if (typeof value !== "string" || !YEAR_MONTH.test(value)) {
+    fail("INVALID_ARGUMENT", `${field} 必須是 latest 或 YYYY-MM。`, {
+      field,
+      value,
+    });
+  }
+  return value;
+}
+
+function addMonths(month: string, count: number): string {
+  const match = YEAR_MONTH.exec(month);
+  if (!match) {
+    fail("INVALID_ARGUMENT", "年月必須是 YYYY-MM。", { month });
+  }
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1 + count, 1));
+  return date.toISOString().slice(0, 7);
+}
+
+function monthsEndingAt(endMonth: string, count: number): string[] {
+  const start = addMonths(endMonth, -(count - 1));
+  const values: string[] = [];
+  for (let month = start; month <= endMonth; month = addMonths(month, 1)) {
+    values.push(month);
+  }
+  return values;
+}
+
+function archiveConfig(
+  market: CompanyMarket,
+  dataMonth: string,
+): RevenueCsvSourceConfig {
+  const [year, month] = dataMonth.split("-").map(Number);
+  const rocYear = year - 1911;
+  const marketPath = market === "listed" ? "sii" : "otc";
+  return {
+    market,
+    exchange: market === "listed" ? "TWSE" : "TPEx",
+    sourceName:
+      market === "listed"
+        ? "公開資訊觀測站－上市公司歷史每月營業收入彙總表"
+        : "公開資訊觀測站－上櫃公司歷史每月營業收入彙總表",
+    sourceUrl: `https://mopsov.twse.com.tw/nas/t21/${marketPath}/t21sc03_${rocYear}_${month}.csv`,
+    dataMonth,
+  };
+}
+
+function normalizeRevenueDate(raw: unknown, field: string): string {
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    return normalizeCompactDate(raw, field);
+  }
+  const value = String(raw).trim();
+  const separated = /^(\d{2,4})[\/-](\d{1,2})[\/-](\d{1,2})$/.exec(value);
+  if (!separated) return normalizeCompactDate(value, field);
+  return normalizeCompactDate(
+    `${separated[1]}${separated[2].padStart(2, "0")}${separated[3].padStart(2, "0")}`,
+    field,
+  );
+}
+
+function normalizeRevenueMonth(raw: unknown, field: string): string {
+  if (typeof raw !== "string" && typeof raw !== "number") {
+    return normalizeCompactMonth(raw, field);
+  }
+  const value = String(raw).trim();
+  const separated = /^(\d{2,4})(?:[\/-]|年)(\d{1,2})(?:月)?$/.exec(value);
+  if (!separated) return normalizeCompactMonth(value, field);
+  return normalizeCompactMonth(
+    `${separated[1]}${separated[2].padStart(2, "0")}`,
+    field,
+  );
+}
+
 function revenueNumber(
   raw: unknown,
   multiplier = 1,
+  recognizePercentageSentinel = false,
 ): { value: number | null; status: RevenueValueStatus } {
   const parsed = parseOfficialNumber(raw);
   if (parsed.missing) return { value: null, status: "missing" };
   if (parsed.invalid || parsed.value === null) {
     return { value: null, status: "invalid_upstream" };
+  }
+  if (recognizePercentageSentinel && Math.abs(parsed.value) === 999_999.99) {
+    return { value: null, status: "missing" };
   }
   const value = parsed.value * multiplier;
   if (!Number.isFinite(value)) {
@@ -85,32 +230,33 @@ function revenueNumber(
   return { value, status: "reported" };
 }
 
-export function normalizeMonthlyRevenuePayload(
-  snapshot: JsonSnapshot,
+function normalizeMonthlyRevenueRecords(
+  records: Array<Record<string, unknown>>,
+  retrievedAt: string,
   config: OfficialSourceConfig,
+  sourceKind: ParsedRevenueSource["sourceKind"],
+  expectedDataMonth?: string,
 ): ParsedRevenueSource {
-  if (!Array.isArray(snapshot.payload) || snapshot.payload.length === 0) {
-    fail("NO_DATA", `${config.exchange} 最新月營收資料為空。`, {
+  if (records.length === 0) {
+    fail("NO_DATA", `${config.exchange} 月營收資料為空。`, {
       market: config.market,
       sourceUrl: config.sourceUrl,
+      expectedDataMonth,
     });
   }
 
   const dataMonths = new Set<string>();
   const reportDates = new Set<string>();
   const rows: MonthlyRevenueRow[] = [];
-  for (const raw of snapshot.payload) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      fail("UPSTREAM_BAD_RESPONSE", `${config.exchange} 月營收資料包含非物件資料列。`, {
-        market: config.market,
-      });
-    }
-    const record = raw as Record<string, unknown>;
-    const sourceReportDate = normalizeCompactDate(
+  for (const record of records) {
+    const sourceReportDate = normalizeRevenueDate(
       record[FIELDS.reportDate],
       FIELDS.reportDate,
     );
-    const dataMonth = normalizeCompactMonth(record[FIELDS.dataMonth], FIELDS.dataMonth);
+    const dataMonth = normalizeRevenueMonth(
+      record[FIELDS.dataMonth],
+      FIELDS.dataMonth,
+    );
     const code = normalizeRequiredText(record[FIELDS.code], FIELDS.code, config.market);
     const name = normalizeRequiredText(record[FIELDS.name], FIELDS.name, config.market);
     reportDates.add(sourceReportDate);
@@ -123,8 +269,8 @@ export function normalizeMonthlyRevenuePayload(
       record[FIELDS.sameMonthLastYearRevenue],
       1000,
     );
-    const mom = revenueNumber(record[FIELDS.momPercent]);
-    const yoy = revenueNumber(record[FIELDS.yoyPercent]);
+    const mom = revenueNumber(record[FIELDS.momPercent], 1, true);
+    const yoy = revenueNumber(record[FIELDS.yoyPercent], 1, true);
     const currentCumulative = revenueNumber(
       record[FIELDS.currentYearCumulativeRevenue],
       1000,
@@ -133,12 +279,17 @@ export function normalizeMonthlyRevenuePayload(
       record[FIELDS.previousYearCumulativeRevenue],
       1000,
     );
-    const cumulativeYoy = revenueNumber(record[FIELDS.cumulativeYoyPercent]);
+    const cumulativeYoy = revenueNumber(
+      record[FIELDS.cumulativeYoyPercent],
+      1,
+      true,
+    );
     rows.push({
       code,
       name,
       market: config.market,
       industryCode: null,
+      sourceIndustryName: normalizeOptionalText(record[FIELDS.industryCode]),
       sourceReportDate,
       currentMonthRevenueTwd: currentMonth.value,
       previousMonthRevenueTwd: previousMonth.value,
@@ -168,36 +319,531 @@ export function normalizeMonthlyRevenuePayload(
       dataMonths: [...dataMonths],
       sourceReportDates: [...reportDates],
       eligibleRowCount: rows.length,
+      sourceUrl: config.sourceUrl,
     });
   }
-  assertUniqueCodes(rows, `${config.exchange} 最新月營收資料`);
-  rows.sort((left, right) => left.code.localeCompare(right.code));
   const dataMonth = [...dataMonths][0];
+  if (expectedDataMonth && dataMonth !== expectedDataMonth) {
+    fail("UPSTREAM_BAD_RESPONSE", `${config.exchange} 歷史月營收檔案年月與查詢不符。`, {
+      market: config.market,
+      expectedDataMonth,
+      actualDataMonth: dataMonth,
+      sourceUrl: config.sourceUrl,
+    });
+  }
+  assertUniqueCodes(rows, `${config.exchange} ${dataMonth} 月營收資料`);
+  rows.sort((left, right) => left.code.localeCompare(right.code));
   const sourceReportDate = [...reportDates][0];
   return {
     market: config.market,
     dataMonth,
     sourceReportDate,
     rows,
+    sourceKind,
     source: {
       market: config.market,
       exchange: config.exchange,
       sourceName: config.sourceName,
       sourceUrl: config.sourceUrl,
-      retrievedAt: snapshot.retrievedAt,
-      rawCount: snapshot.payload.length,
+      retrievedAt,
+      rawCount: records.length,
       eligibleRowCount: rows.length,
       dataMonth,
       sourceReportDate,
       sourceAmountUnit: "thousand_TWD",
       outputAmountUnit: "TWD",
       amountMultiplier: 1000,
+      integrity: {
+        format: sourceKind === "archive" ? "rfc4180_csv" : "json_array",
+        structure: "verified",
+        snapshotIdentity: "verified",
+        eligibleCompanyCodesUnique: "verified",
+        officialDeclaredRowCount: null,
+        rowsetCompleteness: "unverified_no_official_declared_count",
+      },
     },
   };
 }
 
+export function normalizeMonthlyRevenuePayload(
+  snapshot: JsonSnapshot,
+  config: OfficialSourceConfig,
+): ParsedRevenueSource {
+  if (!Array.isArray(snapshot.payload) || snapshot.payload.length === 0) {
+    fail("NO_DATA", `${config.exchange} 最新月營收資料為空。`, {
+      market: config.market,
+      sourceUrl: config.sourceUrl,
+    });
+  }
+
+  const records: Array<Record<string, unknown>> = [];
+  for (const raw of snapshot.payload) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      fail("UPSTREAM_BAD_RESPONSE", `${config.exchange} 月營收資料包含非物件資料列。`, {
+        market: config.market,
+      });
+    }
+    records.push(raw as Record<string, unknown>);
+  }
+  return normalizeMonthlyRevenueRecords(
+    records,
+    snapshot.retrievedAt,
+    config,
+    "openapi",
+  );
+}
+
+export function normalizeMonthlyRevenueCsv(
+  snapshot: CsvSnapshot,
+  config: RevenueCsvSourceConfig,
+): ParsedRevenueSource {
+  const records = snapshot.payload.map((record) => {
+    const normalized: Record<string, unknown> = { ...record };
+    for (const [target, alias] of Object.entries(CSV_FIELD_ALIASES)) {
+      if (normalized[target] === undefined && alias) {
+        normalized[target] = record[alias];
+      }
+    }
+    return normalized;
+  });
+  return normalizeMonthlyRevenueRecords(
+    records,
+    snapshot.retrievedAt,
+    config,
+    "archive",
+    config.dataMonth,
+  );
+}
+
+class OfficialRevenueCsvLoader {
+  private readonly timeoutMs: number;
+  private readonly retryDelayMs: number;
+  private readonly maxAttempts: number;
+  private readonly cacheTtlMs: number;
+  private readonly cache = new Map<
+    string,
+    { expiresAt: number; value: CsvSnapshot }
+  >();
+  private readonly pending = new Map<string, Promise<CsvSnapshot>>();
+
+  constructor(
+    private readonly fetchImpl: typeof fetch,
+    private readonly now: () => Date,
+    options: OfficialMarketClientOptions,
+  ) {
+    this.timeoutMs = options.timeoutMs ?? 20_000;
+    this.retryDelayMs = options.retryDelayMs ?? 250;
+    this.maxAttempts = options.maxAttempts ?? 2;
+    this.cacheTtlMs = options.cacheTtlMs ?? 5 * 60 * 1000;
+  }
+
+  async get(config: RevenueCsvSourceConfig): Promise<CsvSnapshot> {
+    const now = this.now().getTime();
+    const cached = this.cache.get(config.sourceUrl);
+    if (cached && cached.expiresAt > now) return cached.value;
+    const inFlight = this.pending.get(config.sourceUrl);
+    if (inFlight) return inFlight;
+
+    const request = this.requestCsv(config)
+      .then((snapshot) => {
+        this.cache.set(config.sourceUrl, {
+          expiresAt: this.now().getTime() + this.cacheTtlMs,
+          value: snapshot,
+        });
+        return snapshot;
+      })
+      .finally(() => this.pending.delete(config.sourceUrl));
+    this.pending.set(config.sourceUrl, request);
+    return request;
+  }
+
+  private async requestCsv(config: RevenueCsvSourceConfig): Promise<CsvSnapshot> {
+    let lastError: MopsfinError | undefined;
+
+    for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      try {
+        const response = await this.fetchImpl(config.sourceUrl, {
+          method: "GET",
+          cache: "no-store",
+          redirect: "error",
+          signal: controller.signal,
+          headers: {
+            Accept: "text/csv,text/plain;q=0.9,*/*;q=0.1",
+            "User-Agent": "mopsfin-mcp/0.3.0 (+https://mopsfin.twse.com.tw/)",
+          },
+        });
+        const body = await response.text();
+        if (response.ok) {
+          try {
+            return {
+              payload: parseRevenueCsv(body),
+              retrievedAt: this.now().toISOString(),
+            };
+          } catch (error) {
+            lastError = new MopsfinError(
+              "UPSTREAM_BAD_RESPONSE",
+              `${config.exchange} ${config.sourceName}不是有效 RFC 4180 CSV。`,
+              {
+                cause: error,
+                details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+              },
+            );
+          }
+        } else {
+          lastError = new MopsfinError(
+            response.status === 429
+              ? "UPSTREAM_RATE_LIMITED"
+              : response.status === 404
+                ? "NO_DATA"
+                : "UPSTREAM_BAD_RESPONSE",
+            `${config.exchange} ${config.sourceName}回傳 HTTP ${response.status}。`,
+            {
+              status: response.status,
+              details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+            },
+          );
+          if (response.status !== 429 && response.status < 500) throw lastError;
+        }
+      } catch (error) {
+        if (error instanceof MopsfinError) {
+          lastError = error;
+          if (
+            error.status !== undefined &&
+            error.status < 500 &&
+            error.status !== 429
+          ) {
+            throw error;
+          }
+        } else if (controller.signal.aborted) {
+          lastError = new MopsfinError(
+            "UPSTREAM_TIMEOUT",
+            `${config.exchange} ${config.sourceName}查詢逾時。`,
+            {
+              cause: error,
+              details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+            },
+          );
+        } else {
+          lastError = new MopsfinError(
+            "UPSTREAM_BAD_RESPONSE",
+            `${config.exchange} ${config.sourceName}網路查詢失敗。`,
+            {
+              cause: error,
+              details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+            },
+          );
+        }
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (attempt + 1 < this.maxAttempts) await delay(this.retryDelayMs);
+    }
+
+    throw (
+      lastError ??
+      new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        `${config.exchange} ${config.sourceName}查詢失敗。`,
+      )
+    );
+  }
+}
+
+function sourceErrorLabel(error: unknown): string {
+  if (error instanceof MopsfinError) return error.code;
+  if (error instanceof RevenueCsvParseError) return error.name;
+  return "UNKNOWN_ERROR";
+}
+
+function reconcileSameMonthSources(
+  openapi: ParsedRevenueSource,
+  archive: ParsedRevenueSource,
+): { selected: ParsedRevenueSource; warnings: string[] } {
+  if (
+    openapi.market !== archive.market ||
+    openapi.dataMonth !== archive.dataMonth
+  ) {
+    fail("UPSTREAM_BAD_RESPONSE", "OpenAPI 與 archive 月營收快照無法對齊。", {
+      openapi: { market: openapi.market, dataMonth: openapi.dataMonth },
+      archive: { market: archive.market, dataMonth: archive.dataMonth },
+    });
+  }
+
+  const openapiByCode = new Map(openapi.rows.map((row) => [row.code, row]));
+  const archiveByCode = new Map(archive.rows.map((row) => [row.code, row]));
+  for (const [code, openapiRow] of openapiByCode) {
+    const archiveRow = archiveByCode.get(code);
+    if (!archiveRow) continue;
+    const conflictingFields = NUMERIC_ROW_FIELDS.filter(
+      (field) => openapiRow[field] !== archiveRow[field],
+    );
+    if (conflictingFields.length > 0) {
+      fail(
+        "UPSTREAM_BAD_RESPONSE",
+        "OpenAPI 與 archive 的同月同公司營收數值不一致。",
+        {
+          market: openapi.market,
+          dataMonth: openapi.dataMonth,
+          companyCode: code,
+          conflictingFields,
+          openapiUrl: openapi.source.sourceUrl,
+          archiveUrl: archive.source.sourceUrl,
+        },
+      );
+    }
+  }
+
+  const openapiCodes = [...openapiByCode.keys()].sort();
+  const archiveCodes = [...archiveByCode.keys()].sort();
+  const rowsetDiffers =
+    openapiCodes.length !== archiveCodes.length ||
+    openapiCodes.some((code, index) => archiveCodes[index] !== code);
+  const selected =
+    archive.sourceReportDate >= openapi.sourceReportDate ? archive : openapi;
+  return {
+    selected,
+    warnings: rowsetDiffers
+      ? [
+          `${openapi.market} ${openapi.dataMonth} 的 OpenAPI 與 archive 公司列集合不同；數值重疊列已核對，並採用出表日期較新的 ${selected.sourceKind} 快照。`,
+        ]
+      : [],
+  };
+}
+
+async function mapWithConcurrency<T, U>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<U>,
+): Promise<U[]> {
+  const output = new Array<U>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        output[index] = await mapper(values[index], index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return output;
+}
+
+function uniqueSources(results: ParsedRevenueSource[]): MonthlyRevenueSource[] {
+  const byUrl = new Map<string, MonthlyRevenueSource>();
+  for (const result of results) byUrl.set(result.source.sourceUrl, result.source);
+  return [...byUrl.values()].sort((left, right) =>
+    `${left.dataMonth}:${left.market}`.localeCompare(
+      `${right.dataMonth}:${right.market}`,
+    ),
+  );
+}
+
+function roundPercent(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function trendStatusForOfficial(
+  status: RevenueValueStatus,
+): "reported" | "insufficient_data" | "invalid_upstream" {
+  if (status === "reported") return "reported";
+  return status === "invalid_upstream" ? "invalid_upstream" : "insufficient_data";
+}
+
+function unverifiedSourceCoverage(): RevenueSourceCoverage {
+  return {
+    status: "unverified",
+    method: "structure_only_no_official_declared_count",
+    complete: false,
+  };
+}
+
+function needsReviewDerivedTrendValues(): MonthlyRevenueTrendDerivedValues {
+  return {
+    latestYoyPercent: null,
+    rolling3MonthYoyPercent: null,
+    rolling6MonthYoyPercent: null,
+    yoyAccelerationVs3MonthsAgoPp: null,
+    positiveYoyMonthsInWindow: null,
+    reportedYoyMonthsInWindow: null,
+    consecutivePositiveYoyMonths: null,
+    valueStatus: {
+      latestYoyPercent: "needs_review",
+      rolling3MonthYoyPercent: "needs_review",
+      rolling6MonthYoyPercent: "needs_review",
+      yoyAccelerationVs3MonthsAgoPp: "needs_review",
+      positiveYoyMonthsInWindow: "needs_review",
+      reportedYoyMonthsInWindow: "needs_review",
+      consecutivePositiveYoyMonths: "needs_review",
+    },
+  };
+}
+
+function trendComparability(
+  observed: Array<{ dataMonth: string; row: MonthlyRevenueRow }>,
+): MonthlyRevenueTrendComparability {
+  const transitions: MonthlyRevenueIdentityTransition[] = [];
+  for (let index = 1; index < observed.length; index += 1) {
+    const previous = observed[index - 1];
+    const current = observed[index];
+    const reasons: RevenueIdentityTransitionReason[] = [];
+    if (previous.row.name !== current.row.name) {
+      reasons.push("observed_name_transition");
+    }
+    if (previous.row.market !== current.row.market) {
+      reasons.push("observed_market_transition");
+    }
+    if (reasons.length === 0) continue;
+    transitions.push({
+      dataMonth: current.dataMonth,
+      fromName: previous.row.name,
+      toName: current.row.name,
+      fromMarket: previous.row.market,
+      toMarket: current.row.market,
+      reasons,
+    });
+  }
+  const reasons = [
+    ...new Set(transitions.flatMap((transition) => transition.reasons)),
+  ];
+  return {
+    status: transitions.length === 0 ? "comparable" : "needs_review",
+    reasons,
+    transitions,
+  };
+}
+
+function rollingYoy(
+  points: MonthlyRevenueTrendPoint[],
+  months: number,
+): { value: number | null; status: "reported" | "insufficient_data" | "invalid_upstream" } {
+  if (points.length < months) return { value: null, status: "insufficient_data" };
+  const selected = points.slice(-months);
+  const statuses = selected.flatMap((point) => [
+    point.valueStatus.currentMonthRevenueTwd,
+    point.valueStatus.sameMonthLastYearRevenueTwd,
+  ]);
+  if (statuses.includes("invalid_upstream")) {
+    return { value: null, status: "invalid_upstream" };
+  }
+  if (statuses.some((status) => status !== "reported")) {
+    return { value: null, status: "insufficient_data" };
+  }
+  const current = selected.reduce(
+    (sum, point) => sum + (point.currentMonthRevenueTwd as number),
+    0,
+  );
+  const previous = selected.reduce(
+    (sum, point) => sum + (point.sameMonthLastYearRevenueTwd as number),
+    0,
+  );
+  if (previous <= 0) return { value: null, status: "insufficient_data" };
+  return {
+    value: roundPercent(100 * (current / previous - 1)),
+    status: "reported",
+  };
+}
+
+function derivedTrendValues(
+  points: MonthlyRevenueTrendPoint[],
+): MonthlyRevenueTrendDerivedValues {
+  const latest = points.at(-1) as MonthlyRevenueTrendPoint;
+  const latestStatus = trendStatusForOfficial(latest.valueStatus.yoyPercent);
+  const rolling3 = rollingYoy(points, 3);
+  const rolling6 = rollingYoy(points, 6);
+  const threeMonthsAgo = points.at(-4);
+  let acceleration: number | null = null;
+  let accelerationStatus: "reported" | "insufficient_data" | "invalid_upstream" =
+    "insufficient_data";
+  if (threeMonthsAgo) {
+    const comparisonStatuses = [
+      latest.valueStatus.yoyPercent,
+      threeMonthsAgo.valueStatus.yoyPercent,
+    ];
+    if (comparisonStatuses.includes("invalid_upstream")) {
+      accelerationStatus = "invalid_upstream";
+    } else if (comparisonStatuses.every((status) => status === "reported")) {
+      acceleration = roundPercent(
+        (latest.yoyPercent as number) - (threeMonthsAgo.yoyPercent as number),
+      );
+      accelerationStatus = "reported";
+    }
+  }
+
+  const reportedYoy = points.filter(
+    (point) => point.valueStatus.yoyPercent === "reported",
+  );
+  const reportedYoyMonthsInWindow = reportedYoy.length;
+  const positiveYoyMonthsInWindow = reportedYoy.filter(
+    (point) => (point.yoyPercent as number) > 0,
+  ).length;
+  const hasInvalidYoy = points.some(
+    (point) => point.valueStatus.yoyPercent === "invalid_upstream",
+  );
+  const windowStatus =
+    reportedYoyMonthsInWindow === points.length
+      ? "reported"
+      : reportedYoyMonthsInWindow > 0
+        ? "partial"
+        : hasInvalidYoy
+          ? "invalid_upstream"
+          : "insufficient_data";
+
+  let consecutivePositiveYoyMonths = 0;
+  let consecutiveStatus: MonthlyRevenueTrendDerivedValues["valueStatus"]["consecutivePositiveYoyMonths"] =
+    "reported";
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const point = points[index];
+    if (point.valueStatus.yoyPercent !== "reported") {
+      consecutiveStatus =
+        consecutivePositiveYoyMonths > 0
+          ? "partial"
+          : trendStatusForOfficial(point.valueStatus.yoyPercent);
+      break;
+    }
+    if ((point.yoyPercent as number) <= 0) break;
+    consecutivePositiveYoyMonths += 1;
+  }
+
+  return {
+    latestYoyPercent:
+      latest.valueStatus.yoyPercent === "reported" ? latest.yoyPercent : null,
+    rolling3MonthYoyPercent: rolling3.value,
+    rolling6MonthYoyPercent: rolling6.value,
+    yoyAccelerationVs3MonthsAgoPp: acceleration,
+    positiveYoyMonthsInWindow,
+    reportedYoyMonthsInWindow,
+    consecutivePositiveYoyMonths,
+    valueStatus: {
+      latestYoyPercent: latestStatus,
+      rolling3MonthYoyPercent: rolling3.status,
+      rolling6MonthYoyPercent: rolling6.status,
+      yoyAccelerationVs3MonthsAgoPp: accelerationStatus,
+      positiveYoyMonthsInWindow: windowStatus,
+      reportedYoyMonthsInWindow: "reported",
+      consecutivePositiveYoyMonths: consecutiveStatus,
+    },
+  };
+}
+
+function normalizeTrendCompanyCodes(companyCodes: unknown): string[] {
+  if (!Array.isArray(companyCodes)) {
+    fail("INVALID_ARGUMENT", "company_codes 必須包含 1 至 100 個四碼公司代號。");
+  }
+  const normalized = normalizeRequestedCodes(companyCodes as string[]);
+  if (!normalized || normalized.length > TREND_COMPANY_LIMIT) {
+    fail("INVALID_ARGUMENT", "company_codes 必須包含 1 至 100 個四碼公司代號。");
+  }
+  return normalized;
+}
+
 export class MonthlyRevenueClient {
   private readonly loader: OfficialJsonLoader;
+  private readonly archiveLoader: OfficialRevenueCsvLoader;
 
   constructor(
     fetchImpl: typeof fetch = fetch,
@@ -206,32 +852,47 @@ export class MonthlyRevenueClient {
     options: OfficialMarketClientOptions = {},
   ) {
     this.loader = new OfficialJsonLoader(fetchImpl, now, options);
+    this.archiveLoader = new OfficialRevenueCsvLoader(fetchImpl, now, options);
   }
 
   async getMonthlyRevenue(query: MonthlyRevenueQuery): Promise<MonthlyRevenueResult> {
-    validateLatestQuery(query.dataMonth, "data_month", query.universePolicy);
+    validateUniversePolicy(query.universePolicy);
+    const isLatest = query.dataMonth === "latest";
+    const explicitMonth = isLatest
+      ? null
+      : parseYearMonth(query.dataMonth, "data_month");
+    if (explicitMonth && explicitMonth < ARCHIVE_SUPPORTED_FROM) {
+      fail("INVALID_ARGUMENT", "data_month 早於歷史月營收支援範圍。", {
+        supportedFrom: ARCHIVE_SUPPORTED_FROM,
+      });
+    }
+    if (explicitMonth && query.universePolicy === "strict_current_master") {
+      fail(
+        "INVALID_ARGUMENT",
+        "歷史月營收不能使用 strict_current_master；請改用 compatible，以官方歷史列為準並將目前 master 核對視為輔助資訊。",
+        { dataMonth: explicitMonth },
+      );
+    }
     const companyCodes = normalizeRequestedCodes(query.companyCodes);
     const markets = selectedMarkets(query.market);
 
-    const [sourceResults, master] = await Promise.all([
-      Promise.all(
-        markets.map(async (market) => {
-          const config = SOURCE_CONFIGS[market];
-          return normalizeMonthlyRevenuePayload(await this.loader.get(config), config);
-        }),
-      ),
+    const [loaded, master] = await Promise.all([
+      isLatest
+        ? this.loadLatestSources(markets)
+        : this.loadArchiveSources(markets, explicitMonth as string),
       this.companyMaster.listCompanies({
         market: query.market,
         includeFinancial: true,
         includeKy: true,
       }),
     ]);
+    const sourceResults = loaded.sourceResults;
 
     const dataMonths = [...new Set(sourceResults.map((result) => result.dataMonth))];
     if (dataMonths.length !== 1) {
       fail(
         "NO_DATA",
-        "上市與上櫃最新月營收資料年月不一致，請稍後重試或分市場查詢。",
+        "上市與上櫃月營收資料年月不一致，請稍後重試或分市場查詢。",
         {
           sourceMonths: sourceResults.map((result) => ({
             market: result.market,
@@ -268,8 +929,9 @@ export class MonthlyRevenueClient {
       ? companyCodes.filter((code) => !returnedCodes.has(code))
       : [];
     if (rows.length === 0) {
-      fail("NO_DATA", "指定市場與公司條件查無最新官方月營收資料。", {
+      fail("NO_DATA", "指定市場、年月與公司條件查無官方月營收資料。", {
         market: query.market,
+        dataMonth: query.dataMonth,
         missingCompanyCodes,
       });
     }
@@ -285,23 +947,58 @@ export class MonthlyRevenueClient {
     const filingMissingCompanyCodes = reconciliation
       .flatMap((value) => value.masterMissingCodes)
       .sort();
+    const filingCoverageComplete =
+      isLatest && filingMissingCompanyCodes.length === 0;
     const filingCoverage = {
       expectedCompanyCount,
       reportedCompanyCount,
       missingCompanyCodes: filingMissingCompanyCodes,
       coverageRatio:
         expectedCompanyCount === 0 ? 0 : reportedCompanyCount / expectedCompanyCount,
-      complete: filingMissingCompanyCodes.length === 0,
+      complete: filingCoverageComplete,
+      status: isLatest
+        ? filingCoverageComplete
+          ? ("complete" as const)
+          : ("partial" as const)
+        : ("historical_cross_timepoint_unverified" as const),
     };
+    const currentMasterExactMatch =
+      isLatest && reconciliation.every((value) => value.coverageComplete);
+    const sourceCoverage: RevenueSourceCoverage = currentMasterExactMatch
+      ? {
+          status: "verified",
+          method: "current_master_exact_match",
+          complete: true,
+        }
+      : unverifiedSourceCoverage();
 
     const warnings = [
-      "latest 代表官方目前彙總的最近資料年月；資料可能在法定申報期限內持續增加。",
+      ...(isLatest
+        ? [
+            "latest 先以 OpenAPI 發現各市場目前月份，再與同月／前一月 MOPS archive 核對並選擇最新共同有效月份；資料可能在法定申報期限內持續增加。",
+          ]
+        : [
+            "歷史 MOPS CSV 是目前可取得的修訂後檔案，不是當時發布內容的 vintage snapshot。",
+            "歷史公司身分與 sourceIndustryName 使用該月官方列；industryCode 與 reconciliation 來自目前 company master，只供輔助且不代表歷史上市櫃母體完整性。",
+            "MOPS 歷史月營收 CSV 沒有官方 declared row count、footer 或 checksum；本工具已驗證 RFC 4180、必要欄位、單一資料年月／出表日與公司代號唯一性，但不能證明全市場 rowset 完整，因此 coverageComplete=false。",
+          ]),
       "營收金額已由官方仟元乘以 1,000 正規化為 TWD；百分比沿用官方值，不由本工具重算。",
       "sourceReportDate 是官方資料集出表日期，不是個別公司的申報時間 filedAt。",
+      ...loaded.warnings,
     ];
-    if (!filingCoverage.complete) {
+    if (
+      (isLatest && !filingCoverage.complete) ||
+      (!isLatest && filingMissingCompanyCodes.length > 0)
+    ) {
       warnings.push(
-        `目前公司母體尚有 ${filingMissingCompanyCodes.length} 家未出現在最新月營收彙總；可能源於申報進度、資料適用性或公司狀態差異，請使用 filingCoverage 判讀並回查官方申報。`,
+        isLatest
+          ? `目前公司母體尚有 ${filingMissingCompanyCodes.length} 家未出現在最新月營收彙總；可能源於申報進度、資料適用性或公司狀態差異，請使用 filingCoverage 判讀並回查官方申報。`
+          : `目前公司母體有 ${filingMissingCompanyCodes.length} 家未出現在 ${dataMonths[0]} 歷史檔；這是跨時點 master 差異，不可直接解讀為當月漏申報。`,
+      );
+    }
+    if (isLatest && !sourceCoverage.complete) {
+      warnings.push(
+        "最新月營收 rowset 未與目前 master 完全吻合；這可能是正常申報進度，但因官方來源沒有 declared row count，也不能由檔案本身證明 rowset 完整，請分別檢查 sourceCoverage 與 filingCoverage。",
       );
     }
     const marketOnlyCodes = reconciliation.flatMap((value) => value.marketOnlyCodes);
@@ -309,7 +1006,9 @@ export class MonthlyRevenueClient {
       warnings.push(
         query.universePolicy === "strict_current_master"
           ? `以下官方申報代號不在目前公司母體，已依 strict_current_master 排除：${marketOnlyCodes.join("、")}。`
-          : `以下官方申報代號不在目前公司母體，已依 compatible 保留且 industryCode 為 null：${marketOnlyCodes.join("、")}。`,
+          : isLatest
+            ? `以下官方申報代號不在目前公司母體，已依 compatible 保留且 industryCode 為 null：${marketOnlyCodes.join("、")}。`
+            : `以下歷史官方代號不在目前公司母體，已依 compatible 保留且 industryCode 為 null；請使用 sourceIndustryName：${marketOnlyCodes.join("、")}。`,
       );
     }
     if (missingCompanyCodes.length > 0) {
@@ -338,7 +1037,8 @@ export class MonthlyRevenueClient {
       dataMonth: dataMonths[0],
       currency: "TWD",
       amountUnit: "TWD",
-      coverageComplete: true,
+      coverageComplete: isLatest,
+      sourceCoverage,
       selectionComplete: missingCompanyCodes.length === 0,
       missingCompanyCodes,
       filingCoverage,
@@ -350,6 +1050,315 @@ export class MonthlyRevenueClient {
       },
       rows,
       sources: sourceResults.map((result) => result.source),
+      warnings,
+    };
+  }
+
+  async getMonthlyRevenueTrend(
+    query: MonthlyRevenueTrendQuery,
+  ): Promise<MonthlyRevenueTrendResult> {
+    validateUniversePolicy(query.universePolicy);
+    if (query.universePolicy !== "compatible") {
+      fail(
+        "INVALID_ARGUMENT",
+        "月營收趨勢跨越歷史月份，不能使用 strict_current_master；請改用 compatible。",
+      );
+    }
+    const companyCodes = normalizeTrendCompanyCodes(query.companyCodes);
+    if (
+      !Number.isInteger(query.lookbackMonths) ||
+      query.lookbackMonths < 3 ||
+      query.lookbackMonths > 24
+    ) {
+      fail("INVALID_ARGUMENT", "lookback_months 必須是 3 至 24 的整數。", {
+        lookbackMonths: query.lookbackMonths,
+      });
+    }
+    const markets = selectedMarkets(query.market);
+
+    let endMonth: string;
+    let latest: LoadedRevenueSources | null = null;
+    if (query.endMonth === "latest") {
+      latest = await this.loadLatestSources(markets);
+      endMonth = latest.sourceResults[0].dataMonth;
+    } else {
+      endMonth = parseYearMonth(query.endMonth, "end_month");
+    }
+    const months = monthsEndingAt(endMonth, query.lookbackMonths);
+    if ((months[0] as string) < ARCHIVE_SUPPORTED_FROM) {
+      fail("INVALID_ARGUMENT", "月營收趨勢起始月份早於歷史資料支援範圍。", {
+        supportedFrom: ARCHIVE_SUPPORTED_FROM,
+        requestedStartMonth: months[0],
+      });
+    }
+    const masterPromise = this.companyMaster.listCompanies({
+      market: query.market,
+      includeFinancial: true,
+      includeKy: true,
+    });
+
+    const historicalMonths = latest
+      ? months.filter((month) => month !== endMonth)
+      : months;
+    const [historical, currentMaster] = await Promise.all([
+      mapWithConcurrency(
+        historicalMonths,
+        TREND_CONCURRENCY,
+        (month) => this.loadArchiveSources(markets, month),
+      ),
+      masterPromise,
+    ]);
+    const currentMasterByCode = new Map(
+      currentMaster.companies.map((company) => [company.code, company]),
+    );
+    const loadedByMonth = new Map<string, LoadedRevenueSources>();
+    for (let index = 0; index < historicalMonths.length; index += 1) {
+      loadedByMonth.set(historicalMonths[index], historical[index]);
+    }
+    if (latest) loadedByMonth.set(endMonth, latest);
+
+    const rowsByMonth = new Map<string, Map<string, MonthlyRevenueRow>>();
+    const allSourceResults: ParsedRevenueSource[] = [];
+    const warnings = [
+      "歷史 MOPS CSV 是目前可取得的修訂後檔案，不是各月份當時發布內容的 vintage snapshot。",
+      "MOPS 歷史月營收 CSV 沒有官方 declared row count、footer 或 checksum；各檔雖已通過格式、snapshot identity 與唯一鍵檢查，完整 rowset 仍不可證明，因此 coverageComplete=false。",
+      "rolling 3/6 個月 YoY = 100 × (期間當月營收合計 ÷ 去年同月營收合計 − 1)；所有必要值須為 reported 且去年同期合計須大於 0。",
+      "yoyAccelerationVs3MonthsAgoPp = 最新月份官方 YoY − 三個月前官方 YoY；不以模型補值。",
+    ];
+    for (const month of months) {
+      const loaded = loadedByMonth.get(month) as LoadedRevenueSources;
+      warnings.push(...loaded.warnings);
+      allSourceResults.push(...loaded.sourceResults);
+      const byCode = new Map<string, MonthlyRevenueRow>();
+      for (const row of loaded.sourceResults.flatMap((source) => source.rows)) {
+        if (!companyCodes.includes(row.code)) continue;
+        if (byCode.has(row.code)) {
+          fail(
+            "UPSTREAM_BAD_RESPONSE",
+            "同一月份在多個市場出現相同公司代號，無法建立唯一趨勢。",
+            { dataMonth: month, companyCode: row.code },
+          );
+        }
+        byCode.set(row.code, row);
+      }
+      rowsByMonth.set(month, byCode);
+    }
+
+    const companies: MonthlyRevenueTrendCompany[] = [];
+    const missingCompanyCodes: string[] = [];
+    for (const code of companyCodes) {
+      const observed = months
+        .flatMap((dataMonth) => {
+          const row = rowsByMonth.get(dataMonth)?.get(code);
+          return row ? [{ dataMonth, row }] : [];
+        });
+      if (observed.length === 0) {
+        missingCompanyCodes.push(code);
+        continue;
+      }
+      const latestObserved = observed.at(-1)?.row as MonthlyRevenueRow;
+      const comparability = trendComparability(observed);
+      const points: MonthlyRevenueTrendPoint[] = months.map((month) => {
+        const row = rowsByMonth.get(month)?.get(code);
+        if (!row) {
+          return {
+            dataMonth: month,
+            name: null,
+            market: null,
+            sourceReportDate: null,
+            sourceIndustryName: null,
+            currentMonthRevenueTwd: null,
+            sameMonthLastYearRevenueTwd: null,
+            momPercent: null,
+            yoyPercent: null,
+            valueStatus: {
+              currentMonthRevenueTwd: "missing",
+              sameMonthLastYearRevenueTwd: "missing",
+              momPercent: "missing",
+              yoyPercent: "missing",
+            },
+          };
+        }
+        return {
+          dataMonth: month,
+          name: row.name,
+          market: row.market,
+          sourceReportDate: row.sourceReportDate,
+          sourceIndustryName: row.sourceIndustryName,
+          currentMonthRevenueTwd: row.currentMonthRevenueTwd,
+          sameMonthLastYearRevenueTwd: row.sameMonthLastYearRevenueTwd,
+          momPercent: row.momPercent,
+          yoyPercent: row.yoyPercent,
+          valueStatus: {
+            currentMonthRevenueTwd: row.valueStatus.currentMonthRevenueTwd,
+            sameMonthLastYearRevenueTwd:
+              row.valueStatus.sameMonthLastYearRevenueTwd,
+            momPercent: row.valueStatus.momPercent,
+            yoyPercent: row.valueStatus.yoyPercent,
+          },
+        };
+      });
+      companies.push({
+        code,
+        name: latestObserved.name,
+        market: latestObserved.market,
+        industryCode: currentMasterByCode.get(code)?.industryCode ?? null,
+        sourceIndustryName: latestObserved.sourceIndustryName,
+        observedNames: [...new Set(observed.map(({ row }) => row.name))],
+        observedMarkets: [...new Set(observed.map(({ row }) => row.market))],
+        comparability,
+        missingMonths: points
+          .filter((point) => point.sourceReportDate === null)
+          .map((point) => point.dataMonth),
+        points,
+        derived:
+          comparability.status === "comparable"
+            ? derivedTrendValues(points)
+            : needsReviewDerivedTrendValues(),
+      });
+    }
+    if (companies.length === 0) {
+      fail("NO_DATA", "指定公司與月份範圍查無官方月營收趨勢資料。", {
+        companyCodes,
+        startMonth: months[0],
+        endMonth,
+      });
+    }
+    if (missingCompanyCodes.length > 0) {
+      warnings.push(
+        `以下指定代號在整個趨勢範圍皆無官方列：${missingCompanyCodes.join("、")}。`,
+      );
+    }
+    const partialCompanies = companies.filter(
+      (company) => company.missingMonths.length > 0,
+    );
+    if (partialCompanies.length > 0) {
+      warnings.push(
+        `${partialCompanies.length} 家公司的趨勢期間含缺月；缺月 points 明確回傳 missing，衍生值不補值。`,
+      );
+    }
+    const transitionCompanies = companies.filter(
+      (company) => company.comparability.status === "needs_review",
+    );
+    if (transitionCompanies.length > 0) {
+      warnings.push(
+        `${transitionCompanies.length} 家公司在視窗內出現官方名稱或市場轉換；來源沒有改名／轉板／代號重用旗標，無法證明為同一可比 identity，因此 derived 全數回 null 與 needs_review，原始 points 保留供人工核對。`,
+      );
+    }
+
+    const sourceCoverage = unverifiedSourceCoverage();
+
+    return {
+      query: { ...query, companyCodes },
+      startMonth: months[0] as string,
+      endMonth,
+      currency: "TWD",
+      amountUnit: "TWD",
+      coverageComplete: sourceCoverage.complete,
+      sourceCoverage,
+      selectionComplete: missingCompanyCodes.length === 0,
+      missingCompanyCodes,
+      counts: {
+        requestedCompanies: companyCodes.length,
+        returnedCompanies: companies.length,
+        requestedMonths: months.length,
+      },
+      companies,
+      sources: uniqueSources(allSourceResults),
+      warnings: [...new Set(warnings)],
+    };
+  }
+
+  private async loadArchiveSource(
+    market: CompanyMarket,
+    dataMonth: string,
+  ): Promise<ParsedRevenueSource> {
+    const config = archiveConfig(market, dataMonth);
+    return normalizeMonthlyRevenueCsv(await this.archiveLoader.get(config), config);
+  }
+
+  private async loadArchiveSources(
+    markets: CompanyMarket[],
+    dataMonth: string,
+  ): Promise<LoadedRevenueSources> {
+    const sourceResults = await Promise.all(
+      markets.map((market) => this.loadArchiveSource(market, dataMonth)),
+    );
+    return { sourceResults, warnings: [] };
+  }
+
+  private async loadLatestSources(
+    markets: CompanyMarket[],
+  ): Promise<LoadedRevenueSources> {
+    const perMarket = await Promise.all(
+      markets.map(async (market) => {
+        const config = OPENAPI_SOURCE_CONFIGS[market];
+        const openapi = normalizeMonthlyRevenuePayload(
+          await this.loader.get(config),
+          config,
+        );
+        const candidateMonths = [
+          openapi.dataMonth,
+          addMonths(openapi.dataMonth, -1),
+        ].filter((month) => month >= ARCHIVE_SUPPORTED_FROM);
+        const candidates = new Map<string, ParsedRevenueSource>([
+          [openapi.dataMonth, openapi],
+        ]);
+        const warnings: string[] = [];
+
+        for (const month of candidateMonths) {
+          let archive: ParsedRevenueSource;
+          try {
+            archive = await this.loadArchiveSource(market, month);
+          } catch (error) {
+            if (month === openapi.dataMonth) {
+              warnings.push(
+                `${market} ${month} archive 無法取得（${sourceErrorLabel(error)}），本次保留 OpenAPI fallback。`,
+              );
+            }
+            continue;
+          }
+          if (month === openapi.dataMonth) {
+            const reconciled = reconcileSameMonthSources(openapi, archive);
+            candidates.set(month, reconciled.selected);
+            warnings.push(...reconciled.warnings);
+          } else {
+            candidates.set(month, archive);
+          }
+        }
+        return { market, openapiMonth: openapi.dataMonth, candidates, warnings };
+      }),
+    );
+
+    const commonMonths = [...perMarket[0].candidates.keys()]
+      .filter((month) =>
+        perMarket.every((market) => market.candidates.has(month)),
+      )
+      .sort();
+    const selectedMonth = commonMonths.at(-1);
+    if (!selectedMonth) {
+      fail(
+        "NO_DATA",
+        "上市與上櫃找不到共同有效的最新月營收年月。",
+        {
+          markets: perMarket.map((value) => ({
+            market: value.market,
+            openapiMonth: value.openapiMonth,
+            candidateMonths: [...value.candidates.keys()].sort(),
+          })),
+        },
+      );
+    }
+    const warnings = perMarket.flatMap((value) => value.warnings);
+    if (new Set(perMarket.map((value) => value.openapiMonth)).size > 1) {
+      warnings.push(
+        `各市場 OpenAPI 最新年月不一致，已選擇最新共同有效月份 ${selectedMonth}。`,
+      );
+    }
+    return {
+      sourceResults: perMarket.map(
+        (value) => value.candidates.get(selectedMonth) as ParsedRevenueSource,
+      ),
       warnings,
     };
   }

@@ -1,5 +1,6 @@
 export type CompanyMarket = "listed" | "otc";
 export type CompanyMarketSelection = CompanyMarket | "all";
+export type CompanyProfileValueStatus = "reported" | "missing" | "invalid_upstream";
 
 export interface MasterCompany {
   code: string;
@@ -9,6 +10,18 @@ export interface MasterCompany {
   exchange: "TWSE" | "TPEx";
   industryCode: string;
   listingDate: string;
+  incorporationDate: string | null;
+  paidInCapitalTwd: number | null;
+  issuedCommonShares: number | null;
+  parValueText: string | null;
+  financialReportTypeCode: string | null;
+  profileValueStatus: {
+    incorporationDate: CompanyProfileValueStatus;
+    paidInCapitalTwd: CompanyProfileValueStatus;
+    issuedCommonShares: CompanyProfileValueStatus;
+    parValueText: CompanyProfileValueStatus;
+    financialReportTypeCode: CompanyProfileValueStatus;
+  };
   domicileCode: string;
   isKy: boolean;
   isFinancial: boolean;
@@ -53,6 +66,10 @@ export interface CompanyMasterResult {
     otc: number;
     returned: number;
   };
+  profileCoverage: Record<
+    keyof MasterCompany["profileValueStatus"],
+    { reported: number; missing: number; invalid: number }
+  >;
   companies: MasterCompany[];
   warnings: string[];
 }

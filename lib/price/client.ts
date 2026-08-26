@@ -104,6 +104,19 @@ function fail(
   throw new MopsfinError(code, message, { details });
 }
 
+function cursorInvalid(
+  message: string,
+  details?: Record<string, unknown>,
+): never {
+  throw new MopsfinError("INVALID_ARGUMENT", message, {
+    details,
+    reason: "CURSOR_INVALID",
+    category: "pagination",
+    retryable: false,
+    action: "restart_pagination",
+  });
+}
+
 function parseIsoDate(raw: string, field: string): Date {
   if (!ISO_DATE.test(raw)) {
     fail("INVALID_ARGUMENT", `${field} 必須是 YYYY-MM-DD。`, { field, value: raw });
@@ -500,7 +513,7 @@ function encodeCursor(payload: CursorPayload): string {
 
 function decodeCursor(cursor: string): CursorPayload {
   if (!cursor.startsWith(CURSOR_PREFIX) || cursor.length > 1_000) {
-    fail("INVALID_ARGUMENT", "cursor 格式錯誤。");
+    cursorInvalid("cursor 格式錯誤。");
   }
   try {
     const encoded = cursor.slice(CURSOR_PREFIX.length);
@@ -510,7 +523,7 @@ function decodeCursor(cursor: string): CursorPayload {
       .digest("base64url")
       .slice(0, 16);
     if (!body || !checksum || extra.length > 0 || checksum !== expected) {
-      fail("INVALID_ARGUMENT", "cursor checksum 驗證失敗。");
+      cursorInvalid("cursor checksum 驗證失敗。");
     }
     const raw = Buffer.from(body, "base64url").toString("utf8");
     const parsed = JSON.parse(raw) as Partial<CursorPayload>;
@@ -523,28 +536,27 @@ function decodeCursor(cursor: string): CursorPayload {
       typeof parsed.sawData !== "boolean" ||
       !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(parsed.nextMonth)
     ) {
-      fail("INVALID_ARGUMENT", "cursor 內容格式錯誤。");
+      cursorInvalid("cursor 內容格式錯誤。");
     }
     return parsed as CursorPayload;
   } catch (error) {
     if (error instanceof MopsfinError) throw error;
-    fail("INVALID_ARGUMENT", "cursor 無法解析。");
+    cursorInvalid("cursor 無法解析。");
   }
 }
 
 function uniqueSources(results: MonthResult[]): PriceSource[] {
-  const byMarketAndUnits = new Map<string, PriceSource>();
+  const byRequest = new Map<string, PriceSource>();
   for (const result of results) {
-    const key = `${result.market}:${JSON.stringify(result.source.normalization)}`;
-    byMarketAndUnits.set(key, result.source);
+    const key = `${result.market}:${result.source.sourceUrl}:${result.source.dataMonth ?? ""}:${JSON.stringify(result.source.normalization)}`;
+    byRequest.set(key, result.source);
   }
-  return [...byMarketAndUnits.values()].sort((left, right) => {
+  return [...byRequest.values()].sort((left, right) => {
     const marketOrder = left.market.localeCompare(right.market);
     return marketOrder !== 0
       ? marketOrder
-      : JSON.stringify(left.normalization).localeCompare(
-          JSON.stringify(right.normalization),
-        );
+      : (left.dataMonth ?? "").localeCompare(right.dataMonth ?? "") ||
+          left.sourceUrl.localeCompare(right.sourceUrl);
   });
 }
 
@@ -625,12 +637,12 @@ export class PriceClient {
         cursor.startDate !== query.startDate ||
         cursor.endDate !== query.endDate
       ) {
-        fail("INVALID_ARGUMENT", "cursor 與本次 OHLC 查詢範圍不符。");
+        cursorInvalid("cursor 與本次 OHLC 查詢範圍不符。");
       }
       nextMonth = cursor.nextMonth;
       sawData = cursor.sawData;
       if (nextMonth < monthOf(query.startDate) || nextMonth > monthOf(query.endDate)) {
-        fail("INVALID_ARGUMENT", "cursor 的續查月份超出查詢範圍。");
+        cursorInvalid("cursor 的續查月份超出查詢範圍。");
       }
     }
 
@@ -705,6 +717,7 @@ export class PriceClient {
         companyCode: query.companyCode,
         startDate: query.startDate,
         endDate: query.endDate,
+        sources: uniqueSources(monthResults),
       });
     }
 
@@ -1090,6 +1103,9 @@ export class PriceClient {
           "臺灣證券交易所－個股日成交資訊",
           TWSE_STOCK_MONTH_URL,
           this.now().toISOString(),
+          undefined,
+          undefined,
+          month,
         ),
         bars: [],
       };
@@ -1107,7 +1123,7 @@ export class PriceClient {
         url,
         currentMonth ? this.currentTtlMs : this.historicalTtlMs,
       );
-      return this.parseTwseStockMonth(snapshot, url.toString());
+      return this.parseTwseStockMonth(snapshot, url.toString(), month);
     }
 
     const [year, value] = month.split("-");
@@ -1121,12 +1137,13 @@ export class PriceClient {
       url,
       currentMonth ? this.currentTtlMs : this.historicalTtlMs,
     );
-    return this.parseTpexStockMonth(snapshot, url.toString());
+    return this.parseTpexStockMonth(snapshot, url.toString(), month);
   }
 
   private parseTwseStockMonth(
     snapshot: JsonSnapshot,
     sourceUrl: string,
+    dataMonth: string,
   ): MonthResult {
     const payload = snapshot.payload as Record<string, unknown>;
     const stat = String(payload?.stat ?? "");
@@ -1135,6 +1152,9 @@ export class PriceClient {
       "臺灣證券交易所－個股日成交資訊",
       sourceUrl,
       snapshot.retrievedAt,
+      undefined,
+      undefined,
+      dataMonth,
     );
     if (stat !== "OK") {
       if (/沒有符合條件/.test(stat)) {
@@ -1207,6 +1227,7 @@ export class PriceClient {
   private parseTpexStockMonth(
     snapshot: JsonSnapshot,
     sourceUrl: string,
+    dataMonth: string,
   ): MonthResult {
     const payload = snapshot.payload as Record<string, unknown>;
     const defaultSource = this.priceSource(
@@ -1216,6 +1237,7 @@ export class PriceClient {
       snapshot.retrievedAt,
       undefined,
       sourceNormalization(LOT_NORMALIZATION, TWD_THOUSAND_NORMALIZATION),
+      dataMonth,
     );
     if (String(payload?.stat ?? "") !== "ok") {
       fail("UPSTREAM_BAD_RESPONSE", "TPEx 個股 OHLC 回傳狀態錯誤。", {
@@ -1604,6 +1626,7 @@ export class PriceClient {
     retrievedAt: string,
     dataDate?: string,
     normalization: PriceSource["normalization"] = sourceNormalization(),
+    dataMonth?: string,
   ): PriceSource {
     return {
       market,
@@ -1611,6 +1634,7 @@ export class PriceClient {
       sourceUrl,
       retrievedAt,
       ...(dataDate ? { dataDate } : {}),
+      ...(dataMonth ? { dataMonth } : {}),
       normalization,
     };
   }
@@ -1647,7 +1671,7 @@ export class PriceClient {
           headers: {
             Accept: "application/json",
             Referer: `${url.origin}/`,
-            "User-Agent": "mopsfin-mcp/0.2.0 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": "mopsfin-mcp/0.3.0 (+https://mopsfin.twse.com.tw/)",
           },
         });
         const body = await response.text();

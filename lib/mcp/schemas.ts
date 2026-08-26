@@ -1,5 +1,109 @@
 import { z } from "zod";
 
+const asOfGranularitySchema = z.enum([
+  "instant",
+  "date",
+  "month",
+  "quarter",
+  "mixed",
+  "none",
+]);
+
+const resolvedAsOfSchema = z
+  .object({
+    granularity: asOfGranularitySchema.describe("resolved as-of 值的時間粒度"),
+    from: z.string().nullable().describe("已解析資料涵蓋起點；不適用時為 null"),
+    through: z.string().nullable().describe("已解析資料涵蓋終點；不適用時為 null"),
+  })
+  .strict();
+
+export const resultMetaSchema = z
+  .object({
+    contractVersion: z.literal("mopsfin.result.v1").describe("共用結果契約版本"),
+    asOf: z
+      .object({
+        selector: z.enum(["latest", "explicit", "range", "snapshot", "none"]).describe("使用者要求的時間選擇模式"),
+        resolved: resolvedAsOfSchema.describe("工具實際解析並使用的資料時間"),
+        timezone: z.literal("Asia/Taipei").describe("日期解析與 latest 使用的時區"),
+        assembledAt: z.string().describe("本服務完成組裝結果的 ISO 8601 時間"),
+        snapshotId: z
+          .string()
+          .nullable()
+          .describe("本次結果或游標可驗證資料範圍的快照識別碼；無狀態工具的具體綁定範圍見 tool description"),
+        sourceCutoffs: z.array(
+          z
+            .object({
+              sourceUrl: z.string().url().describe("此 cutoff 對應的官方來源 URL"),
+              resolved: resolvedAsOfSchema.describe("此來源實際涵蓋的日期、月份、季度或時間"),
+              publishedAt: z.string().nullable().describe("來源出表／發布時間；官方未提供時為 null"),
+              retrievedAt: z.string().describe("本服務取得此來源的 ISO 8601 時間"),
+            })
+            .strict(),
+        ).describe("逐官方來源的時間界線與擷取時間"),
+      })
+      .strict()
+      .describe("統一 as-of 與資料來源 cutoff"),
+    quality: z
+      .object({
+        status: z.enum(["complete", "partial"]).describe("本次可用結果的整體品質摘要"),
+        source: z.enum(["complete", "partial"]).describe("所有必要官方來源是否完整"),
+        universe: z.enum(["verified", "compatible", "unverified", "not_applicable"]).describe("公司母體是否經 current master 核對"),
+        selection: z.enum(["complete", "partial", "unknown", "not_applicable"]).describe("requested selection 是否全部取得"),
+        values: z.enum(["complete", "partial", "unknown", "not_applicable"]).describe("回傳值是否完整解析；合法官方缺值仍可為 complete"),
+        freshness: z.enum([
+          "within_expected_window",
+          "stale",
+          "unknown",
+          "not_applicable",
+        ]).describe("相對官方預期更新窗口的新鮮度"),
+        issues: z.array(
+          z
+            .object({
+              code: z.string().describe("穩定、可供程式判斷的 quality issue code"),
+              severity: z.enum(["info", "warning"]).describe("資訊提示或需注意的警告"),
+              scope: z.enum(["source", "universe", "selection", "value", "period", "page"]).describe("issue 影響的品質維度"),
+              message: z.string().describe("供人類與 LLM 閱讀的 issue 說明"),
+              refs: z
+                .object({
+                  companyCodes: z.array(z.string()).describe("受影響的公司代號"),
+                  fields: z.array(z.string()).describe("受影響的欄位名稱"),
+                  periods: z.array(z.string()).describe("受影響的日期、月份或季度"),
+                  sourceUrls: z.array(z.string().url()).describe("受影響的官方來源 URL"),
+                })
+                .strict()
+                .describe("issue 的精確影響範圍"),
+            })
+            .strict(),
+        ).describe("本次結果的結構化品質問題"),
+      })
+      .strict()
+      .describe("分離來源、母體、selection、值與新鮮度的品質狀態"),
+    page: z
+      .object({
+        mode: z.enum(["none", "offset", "cursor"]).describe("本工具本頁使用的分頁模式"),
+        unit: z.enum(["none", "row", "company", "month"]).describe("limit、returned 與 total 的計數單位"),
+        limit: z.number().int().nullable().describe("本頁分頁單位上限；未分頁時為 null"),
+        returned: z.number().int().nullable().describe("本頁實際完成的分頁單位數；不適用時為 null"),
+        total: z.number().int().nullable().describe("已知的完整分頁單位總數；未知或不適用時為 null"),
+        next: z
+          .union([
+            z.object({ kind: z.literal("offset").describe("offset 續頁"), offset: z.number().int().describe("下一頁零起算 offset") }).strict(),
+            z.object({ kind: z.literal("cursor").describe("不透明 cursor 續頁"), cursor: z.string().describe("下一頁原樣帶回的 scope-bound cursor") }).strict(),
+          ])
+          .nullable()
+          .describe("下一頁位置；null 表示無下一頁"),
+      })
+      .strict()
+      .describe("所有工具統一的分頁狀態；頁面未完成不等於資料品質 partial"),
+  })
+  .strict()
+  .describe("所有成功工具共用的 as-of、品質與分頁 metadata");
+
+const successResultShape = {
+  ok: z.literal(true).describe("true 表示工具成功並可依 outputSchema 解讀其餘欄位"),
+  meta: resultMetaSchema.describe("全部成功工具共用的時間、品質與分頁 metadata"),
+};
+
 export const periodSchema = z
   .string()
   .regex(/^\d{4}Q[1-4]$/, "期別必須是 YYYYQ1 至 YYYYQ4")
@@ -50,6 +154,21 @@ export const pageShape = {
     .describe("本次最多回傳的資料列數，預設 100、上限 500"),
 };
 
+const optionalCompanyPageShape = {
+  page_size: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("可選公司分頁大小；省略 page_size 與 cursor 時維持完整回傳"),
+  cursor: z
+    .string()
+    .max(1000)
+    .optional()
+    .describe("上一頁回傳的 query/snapshot-bound 公司游標；續頁可省略 page_size"),
+};
+
 export const findCompaniesInputSchema = z
   .object({
     query: z
@@ -88,6 +207,7 @@ export const listCompaniesInputSchema = z
       .describe(
         "是否保留註冊地為 KY 或公司簡稱標示 -KY 的公司；預設 true，設為 false 可排除 KY 公司",
       ),
+    ...optionalCompanyPageShape,
   })
   .strict();
 
@@ -95,6 +215,15 @@ const calendarDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "日期必須是 YYYY-MM-DD")
   .describe("西元日曆日期，格式 YYYY-MM-DD；實際交易日仍由官方行情決定");
+
+const calendarMonthSchema = z
+  .string()
+  .regex(/^\d{4}-(0[1-9]|1[0-2])$/, "資料年月必須是 YYYY-MM")
+  .describe("西元年月，格式 YYYY-MM");
+
+const yearMonthSchema = calendarMonthSchema
+  .refine((value) => value >= "2013-01", "歷史月營收從 2013-01 起支援")
+  .describe("西元資料年月，格式 YYYY-MM；歷史月營收從 2013-01 起支援");
 
 const universePolicySchema = z
   .enum(["compatible", "strict_current_master"])
@@ -158,6 +287,7 @@ export const dailyMarketOhlcInputSchema = z
       .describe(
         "公司母體政策；compatible 維持 latest 四碼公司 fallback，但各市場與目前 master 的 matchRatio 仍須至少 95%；strict_current_master 只允許 latest 並要求完全吻合",
       ),
+    ...optionalCompanyPageShape,
   })
   .strict()
   .superRefine((value, context) => {
@@ -185,12 +315,12 @@ const optionalMarketCompanyCodesSchema = z
     z
       .string()
       .regex(/^\d{4}$/)
-      .describe("要從最新官方全市場資料篩選的四碼公司股票代號"),
+      .describe("要從指定官方市場資料篩選的四碼公司股票代號"),
   )
   .min(1)
   .max(500)
   .optional()
-  .describe("可選且不得重複的公司代號清單，1 至 500 家；省略時回傳完整公司母體資料");
+  .describe("可選且不得重複的公司代號清單，1 至 500 家；省略時回傳指定市場的完整資料集");
 
 function validateOptionalCompanyCodes(
   value: { company_codes?: string[] },
@@ -215,18 +345,28 @@ export const dailyMarketValuationInputSchema = z
       .default("all")
       .describe("估值市場：all=上市與上櫃、listed=只取 TWSE、otc=只取 TPEx"),
     date: z
-      .literal("latest")
+      .union([z.literal("latest"), calendarDateSchema])
       .default("latest")
-      .describe("v1 固定為 latest，代表兩市場最近完成且日期一致的官方日估值資料"),
+      .describe("latest=官方最近完成估值日；YYYY-MM-DD 採 exact-date，假日不退回前一交易日"),
     company_codes: optionalMarketCompanyCodesSchema,
     universe_policy: universePolicySchema
       .default("compatible")
       .describe(
-        "估值公司母體政策；預設 compatible，保留合法無當日估值公司造成的 master 差異並揭露 reconciliation，但各市場 matchRatio 仍須至少 95%；strict_current_master 要求完全吻合",
+        "估值公司母體政策；預設 compatible，保留合法無當日估值公司造成的 master 差異並揭露 reconciliation，但各市場 matchRatio 仍須至少 95%；strict_current_master 只允許 latest 且要求完全吻合",
       ),
+    ...optionalCompanyPageShape,
   })
   .strict()
-  .superRefine(validateOptionalCompanyCodes);
+  .superRefine((value, context) => {
+    validateOptionalCompanyCodes(value, context);
+    if (value.universe_policy === "strict_current_master" && value.date !== "latest") {
+      context.addIssue({
+        code: "custom",
+        path: ["universe_policy"],
+        message: "strict_current_master 只支援 date=latest，避免以目前母體驗證歷史估值",
+      });
+    }
+  });
 
 export const monthlyRevenueInputSchema = z
   .object({
@@ -235,18 +375,146 @@ export const monthlyRevenueInputSchema = z
       .default("all")
       .describe("月營收市場：all=上市與上櫃、listed=只取 TWSE、otc=只取 TPEx"),
     data_month: z
-      .literal("latest")
+      .union([z.literal("latest"), yearMonthSchema])
       .default("latest")
-      .describe("v1 固定為 latest，代表官方來源目前公布的最新資料年月"),
+      .describe(
+        "latest 會協調 OpenAPI 與 MOPS archive 的最新共同月份；YYYY-MM 會 exact-month 讀取 2013-01 起的修訂後 MOPS archive",
+      ),
     company_codes: optionalMarketCompanyCodesSchema,
     universe_policy: universePolicySchema
-      .default("strict_current_master")
+      .optional()
       .describe(
-        "月營收公司母體政策；預設 strict_current_master，只將目前公司母體列為預期申報公司",
+        "月營收公司母體政策；省略時 latest 使用 strict_current_master、歷史 YYYY-MM 使用 compatible",
       ),
+    ...optionalCompanyPageShape,
   })
   .strict()
-  .superRefine(validateOptionalCompanyCodes);
+  .superRefine((value, context) => {
+    validateOptionalCompanyCodes(value, context);
+    if (value.universe_policy === "strict_current_master" && value.data_month !== "latest") {
+      context.addIssue({
+        code: "custom",
+        path: ["universe_policy"],
+        message: "strict_current_master 只支援 data_month=latest，避免以目前母體驗證歷史月營收",
+      });
+    }
+  });
+
+export const monthlyRevenueTrendInputSchema = z
+  .object({
+    market: z
+      .enum(["all", "listed", "otc"])
+      .default("all")
+      .describe("月營收趨勢市場：all=上市與上櫃、listed=只取 TWSE、otc=只取 TPEx"),
+    company_codes: z
+      .array(
+        z
+          .string()
+          .regex(/^\d{4}$/)
+          .describe("要建立月營收趨勢的四碼公司股票代號"),
+      )
+      .min(1)
+      .max(100)
+      .describe("要查詢的 1 至 100 家公司；結果按公司分頁但每家公司保留完整月份視窗"),
+    end_month: z
+      .union([z.literal("latest"), yearMonthSchema])
+      .default("latest")
+      .describe("趨勢終點；latest 使用各 requested 市場最新共同月份，或指定 exact YYYY-MM"),
+    lookback_months: z
+      .number()
+      .int()
+      .min(3)
+      .max(24)
+      .default(12)
+      .describe("含 end_month 的連續月份數，預設 12、最少 3、最多 24；缺月不補值"),
+    universe_policy: z
+      .literal("compatible")
+      .default("compatible")
+      .describe("歷史趨勢固定 compatible；目前 master 僅提供 industryCode 輔助，不冒充歷史公司母體"),
+    page_size: z
+      .number()
+      .int()
+      .min(1)
+      .max(20)
+      .default(20)
+      .describe("每頁公司數，預設及上限 20；每家公司都包含完整 3–24 個月 points"),
+    cursor: z
+      .string()
+      .max(1000)
+      .optional()
+      .describe("上一頁回傳的 query/source-snapshot-bound 公司游標；page_size 必須與第一頁相同"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.company_codes).size !== value.company_codes.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["company_codes"],
+        message: "company_codes 不得包含重複代號",
+      });
+    }
+    if (value.end_month !== "latest") {
+      const [year, month] = value.end_month.split("-").map(Number);
+      const endIndex = year * 12 + month - 1;
+      const startIndex = endIndex - value.lookback_months + 1;
+      if (startIndex < 2013 * 12) {
+        context.addIssue({
+          code: "custom",
+          path: ["lookback_months"],
+          message: "趨勢起始月份不得早於 2013-01",
+        });
+      }
+    }
+  });
+
+export const stockReactionSignalsInputSchema = z
+  .object({
+    company_codes: z
+      .array(
+        z
+          .string()
+          .regex(/^\d{4}$/)
+          .describe("目前 TWSE／TPEx 公司母體中的四碼公司股票代號"),
+      )
+      .min(1)
+      .max(50)
+      .describe("要比較 reaction signals 的 1 至 50 家公司；按目前市場各自配對官方 price index"),
+    as_of: z
+      .union([z.literal("latest"), calendarDateSchema])
+      .default("latest")
+      .describe("latest=各市場最近共同可形成視窗的 benchmark 交易日；YYYY-MM-DD 不得晚於台北今日"),
+    horizons: z
+      .array(
+        z
+          .union([z.literal(5), z.literal(20), z.literal(60), z.literal(120)])
+          .describe("要計算的 exact benchmark session 報酬視窗"),
+      )
+      .min(1)
+      .max(4)
+      .default([5, 20, 60, 120])
+      .describe("不重複的 5／20／60／120 交易日視窗子集合；不使用日曆日或前一成交日代填"),
+    page_size: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .default(10)
+      .describe("希望每頁處理的公司數，預設及上限 10；實際頁面仍受 48 官方月請求 work units 限制"),
+    cursor: z
+      .string()
+      .max(1000)
+      .optional()
+      .describe("上一頁回傳的 query/master/benchmark-snapshot-bound reaction cursor"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.company_codes).size !== value.company_codes.length) {
+      context.addIssue({ code: "custom", path: ["company_codes"], message: "company_codes 不得包含重複代號" });
+    }
+    if (new Set(value.horizons).size !== value.horizons.length) {
+      context.addIssue({ code: "custom", path: ["horizons"], message: "horizons 不得包含重複視窗" });
+    }
+  });
 
 export const listCatalogInputSchema = z
   .object({
@@ -339,6 +607,63 @@ export const companyMetricInputSchema = z
         path: ["end_period"],
         message: "end_period 不得早於 start_period",
       });
+    }
+  });
+
+export const companyMetricsBatchInputSchema = z
+  .object({
+    company_codes: z
+      .array(z.string().regex(/^[0-9A-Za-z]{1,10}$/))
+      .min(1)
+      .max(100)
+      .describe("要批次查詢的 1 至 100 個公司代號；每頁公司都會取得全部 requested metrics"),
+    metric_codes: z
+      .array(z.string().trim().min(1).max(100))
+      .min(1)
+      .max(8)
+      .describe("list_catalog 中 1 至 8 個 family=data 精確指標代號"),
+    basis: z
+      .enum(["quarterly", "cumulative_yoy"])
+      .default("quarterly")
+      .describe("沿用單指標工具的單季或指定季度累計同比口徑"),
+    yoy_quarter: z.number().int().min(1).max(4).optional().describe("basis=cumulative_yoy 時必填的累計比較季度 Q1–Q4"),
+    start_period: periodSchema.optional().describe("可選起始季；必須與 end_period 一起提供"),
+    end_period: periodSchema.optional().describe("可選結束季；含首尾且最多 12 季"),
+    page_size: z
+      .number()
+      .int()
+      .min(1)
+      .max(20)
+      .default(20)
+      .describe("每頁公司數，預設及上限 20"),
+    cursor: z.string().max(1000).optional().describe("上一頁回傳的 query/catalog-bound 公司游標；不代表跨頁 point-in-time 財務值快照"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.company_codes.map((code) => code.toLowerCase())).size !== value.company_codes.length) {
+      context.addIssue({ code: "custom", path: ["company_codes"], message: "company_codes 不得重複" });
+    }
+    if (new Set(value.metric_codes).size !== value.metric_codes.length) {
+      context.addIssue({ code: "custom", path: ["metric_codes"], message: "metric_codes 不得重複" });
+    }
+    if (value.basis === "cumulative_yoy" && value.yoy_quarter === undefined) {
+      context.addIssue({ code: "custom", path: ["yoy_quarter"], message: "cumulative_yoy 必須提供 yoy_quarter" });
+    }
+    if (value.basis !== "cumulative_yoy" && value.yoy_quarter !== undefined) {
+      context.addIssue({ code: "custom", path: ["yoy_quarter"], message: "只有 cumulative_yoy 可以提供 yoy_quarter" });
+    }
+    if ((value.start_period === undefined) !== (value.end_period === undefined)) {
+      context.addIssue({ code: "custom", path: ["start_period"], message: "start_period 與 end_period 必須同時提供" });
+    }
+    if (value.start_period && value.end_period) {
+      const [startYear, startQuarter] = value.start_period.split("Q").map(Number);
+      const [endYear, endQuarter] = value.end_period.split("Q").map(Number);
+      const span = endYear * 4 + endQuarter - (startYear * 4 + startQuarter) + 1;
+      if (span < 1) {
+        context.addIssue({ code: "custom", path: ["end_period"], message: "end_period 不得早於 start_period" });
+      } else if (span > 12) {
+        context.addIssue({ code: "custom", path: ["end_period"], message: "批次指標範圍最多 12 季" });
+      }
     }
   });
 
@@ -492,6 +817,7 @@ const rangeOutputShape = {
 
 export const findCompaniesOutputSchema = z
   .object({
+    ...successResultShape,
     ...sourceShape,
     query: z
       .object({
@@ -530,6 +856,38 @@ const masterCompanySchema = z
     listingDate: z
       .string()
       .describe("正規化為 YYYY-MM-DD 的上市或上櫃日期"),
+    incorporationDate: z
+      .string()
+      .nullable()
+      .describe("目前官方基本資料的成立日期 YYYY-MM-DD；缺失或無效時為 null"),
+    paidInCapitalTwd: z
+      .number()
+      .int()
+      .nullable()
+      .describe("目前官方實收資本額 TWD；不可用時為 null"),
+    issuedCommonShares: z
+      .number()
+      .int()
+      .nullable()
+      .describe("目前官方已發行普通股數；不可用時為 null，不代表歷史股數"),
+    parValueText: z
+      .string()
+      .nullable()
+      .describe("普通股每股面額官方原文，保留外幣、無面額等語意"),
+    financialReportTypeCode: z
+      .string()
+      .nullable()
+      .describe("官方編制財務報表類型原始代碼；不自行推定代碼語意"),
+    profileValueStatus: z
+      .object({
+        incorporationDate: z.enum(["reported", "missing", "invalid_upstream"]).describe("成立日期狀態"),
+        paidInCapitalTwd: z.enum(["reported", "missing", "invalid_upstream"]).describe("實收資本額狀態"),
+        issuedCommonShares: z.enum(["reported", "missing", "invalid_upstream"]).describe("已發行普通股數狀態"),
+        parValueText: z.enum(["reported", "missing", "invalid_upstream"]).describe("每股面額原文狀態"),
+        financialReportTypeCode: z.enum(["reported", "missing", "invalid_upstream"]).describe("財報類型原始代碼狀態"),
+      })
+      .strict()
+      .describe("新增公司母體欄位的逐欄可用性與解析狀態"),
     domicileCode: z
       .string()
       .describe("公司註冊地國代碼；TW 表示本國公司，KY 表示開曼群島"),
@@ -566,6 +924,7 @@ const companyMasterSourceSchema = z
 
 export const listCompaniesOutputSchema = z
   .object({
+    ...successResultShape,
     query: z
       .object({
         market: z
@@ -606,16 +965,34 @@ export const listCompaniesOutputSchema = z
           .number()
           .int()
           .describe("因 include_ky=false 在前述篩選後實際排除的 KY 公司數"),
-        listed: z.number().int().describe("最終回傳的上市公司數"),
-        otc: z.number().int().describe("最終回傳的上櫃公司數"),
-        returned: z.number().int().describe("companies 完整陣列的最終公司總數"),
+        listed: z.number().int().describe("本頁回傳的上市公司數；未啟用分頁時即為完整結果"),
+        otc: z.number().int().describe("本頁回傳的上櫃公司數；未啟用分頁時即為完整結果"),
+        returned: z.number().int().describe("本頁 companies 陣列公司總數；完整總數另見 meta.page.total"),
       })
       .strict()
       .describe("原始、排除與最終回傳筆數，可用來確認掃描母體完整性"),
+    profileCoverage: z
+      .record(
+        z.enum([
+          "incorporationDate",
+          "paidInCapitalTwd",
+          "issuedCommonShares",
+          "parValueText",
+          "financialReportTypeCode",
+        ]),
+        z
+          .object({
+            reported: z.number().int().describe("此欄位 reported 的公司數"),
+            missing: z.number().int().describe("此欄位官方缺值的公司數"),
+            invalid: z.number().int().describe("此欄位無法解析的公司數"),
+          })
+          .strict(),
+      )
+      .describe("套用市場／金融／KY 篩選後、分頁前完整 current snapshot 的 profile 欄位覆蓋統計"),
     companies: z
       .array(masterCompanySchema)
       .describe(
-        "符合市場與篩選條件的完整公司清單，不分頁；每個 code 可再依 get_company_metric 的每批 1–10 家限制分批查詢",
+        "未啟用分頁時為符合條件的完整公司清單；啟用 page_size/cursor 時只含本頁公司，完整總數與續頁見 meta.page",
       ),
     ...warningShape,
   })
@@ -711,6 +1088,9 @@ const priceSourceSchema = z
     dataDate: calendarDateSchema
       .optional()
       .describe("單日市場來源實際回傳並核對成功的資料日期"),
+    dataMonth: calendarMonthSchema
+      .optional()
+      .describe("個股歷史 OHLC 月請求實際涵蓋的 YYYY-MM；單日市場來源不適用"),
     normalization: z
       .object({
         volumeShares: priceUnitNormalizationSchema.describe("成交量由來源單位轉為股的規則"),
@@ -733,6 +1113,7 @@ const priceBasisShape = {
 
 export const stockOhlcOutputSchema = z
   .object({
+    ...successResultShape,
     query: z
       .object({
         companyCode: z.string().describe("本次查詢的四碼股票代號"),
@@ -775,6 +1156,7 @@ export const stockOhlcOutputSchema = z
 
 export const dailyMarketOhlcOutputSchema = z
   .object({
+    ...successResultShape,
     query: z
       .object({
         market: z.enum(["all", "listed", "otc"]).describe("本次市場範圍"),
@@ -846,9 +1228,9 @@ export const dailyMarketOhlcOutputSchema = z
       .describe("指定但未出現在該市場交易日的公司代號"),
     counts: z
       .object({
-        listed: z.number().int().describe("最終回傳的上市公司 bars 數"),
-        otc: z.number().int().describe("最終回傳的上櫃公司 bars 數"),
-        returned: z.number().int().describe("最終完整 bars 陣列總數"),
+        listed: z.number().int().describe("本頁回傳的上市公司 bars 數"),
+        otc: z.number().int().describe("本頁回傳的上櫃公司 bars 數"),
+        returned: z.number().int().describe("本頁 bars 陣列總數；完整總數另見 meta.page.total"),
       })
       .strict()
       .describe("依市場拆分的回傳筆數"),
@@ -859,7 +1241,7 @@ export const dailyMarketOhlcOutputSchema = z
           name: z.string().describe("該交易日官方行情顯示的證券簡稱"),
         }),
       )
-      .describe("指定交易日的完整或經 company_codes 篩選後的公司 OHLC"),
+      .describe("指定交易日完整／company_codes 篩選結果中的本頁公司 OHLC；續頁見 meta.page"),
     sources: z.array(priceSourceSchema).describe("本次實際使用且日期已核對的官方來源"),
     ...warningShape,
   })
@@ -901,8 +1283,8 @@ const valuationSourceSchema = z
   .object({
     market: z.enum(["listed", "otc"]).describe("此估值來源負責的市場"),
     exchange: z.enum(["TWSE", "TPEx"]).describe("官方市場機構"),
-    sourceName: z.string().describe("官方最新日估值資料集名稱"),
-    sourceUrl: z.string().url().describe("本次使用的固定官方 OpenAPI URL"),
+    sourceName: z.string().describe("本次實際使用的官方 latest discovery 或 exact-day 估值資料集名稱"),
+    sourceUrl: z.string().url().describe("本次使用的官方 OpenAPI 或指定日估值 endpoint URL"),
     retrievedAt: z.string().describe("本服務取得官方回應的 ISO 8601 時間"),
     dataDate: calendarDateSchema.describe("此官方來源的實際估值資料日期"),
     rawCount: z.number().int().describe("官方回應的原始資料列數"),
@@ -911,23 +1293,32 @@ const valuationSourceSchema = z
   .strict();
 
 const valuationValueStatusSchema = z
+  .enum(["reported", "missing_or_not_meaningful", "not_provided_by_source", "invalid_upstream"])
+  .describe(
+    "reported=官方有效值；missing_or_not_meaningful=空白、- 或 N/A；not_provided_by_source=該市場來源沒有此欄；invalid_upstream=非空但無法解析",
+  );
+
+const coreValuationValueStatusSchema = z
   .enum(["reported", "missing_or_not_meaningful", "invalid_upstream"])
   .describe(
-    "reported=官方有效數值；missing_or_not_meaningful=官方空白、- 或 N/A；invalid_upstream=非空但無法解析",
+    "核心 PE／PB／殖利率欄位一定存在：reported=官方有效值；missing_or_not_meaningful=空白、- 或 N/A；invalid_upstream=非空但無法解析",
   );
 
 export const dailyMarketValuationOutputSchema = z
   .object({
+    ...successResultShape,
     query: latestMarketQueryOutputSchema
       .extend({
-        date: z.literal("latest").describe("v1 固定使用最新官方日估值"),
+        date: z
+          .union([z.literal("latest"), calendarDateSchema])
+          .describe("本次 latest 或指定 YYYY-MM-DD 條件"),
       })
-      .describe("正規化後實際執行的最新市場估值查詢"),
+      .describe("正規化後實際執行的 latest／歷史單日市場估值查詢"),
     dataDate: calendarDateSchema.describe("所有回傳估值列共用且已核對的官方資料日期"),
     currency: z.literal("TWD").describe("估值所依據股價及股利的幣別為新台幣"),
     classificationPolicy: z
-      .enum(["current_master_strict", "current_master_with_code_fallback"])
-      .describe("實際套用的目前公司 master strict 或 compatible fallback 政策"),
+      .enum(["current_master_strict", "current_master_with_code_fallback", "historical_code_rule"])
+      .describe("latest 使用目前 master；歷史日使用官方四碼公司列規則"),
     coverageComplete: z
       .boolean()
       .describe("必要市場來源、資料日期與結構是否完整；false 不代表所有估值欄位都有值"),
@@ -941,20 +1332,24 @@ export const dailyMarketValuationOutputSchema = z
       .describe("指定 company_codes 是否全數出現在正規化估值結果"),
     missingCompanyCodes: z
       .array(z.string())
-      .describe("指定但未出現在最新估值結果的公司代號"),
+      .describe("指定但未出現在本次 exact-day 估值結果的公司代號"),
     reconciliation: z
       .array(marketReconciliationSchema)
       .describe("官方估值資料與目前 company master 的逐市場集合核對"),
     counts: z
       .object({
         raw: z.number().int().describe("所有必要官方來源原始列數"),
-        returned: z.number().int().describe("最終 rows 回傳公司數"),
+        returned: z.number().int().describe("本頁 rows 回傳公司數；完整總數另見 meta.page.total"),
         withPe: z.number().int().describe("peRatio 為 reported 的公司數"),
         withPb: z.number().int().describe("priceToBookRatio 為 reported 的公司數"),
         withDividendYield: z
           .number()
           .int()
           .describe("dividendYieldPercent 為 reported 的公司數"),
+        withClosePrice: z.number().int().describe("closePriceTwd 為 reported 的公司數"),
+        withDividendPerShare: z.number().int().describe("dividendPerShareTwd 為 reported 的公司數"),
+        withDividendFiscalYear: z.number().int().describe("dividendFiscalYear 為 reported 的公司數"),
+        withReferenceFiscalPeriod: z.number().int().describe("referenceFiscalPeriod 為 reported 的公司數"),
       })
       .strict()
       .describe("原始、回傳與各估值欄位有效筆數"),
@@ -974,27 +1369,42 @@ export const dailyMarketValuationOutputSchema = z
               .number()
               .nullable()
               .describe("官方殖利率百分比；無可用值時為 null，0 是有效零值"),
+            closePriceTwd: z.number().nullable().describe("TWSE 日估值來源提供的收盤價 TWD；來源未提供時為 null"),
+            dividendPerShareTwd: z.number().nullable().describe("TPEx 日估值來源提供的每股股利 TWD；來源未提供時為 null"),
+            dividendFiscalYear: z.number().int().nullable().describe("官方股利年度，已正規化為西元年；來源未提供時為 null"),
+            referenceFiscalPeriod: periodSchema.nullable().describe("估值參考財報期，統一為 YYYYQn；來源未提供時為 null"),
             valueStatus: z
               .object({
-                peRatio: valuationValueStatusSchema.describe("本益比資料狀態"),
-                priceToBookRatio: valuationValueStatusSchema.describe("股價淨值比資料狀態"),
-                dividendYieldPercent: valuationValueStatusSchema.describe("殖利率資料狀態"),
+                peRatio: coreValuationValueStatusSchema.describe("本益比資料狀態"),
+                priceToBookRatio: coreValuationValueStatusSchema.describe("股價淨值比資料狀態"),
+                dividendYieldPercent: coreValuationValueStatusSchema.describe("殖利率資料狀態"),
+                closePriceTwd: valuationValueStatusSchema.describe("收盤價資料狀態"),
+                dividendPerShareTwd: valuationValueStatusSchema.describe("每股股利資料狀態"),
+                dividendFiscalYear: valuationValueStatusSchema.describe("股利年度資料狀態"),
+                referenceFiscalPeriod: valuationValueStatusSchema.describe("估值參考財報期資料狀態"),
               })
               .strict()
-              .describe("三個估值欄位各自的官方可用性或解析狀態"),
+              .describe("全部估值與補充欄位各自的官方可用性或解析狀態"),
+            rawValue: z
+              .object({
+                peRatio: z.string().nullable().describe("本益比官方原始文字；key 不存在時為 null"),
+                priceToBookRatio: z.string().nullable().describe("股價淨值比官方原始文字；key 不存在時為 null"),
+                dividendYieldPercent: z.string().nullable().describe("殖利率官方原始文字；key 不存在時為 null"),
+                closePriceTwd: z.string().nullable().describe("收盤價官方原始文字；key 不存在時為 null"),
+                dividendPerShareTwd: z.string().nullable().describe("每股股利官方原始文字；key 不存在時為 null"),
+                dividendFiscalYear: z.string().nullable().describe("股利年度官方原始文字；key 不存在時為 null"),
+                referenceFiscalPeriod: z.string().nullable().describe("參考財報期官方原始文字；key 不存在時為 null"),
+              })
+              .strict()
+              .describe("七個欄位的官方 raw marker，供區分 N/A、空白與來源未提供"),
           })
           .strict(),
       )
-      .describe("最新官方估值列；不得把 null 或 N/A 改寫為 0"),
+      .describe("本次 latest-resolved 或 exact-day 官方估值的本頁列；不得把 null 或 N/A 改寫為 0，續頁見 meta.page"),
     sources: z.array(valuationSourceSchema).describe("本次使用的 TWSE／TPEx 官方估值來源"),
     ...warningShape,
   })
   .strict();
-
-const yearMonthSchema = z
-  .string()
-  .regex(/^\d{4}-(0[1-9]|1[0-2])$/, "資料年月必須是 YYYY-MM")
-  .describe("西元資料年月，格式 YYYY-MM");
 
 const revenueValueStatusSchema = z
   .enum(["reported", "missing", "invalid_upstream"])
@@ -1035,8 +1445,8 @@ const revenueSourceSchema = z
   .object({
     market: z.enum(["listed", "otc"]).describe("此月營收來源負責的市場"),
     exchange: z.enum(["TWSE", "TPEx"]).describe("官方市場機構"),
-    sourceName: z.string().describe("官方最新月營收資料集名稱"),
-    sourceUrl: z.string().url().describe("本次使用的固定官方 OpenAPI URL"),
+    sourceName: z.string().describe("官方月營收 OpenAPI 或歷史 MOPS archive 資料集名稱"),
+    sourceUrl: z.string().url().describe("本次實際讀取的固定官方 OpenAPI 或 MOPS archive URL"),
     retrievedAt: z.string().describe("本服務取得官方回應的 ISO 8601 時間"),
     rawCount: z.number().int().describe("官方回應的原始資料列數"),
     eligibleRowCount: z.number().int().describe("正規化後可辨識為四碼公司股票的資料列數"),
@@ -1045,28 +1455,75 @@ const revenueSourceSchema = z
     sourceAmountUnit: z.literal("thousand_TWD").describe("官方原始金額單位為新台幣仟元"),
     outputAmountUnit: z.literal("TWD").describe("MCP 正規化後金額單位為新台幣元"),
     amountMultiplier: z.literal(1000).describe("由仟元轉為 TWD 的固定倍率"),
+    integrity: z
+      .object({
+        format: z
+          .enum(["json_array", "rfc4180_csv"])
+          .describe("本次來源實際解析的 JSON array 或 RFC 4180 CSV 格式"),
+        structure: z
+          .literal("verified")
+          .describe("必要欄位、列結構與數值欄解析流程已通過"),
+        snapshotIdentity: z
+          .literal("verified")
+          .describe("資料年月、出表日期與 requested archive 月份已核對"),
+        eligibleCompanyCodesUnique: z
+          .literal("verified")
+          .describe("四碼 eligible 公司列在同一市場月份內沒有重複代號"),
+        officialDeclaredRowCount: z
+          .null()
+          .describe("官方來源沒有 declared row count，因此固定為 null"),
+        rowsetCompleteness: z
+          .literal("unverified_no_official_declared_count")
+          .describe("因無官方筆數、footer 或 checksum，不能只靠檔案證明全市場 rowset 完整"),
+      })
+      .strict()
+      .describe("來源檔案已驗證與仍無法驗證的完整性邊界"),
   })
   .strict();
 
+const revenueSourceCoverageSchema = z
+  .object({
+    status: z
+      .enum(["verified", "unverified"])
+      .describe("全市場 rowset 是否有外部母體可核對為完整"),
+    method: z
+      .enum([
+        "current_master_exact_match",
+        "structure_only_no_official_declared_count",
+      ])
+      .describe("以目前 master 完全吻合驗證，或僅能做無 declared-count 的結構驗證"),
+    complete: z
+      .boolean()
+      .describe("status=verified 且 rowset 與可用母體完全吻合時才為 true"),
+  })
+  .strict()
+  .describe("來源檔案 rowset 完整性；與公司申報進度 filingCoverage 分開");
+
 export const monthlyRevenueOutputSchema = z
   .object({
+    ...successResultShape,
     query: latestMarketQueryOutputSchema
       .extend({
-        dataMonth: z.literal("latest").describe("v1 固定使用官方最新資料年月"),
+        dataMonth: z
+          .union([z.literal("latest"), yearMonthSchema])
+          .describe("本次使用 latest discovery 或 exact YYYY-MM archive 的月份條件"),
       })
-      .describe("正規化後實際執行的最新月營收查詢"),
+      .describe("正規化後實際執行的 latest 或歷史單月營收查詢"),
     dataMonth: yearMonthSchema.describe("所有回傳月營收列共用且已核對的資料年月"),
     currency: z.literal("TWD").describe("所有正規化月營收金額的幣別"),
     amountUnit: z.literal("TWD").describe("所有正規化月營收金額的輸出單位"),
     coverageComplete: z
       .boolean()
-      .describe("必要市場來源、資料年月與結構是否完整；不等於公司已全數申報"),
+      .describe("相容欄位：latest 成功完成必要來源、格式與 snapshot identity 核對時為 true；歷史 archive 因無 declared row count 固定為 false"),
+    sourceCoverage: revenueSourceCoverageSchema.describe(
+      "全市場 rowset 可驗證程度；不可由 coverageComplete 或單一非空檔案推論完整母體",
+    ),
     selectionComplete: z
       .boolean()
-      .describe("指定 company_codes 是否全數出現在最新月營收結果"),
+      .describe("指定 company_codes 是否全數出現在本次月份的月營收結果"),
     missingCompanyCodes: z
       .array(z.string())
-      .describe("指定但未出現在最新月營收結果的公司代號"),
+      .describe("指定但未出現在本次月份月營收結果的公司代號"),
     filingCoverage: z
       .object({
         expectedCompanyCount: z.number().int().describe("依目前 master 預期的公司數"),
@@ -1075,22 +1532,29 @@ export const monthlyRevenueOutputSchema = z
           .array(z.string())
           .describe("目前 master 中尚未出現在此資料年月的公司代號"),
         coverageRatio: z.number().min(0).max(1).describe("reported 除以 expected 的申報覆蓋率"),
-        complete: z.boolean().describe("目前 master 公司是否已全數出現在此資料年月"),
+        complete: z.boolean().describe("latest 時表示目前 master 公司是否已全數出現在此資料年月；歷史月份固定為 false"),
+        status: z
+          .enum([
+            "complete",
+            "partial",
+            "historical_cross_timepoint_unverified",
+          ])
+          .describe("latest 的申報覆蓋狀態；歷史月份固定標示為跨時點不可驗證"),
       })
       .strict()
       .describe(
-        "最新月營收相對目前 master 的列覆蓋情況；未達 100% 可能源於申報進度、資料適用性或公司狀態差異，不等於上游錯誤",
+        "月營收相對目前 master 的列覆蓋；latest 可輔助看申報進度，歷史月份只代表跨時點 master 差異，不能視為當時母體",
       ),
     reconciliation: z
       .array(marketReconciliationSchema)
       .describe(
-        "官方月營收列與目前 company master 的逐市場集合核對；master 缺列同時反映在 filingCoverage",
+        "官方月營收列與目前 company master 的逐市場輔助核對；歷史月份不代表 point-in-time 公司母體",
       ),
     counts: z
       .object({
-        listed: z.number().int().describe("最終回傳的上市公司月營收列數"),
-        otc: z.number().int().describe("最終回傳的上櫃公司月營收列數"),
-        returned: z.number().int().describe("最終 rows 總數"),
+        listed: z.number().int().describe("本頁回傳的上市公司月營收列數"),
+        otc: z.number().int().describe("本頁回傳的上櫃公司月營收列數"),
+        returned: z.number().int().describe("本頁 rows 總數；完整總數另見 meta.page.total"),
       })
       .strict()
       .describe("依市場拆分的回傳筆數"),
@@ -1105,6 +1569,10 @@ export const monthlyRevenueOutputSchema = z
               .string()
               .nullable()
               .describe("目前 company master 的產業代號；compatible fallback 無法核對時為 null"),
+            sourceIndustryName: z
+              .string()
+              .nullable()
+              .describe("該月份官方月營收列的產業名稱；來源缺值時為 null，勿與目前 master industryCode 混用"),
             sourceReportDate: calendarDateSchema.describe("資料集出表日期；不是個別公司 filedAt"),
             ...revenueNumericFields,
             valueStatus: z
@@ -1118,8 +1586,421 @@ export const monthlyRevenueOutputSchema = z
           })
           .strict(),
       )
-      .describe("最新官方月營收列，金額統一為 TWD 並保留每欄 valueStatus"),
+      .describe("latest 或歷史月份官方月營收的本頁列；金額統一為 TWD、保留每欄 valueStatus，續頁見 meta.page"),
     sources: z.array(revenueSourceSchema).describe("本次使用的 TWSE／TPEx 官方月營收來源"),
+    ...warningShape,
+  })
+  .strict();
+
+const revenueTrendValueStatusSchema = z
+  .enum([
+    "reported",
+    "partial",
+    "insufficient_data",
+    "invalid_upstream",
+    "needs_review",
+  ])
+  .describe(
+    "reported=必要值完整；partial=計數涵蓋部分月份；insufficient_data=不足以計算；invalid_upstream=必要官方值無法解析；needs_review=名稱或市場轉換使 identity 不可直接串接",
+  );
+
+const revenueTrendPointSchema = z
+  .object({
+    dataMonth: yearMonthSchema.describe("此趨勢點代表的資料年月"),
+    name: z
+      .string()
+      .nullable()
+      .describe("該月官方列的公司名稱；整月無公司列時為 null"),
+    market: z
+      .enum(["listed", "otc"])
+      .nullable()
+      .describe("該月官方列實際所在市場；整月無公司列時為 null"),
+    sourceReportDate: calendarDateSchema
+      .nullable()
+      .describe("該月官方資料集出表日；整月無公司列時為 null，不是個別公司 filedAt"),
+    sourceIndustryName: z
+      .string()
+      .nullable()
+      .describe("該月份官方營收列的產業名稱；缺列或來源缺值時為 null"),
+    currentMonthRevenueTwd: z
+      .number()
+      .nullable()
+      .describe("該月營收 TWD；缺列、官方缺值或無效值時為 null"),
+    sameMonthLastYearRevenueTwd: z
+      .number()
+      .nullable()
+      .describe("去年同月營收 TWD；缺列、官方缺值或無效值時為 null"),
+    momPercent: z
+      .number()
+      .nullable()
+      .describe("官方月增率百分比；沒有可用官方值時為 null"),
+    yoyPercent: z
+      .number()
+      .nullable()
+      .describe("官方年增率百分比；沒有可用官方值時為 null"),
+    valueStatus: z
+      .object({
+        currentMonthRevenueTwd: revenueValueStatusSchema.describe("當月營收值狀態"),
+        sameMonthLastYearRevenueTwd: revenueValueStatusSchema.describe("去年同月營收值狀態"),
+        momPercent: revenueValueStatusSchema.describe("官方 MoM 值狀態"),
+        yoyPercent: revenueValueStatusSchema.describe("官方 YoY 值狀態"),
+      })
+      .strict()
+      .describe("趨勢點四個數值欄位各自的官方缺值或解析狀態"),
+  })
+  .strict();
+
+const revenueTrendDerivedSchema = z
+  .object({
+    latestYoyPercent: z
+      .number()
+      .nullable()
+      .describe("endMonth 官方 YoY 百分比；缺值或無效時為 null"),
+    rolling3MonthYoyPercent: z
+      .number()
+      .nullable()
+      .describe("100 ×（最近 3 月營收合計 ÷ 對應去年同月營收合計 − 1）；必要值不完整時為 null"),
+    rolling6MonthYoyPercent: z
+      .number()
+      .nullable()
+      .describe("100 ×（最近 6 月營收合計 ÷ 對應去年同月營收合計 − 1）；必要值不完整時為 null"),
+    yoyAccelerationVs3MonthsAgoPp: z
+      .number()
+      .nullable()
+      .describe("最新官方 YoY 減三個月前官方 YoY，單位 percentage points；任一值不可用時為 null"),
+    positiveYoyMonthsInWindow: z
+      .number()
+      .int()
+      .nullable()
+      .describe("requested 視窗內官方 YoY 為正且 reported 的月份數"),
+    reportedYoyMonthsInWindow: z
+      .number()
+      .int()
+      .nullable()
+      .describe("requested 視窗內官方 YoY 為 reported 的月份數，供判斷正成長計數分母"),
+    consecutivePositiveYoyMonths: z
+      .number()
+      .int()
+      .nullable()
+      .describe("從 endMonth 往前連續 reported 且 YoY 大於 0 的月份數；缺月會中止"),
+    valueStatus: z
+      .object({
+        latestYoyPercent: revenueTrendValueStatusSchema.describe("最新 YoY 衍生欄位狀態"),
+        rolling3MonthYoyPercent: revenueTrendValueStatusSchema.describe("3 月 rolling YoY 狀態"),
+        rolling6MonthYoyPercent: revenueTrendValueStatusSchema.describe("6 月 rolling YoY 狀態"),
+        yoyAccelerationVs3MonthsAgoPp: revenueTrendValueStatusSchema.describe("YoY 加速度狀態"),
+        positiveYoyMonthsInWindow: revenueTrendValueStatusSchema.describe("正 YoY 月數狀態"),
+        reportedYoyMonthsInWindow: revenueTrendValueStatusSchema.describe("已申報 YoY 月數狀態"),
+        consecutivePositiveYoyMonths: revenueTrendValueStatusSchema.describe("連續正 YoY 月數狀態"),
+      })
+      .strict()
+      .describe("七個透明衍生欄位各自的完整性狀態；不可只讀裸數值"),
+  })
+  .strict();
+
+const revenueIdentityTransitionReasonSchema = z
+  .enum(["observed_name_transition", "observed_market_transition"])
+  .describe("同一代號在相鄰有資料月份觀察到名稱或市場轉換；來源未提供原因，可能是改名、轉板或代號重用");
+
+const revenueTrendComparabilitySchema = z
+  .object({
+    status: z
+      .enum(["comparable", "needs_review"])
+      .describe("相鄰有資料月份 identity 是否穩定；needs_review 時 derived 全為 null"),
+    reasons: z
+      .array(revenueIdentityTransitionReasonSchema)
+      .describe("整個 requested 視窗觀察到的 identity 轉換原因集合"),
+    transitions: z
+      .array(
+        z
+          .object({
+            dataMonth: yearMonthSchema.describe("轉換首次出現在此有資料月份"),
+            fromName: z.string().describe("上一個有資料月份的官方公司名稱"),
+            toName: z.string().describe("此月份的官方公司名稱"),
+            fromMarket: z.enum(["listed", "otc"]).describe("上一個有資料月份的官方市場"),
+            toMarket: z.enum(["listed", "otc"]).describe("此月份的官方市場"),
+            reasons: z
+              .array(revenueIdentityTransitionReasonSchema)
+              .describe("此相鄰觀察轉換觸發的名稱／市場原因"),
+          })
+          .strict(),
+      )
+      .describe("依月份升冪列出的相鄰有資料月份 identity 轉換"),
+  })
+  .strict()
+  .describe("同一四碼代號能否直接跨月計算趨勢的可比性防線");
+
+export const monthlyRevenueTrendOutputSchema = z
+  .object({
+    ...successResultShape,
+    query: z
+      .object({
+        market: z.enum(["all", "listed", "otc"]).describe("本次實際查詢的市場範圍"),
+        companyCodes: z.array(z.string()).describe("本次完整 requested 公司代號；輸入不得重複，並保留 caller 順序"),
+        endMonth: z.union([z.literal("latest"), yearMonthSchema]).describe("使用者要求的趨勢終點 selector"),
+        lookbackMonths: z.number().int().describe("包含終點的連續 requested 月份數"),
+        universePolicy: z.literal("compatible").describe("歷史趨勢固定使用 compatible 公司母體政策"),
+      })
+      .strict()
+      .describe("正規化後實際執行的月營收趨勢條件"),
+    startMonth: yearMonthSchema.describe("實際趨勢視窗起始月份（含）"),
+    endMonth: yearMonthSchema.describe("latest 解析後或 explicit 指定的實際趨勢終止月份（含）"),
+    currency: z.literal("TWD").describe("月營收金額幣別"),
+    amountUnit: z.literal("TWD").describe("月營收金額輸出單位；官方仟元已乘以 1,000"),
+    coverageComplete: z
+      .boolean()
+      .describe("所有歷史月份來源的完整 rowset 是否可證明；archive 無 declared row count，因此目前固定為 false"),
+    sourceCoverage: revenueSourceCoverageSchema.describe(
+      "整個月份視窗的來源 rowset 可驗證程度",
+    ),
+    selectionComplete: z.boolean().describe("requested 公司是否都在整個趨勢視窗至少出現一列"),
+    missingCompanyCodes: z.array(z.string()).describe("整個趨勢視窗皆無官方營收列的 requested 公司代號"),
+    counts: z
+      .object({
+        requestedCompanies: z.number().int().describe("完整 requested 公司數，不受本頁切分影響"),
+        returnedCompanies: z.number().int().describe("本頁實際回傳的公司結果數"),
+        requestedMonths: z.number().int().describe("每家公司 points 的連續月份數"),
+      })
+      .strict()
+      .describe("公司與月份維度的回傳筆數"),
+    companies: z
+      .array(
+        z
+          .object({
+            code: z.string().describe("四碼公司股票代號"),
+            name: z.string().describe("視窗內最後一筆官方營收列的公司名稱"),
+            market: z.enum(["listed", "otc"]).describe("視窗內最後一筆官方營收列的市場"),
+            industryCode: z.string().nullable().describe("目前 company master 的產業代號；查無時為 null，不代表歷史產業"),
+            sourceIndustryName: z.string().nullable().describe("視窗內最後一筆官方營收列的產業名稱；缺值時為 null"),
+            observedNames: z.array(z.string()).describe("視窗內觀察到的所有官方公司名稱，供辨識改名或代號重用"),
+            observedMarkets: z.array(z.enum(["listed", "otc"])).describe("視窗內觀察到的所有官方市場，供辨識轉板"),
+            comparability: revenueTrendComparabilitySchema.describe(
+              "名稱／市場轉換的逐月證據；needs_review 時不得使用 derived",
+            ),
+            missingMonths: z.array(yearMonthSchema).describe("此公司在 requested 視窗內完全沒有官方列的月份"),
+            points: z.array(revenueTrendPointSchema).describe("依月份升冪排列且不補值的完整連續趨勢點"),
+            derived: revenueTrendDerivedSchema.describe("由 points 按明示公式可重算的趨勢摘要；不是主觀分數"),
+          })
+          .strict(),
+      )
+      .describe("按公司組織的月營收趨勢；本頁每家公司均包含完整月份視窗"),
+    sources: z.array(revenueSourceSchema).describe("本次各月份與市場實際使用的官方月營收來源"),
+    ...warningShape,
+  })
+  .strict();
+
+const reactionSignalStatusSchema = z
+  .enum([
+    "available",
+    "no_stock_data",
+    "missing_stock_start_close",
+    "missing_stock_end_close",
+    "incomplete_stock_window",
+    "invalid_denominator",
+  ])
+  .describe("raw signal 的可計算狀態；非 available 時相關個股或衍生值為 null");
+
+const averageWindowSignalSchema = z
+  .object({
+    windowSessions: z.union([z.literal(5), z.literal(20), z.literal(60)]).describe("平均值的 benchmark session 視窗"),
+    startDate: calendarDateSchema.describe("exact session 視窗起始交易日"),
+    endDate: calendarDateSchema.describe("exact session 視窗終止交易日"),
+    expectedObservationCount: z.number().int().describe("完整視窗應有的觀察數"),
+    observationCount: z.number().int().describe("實際取得有效個股欄位值的觀察數"),
+    value: z.number().nullable().describe("完整視窗的簡單平均；資料不完整時為 null"),
+    status: reactionSignalStatusSchema.describe("此平均值的資料完整性狀態"),
+  })
+  .strict();
+
+const ratioSignalSchema = z
+  .object({
+    numeratorWindowSessions: z.union([z.literal(5), z.literal(20)]).describe("分子平均值的 session 視窗"),
+    denominatorWindowSessions: z.union([z.literal(20), z.literal(60)]).describe("分母平均值的 session 視窗"),
+    value: z.number().nullable().describe("短窗平均除以長窗平均；任一視窗不可用或分母非正時為 null"),
+    status: reactionSignalStatusSchema.describe("比值的資料完整性與分母狀態"),
+  })
+  .strict();
+
+const benchmarkSourceSchema = z
+  .object({
+    market: z.enum(["listed", "otc"]).describe("此 benchmark 對應的股票市場"),
+    exchange: z.enum(["TWSE", "TPEx"]).describe("發布 benchmark 的官方市場機構"),
+    benchmarkCode: z.enum(["TAIEX", "TPEX_PRICE_INDEX"]).describe("穩定 benchmark 識別碼"),
+    benchmarkName: z.enum(["發行量加權股價指數", "櫃買指數"]).describe("官方價格指數名稱"),
+    sourceName: z.string().describe("官方 benchmark 歷史資料集名稱"),
+    sourceUrl: z.string().url().describe("本次使用的固定官方市場指數 URL"),
+    dataMonth: calendarMonthSchema.describe("此來源請求與核對的 benchmark 月份"),
+    retrievedAt: z.string().describe("本服務取得此官方 benchmark 回應的 ISO 8601 時間"),
+    rowCount: z.number().int().describe("正規化後此來源的 benchmark 交易日數"),
+  })
+  .strict();
+
+export const stockReactionSignalsOutputSchema = z
+  .object({
+    ...successResultShape,
+    query: z
+      .object({
+        companyCodes: z.array(z.string()).describe("完整 requested 公司代號，順序同 caller 且決定續頁位置"),
+        asOf: z.union([z.literal("latest"), calendarDateSchema]).describe("使用者要求的 as-of selector"),
+        horizons: z.array(z.union([z.literal(5), z.literal(20), z.literal(60), z.literal(120)])).describe("已排序的 exact benchmark session 報酬視窗"),
+        pageSize: z.number().int().describe("本查詢釘住的 requested 公司頁面上限"),
+      })
+      .strict()
+      .describe("正規化後且由 cursor 綁定的 reaction 查詢條件"),
+    timezone: z.literal("Asia/Taipei").describe("日期與 latest 解析時區"),
+    currency: z.literal("TWD").describe("成交金額與個股價格幣別"),
+    priceBasis: z.literal("raw_unadjusted").describe("個股報酬使用原始未還原權值收盤價"),
+    benchmarkBasis: z.literal("price_index").describe("benchmark 使用價格指數，不含股息再投資"),
+    asOf: z
+      .object({
+        requested: z.union([z.literal("latest"), calendarDateSchema]).describe("使用者要求的 as-of selector"),
+        resolvedByMarket: z
+          .array(
+            z
+              .object({
+                market: z.enum(["listed", "otc"]).describe("此 resolved date 對應的市場"),
+                date: calendarDateSchema.describe("該市場 exact benchmark session 終點"),
+              })
+              .strict(),
+          )
+          .describe("依 requested 公司市場分別解析的 benchmark as-of；latest 可能不同日"),
+      })
+      .strict()
+      .describe("requested 與實際 benchmark as-of 的明確映射"),
+    coverage: z
+      .object({
+        selectionComplete: z.literal(true).describe("所有 requested 公司都已由目前 company master 唯一解析"),
+        benchmarkHistoryComplete: z.literal(true).describe("每個 requested 市場都有足以形成最長視窗的 benchmark history"),
+        dataQualityComplete: z.boolean().describe("本頁所有 raw 個股 signals 是否完整；不代表公司行動可比性成立"),
+        missingCompanyCodes: z.array(z.string()).length(0).describe("成功時固定空陣列；找不到任何代號會整個工具報 NOT_FOUND"),
+      })
+      .strict()
+      .describe("selection、benchmark 與本頁個股 signal 品質"),
+    pagination: z
+      .object({
+        snapshotId: z
+          .string()
+          .describe("跨頁固定的 query/current-master/benchmark scope 指紋；不包含尚未查詢公司的個股 OHLC 值"),
+        requestedCompanyCount: z.number().int().describe("完整 requested 公司數"),
+        requestedPageSize: z.number().int().describe("query 綁定的 requested page size"),
+        pageStartIndex: z.number().int().describe("本頁第一家公司在 caller 順序中的零起算位置"),
+        returnedCompanyCount: z.number().int().describe("本頁實際完成的公司數"),
+        nextCompanyIndex: z.number().int().describe("下一頁起始公司位置；無下一頁時等於 requestedCompanyCount"),
+        hasMore: z.boolean().describe("是否仍有公司受 page size 或 work budget 留待續頁"),
+        nextCursor: z.string().nullable().describe("下一頁不透明 cursor；null 表示全部 requested 公司已完成"),
+      })
+      .strict()
+      .describe("保留 caller 公司順序且受 48 work units 限制的 reaction 分頁"),
+    workBudget: z
+      .object({
+        limit: z.literal(48).describe("每頁固定 48 個官方市場月份請求單位上限"),
+        consumed: z.number().int().describe("本頁 benchmarkUnits 加 stockUnits"),
+        benchmarkUnits: z.number().int().describe("benchmark 市場 × 月份請求單位"),
+        stockUnits: z.number().int().describe("個股市場 × 月份請求單位，含必要轉板探測"),
+        unitDefinition: z.literal("one_official_market_month_request").describe("一單位等於一個官方市場的一個月份請求"),
+      })
+      .strict()
+      .describe("限制單頁上游請求量的透明工作預算"),
+    companies: z
+      .array(
+        z
+          .object({
+            companyCode: z.string().describe("目前 company master 唯一解析的公司代號"),
+            companyName: z.string().describe("目前 company master 公司簡稱"),
+            market: z.enum(["listed", "otc"]).describe("目前 company master 市場"),
+            benchmarkCode: z.enum(["TAIEX", "TPEX_PRICE_INDEX"]).describe("依目前市場配對的官方價格指數"),
+            requestedAsOf: z.union([z.literal("latest"), calendarDateSchema]).describe("本公司沿用的 requested as-of"),
+            resolvedAsOf: calendarDateSchema.describe("本公司 benchmark exact session 終點"),
+            stockDataStatus: z.enum(["available", "no_data"]).describe("requested benchmark 視窗是否找到任何個股官方 OHLC"),
+            returns: z
+              .array(
+                z
+                  .object({
+                    horizonSessions: z.union([z.literal(5), z.literal(20), z.literal(60), z.literal(120)]).describe("此報酬的 exact benchmark session 數"),
+                    startDate: calendarDateSchema.describe("此 horizon 的 exact benchmark 起始交易日"),
+                    endDate: calendarDateSchema.describe("此 horizon 的 exact benchmark 終止交易日"),
+                    stockReturnPercent: z.number().nullable().describe("raw unadjusted 個股收盤價報酬百分比；資料不足時為 null"),
+                    benchmarkReturnPercent: z.number().describe("官方 price index 同一 exact session 起訖的報酬百分比"),
+                    excessReturnPercentagePoints: z.number().nullable().describe("個股報酬減 benchmark 報酬的 percentage points；不可比或 raw 不可用時為 null"),
+                    status: reactionSignalStatusSchema.describe("raw 個股報酬資料狀態；不代表 excess 可比較"),
+                    excessReturnStatus: z.union([reactionSignalStatusSchema, z.literal("not_comparable")]).describe("excess return 的獨立狀態；not_comparable 時不得使用 raw 差值"),
+                    excessReturnReasons: z
+                      .array(
+                        z.enum([
+                          "official_change_marker_within_horizon",
+                          "market_transition_or_historical_market_mismatch_within_horizon",
+                          "multiple_observed_names",
+                        ]),
+                      )
+                      .describe("使該 horizon excess return 不可比較的可程式判讀原因"),
+                  })
+                  .strict(),
+              )
+              .describe("逐 requested horizon 的 raw stock、price-index benchmark 與可比 excess returns"),
+            liquidity: z
+              .object({
+                averageVolume5SessionsShares: averageWindowSignalSchema.describe("最近 5 benchmark sessions 平均成交股數"),
+                averageVolume20SessionsShares: averageWindowSignalSchema.describe("最近 20 benchmark sessions 平均成交股數"),
+                volume5To20Ratio: ratioSignalSchema.describe("5-session 平均成交股數除以 20-session 平均成交股數"),
+                averageTurnover20SessionsTwd: averageWindowSignalSchema.describe("最近 20 benchmark sessions 平均成交金額 TWD"),
+                averageTurnover60SessionsTwd: averageWindowSignalSchema.describe("最近 60 benchmark sessions 平均成交金額 TWD"),
+                turnover20To60Ratio: ratioSignalSchema.describe("20-session 平均成交金額除以 60-session 平均成交金額"),
+              })
+              .strict()
+              .describe("量能與成交金額的透明代理訊號；不是流動性評分"),
+            pricePath: z
+              .object({
+                horizonSessions: z.union([z.literal(5), z.literal(20), z.literal(60), z.literal(120)]).describe("使用 requested 最長 horizon 的價格路徑視窗"),
+                startDate: calendarDateSchema.describe("價格路徑 exact benchmark 起始交易日"),
+                endDate: calendarDateSchema.describe("價格路徑 exact benchmark 終止交易日"),
+                expectedObservationCount: z.number().int().describe("含起訖完整路徑應有的 session 觀察數"),
+                observationCount: z.number().int().describe("實際取得完整個股收盤價的觀察數"),
+                maximumDrawdownPercent: z.number().max(0).nullable().describe("視窗內由先前高點到後續低點的最大回撤百分比，值小於等於 0；資料不完整時為 null"),
+                distanceBelowWindowHighPercent: z.number().min(0).nullable().describe("終點收盤價低於視窗高點的百分比，值大於等於 0；資料不完整時為 null"),
+                status: reactionSignalStatusSchema.describe("價格路徑計算的資料完整性狀態"),
+              })
+              .strict()
+              .describe("最長 requested horizon 的 raw 價格路徑代理"),
+            comparability: z
+              .object({
+                status: z.enum(["provisional_raw", "not_comparable", "unavailable"]).describe("公司層 raw-price 可比性摘要；provisional_raw 仍非 adjusted-return 驗證"),
+                priceBasis: z.literal("raw_unadjusted").describe("公司可比性判斷所依據的個股價格口徑"),
+                corporateActionAdjustment: z.literal("not_applied").describe("本工具未套用除權息或公司行動調整"),
+                corporateActionEvidence: z.enum(["official_marker_present", "none_observed"]).describe("是否在已取得 OHLC 看到官方 change marker；none_observed 不是無公司行動證明"),
+                marketTransitionDetected: z.boolean().describe("requested 視窗是否觀察到跨市場或歷史市場與目前 master 不符"),
+                observedMarkets: z.array(z.enum(["listed", "otc"])).describe("requested 視窗個股 OHLC 實際來源市場"),
+                officialChangeMarkers: z
+                  .array(
+                    z
+                      .object({
+                        date: calendarDateSchema.describe("官方 change marker 所在交易日"),
+                        marker: z.string().describe("官方漲跌欄分離出的公司行動或其他 marker 原文"),
+                      })
+                      .strict(),
+                  )
+                  .describe("視窗內非單純正負號的官方 change markers"),
+                reasons: z
+                  .array(
+                    z.enum([
+                      "raw_prices_not_adjusted",
+                      "official_change_marker_present",
+                      "market_transition_or_historical_market_mismatch",
+                      "multiple_observed_names",
+                      "no_stock_data",
+                    ]),
+                  )
+                  .describe("公司層 raw-price 可比性限制；一定保留 raw_prices_not_adjusted，無個股資料時另含 no_stock_data"),
+              })
+              .strict()
+              .describe("公司行動、轉板與 identity 對 raw excess return 的限制"),
+            dataQualityComplete: z.boolean().describe("本公司所有 raw signals 是否 available；與 comparability.status 分開判讀"),
+            warnings: z.array(z.string()).describe("此公司資料缺口或不可比原因的人類可讀提示"),
+          })
+          .strict(),
+      )
+      .describe("本頁按 caller 順序回傳的公司 reaction signals；不含主觀分數或錯價結論"),
+    benchmarkSources: z.array(benchmarkSourceSchema).describe("本頁載入並 fingerprint 的 TAIEX／TPEx 官方價格指數月份來源"),
+    stockSources: z.array(priceSourceSchema).describe("本頁各公司實際使用的官方 raw OHLC 月份來源"),
     ...warningShape,
   })
   .strict();
@@ -1192,6 +2073,7 @@ const officialGuidanceSchema = z
 
 export const listCatalogOutputSchema = z
   .object({
+    ...successResultShape,
     ...sourceShape,
     query: z
       .object({
@@ -1249,6 +2131,7 @@ export const listCatalogOutputSchema = z
 
 export const companyMetricOutputSchema = z
   .object({
+    ...successResultShape,
     ...sourceShape,
     query: z
       .object({
@@ -1358,6 +2241,91 @@ export const companyMetricOutputSchema = z
   })
   .strict();
 
+const batchMetricCoverageSchema = z
+  .object({
+    seriesReturned: z.boolean().describe("上游是否回傳並唯一對應此公司 series"),
+    nonNullPoints: z.number().int().describe("reported 數值點數"),
+    missingPoints: z.number().int().describe("非 reported 的期別點數"),
+    invalidPoints: z.number().int().describe("其中 invalid_upstream 點數"),
+    firstReportedPeriod: periodSchema.nullable().describe("第一個 reported 期別；沒有時為 null"),
+    latestReportedPeriod: periodSchema.nullable().describe("最新 reported 期別；沒有時為 null"),
+    missingPeriods: z.array(periodSchema).describe("valueStatus 非 reported 的期別"),
+  })
+  .strict();
+
+export const companyMetricsBatchOutputSchema = z
+  .object({
+    ...successResultShape,
+    query: z
+      .object({
+        companyCodes: z.array(z.string()).describe("本頁實際查詢的公司代號"),
+        metricCodes: z.array(z.string()).describe("本頁每家公司完整查詢的指標代號"),
+        basis: z.enum(["quarterly", "cumulative_yoy"]).describe("本次單季或累計同比口徑"),
+        yoyQuarter: z.number().int().optional().describe("累計同比指定季度"),
+        history: z.literal("recent_12").describe("批次工具固定最多最近 12 期"),
+        startPeriod: periodSchema.optional().describe("實際套用的起始季"),
+        endPeriod: periodSchema.optional().describe("實際套用的結束季"),
+      })
+      .strict()
+      .describe("本頁實際執行的批次指標條件"),
+    retrievedAt: z.string().describe("批次結果組裝完成的 ISO 8601 時間"),
+    snapshotId: z.string().describe("本頁指標與期間內容的快照識別碼"),
+    metricDefinitions: z.array(
+      z
+        .object({
+          code: z.string().describe("精確 metric code"),
+          name: z.string().describe("Mopsfin 指標名稱"),
+          unit: z.string().describe("Mopsfin 指標單位"),
+          category: z.string().describe("Mopsfin 指標分類"),
+        })
+        .strict(),
+    ).describe("本次全部指標的目錄定義"),
+    companies: z.array(
+      z
+        .object({
+          companyCode: z.string().describe("此結果綁定的公司代號"),
+          companyName: z.string().describe("解析後公司名稱"),
+          displayName: z.string().describe("送往 Mopsfin 並核對的完整顯示值"),
+          metrics: z.array(
+            z
+              .object({
+                metricCode: z.string().describe("此序列的精確指標代號"),
+                metricName: z.string().describe("此序列的指標名稱"),
+                unit: z.string().describe("此序列的官方單位"),
+                periods: z.array(periodSchema).describe("此公司指標的正規化期別"),
+                points: z.array(pointSchema).describe("逐期數值與 value status"),
+                coverage: batchMetricCoverageSchema.describe("此公司此指標的期別覆蓋"),
+              })
+              .strict(),
+          ).describe("此公司在本頁要求的全部指標"),
+        })
+        .strict(),
+    ).describe("按公司組織的批次財務指標結果"),
+    coverage: z
+      .object({
+        selectionComplete: z.boolean().describe("本頁每家公司每項指標是否都有可辨識 series 與至少一個 reported 值"),
+        requestedCompanyCodes: z.array(z.string()).describe("本頁 requested 公司代號"),
+        returnedCompanyCodes: z.array(z.string()).describe("所有 requested metrics 都有 series 的公司代號"),
+        missingCompanyCodes: z.array(z.string()).describe("至少一項 requested metric 缺 series 的公司代號"),
+        noValidDataCompanyCodes: z.array(z.string()).describe("全部 requested metrics 都沒有 reported 值的公司代號"),
+        metrics: z.array(
+          z
+            .object({
+              metricCode: z.string().describe("此 coverage 的指標代號"),
+              returnedCompanyCodes: z.array(z.string()).describe("此指標有 series 的公司代號"),
+              missingCompanyCodes: z.array(z.string()).describe("此指標缺 series 的公司代號"),
+              noValidDataCompanyCodes: z.array(z.string()).describe("此指標沒有任何 reported 值的公司代號"),
+            })
+            .strict(),
+        ).describe("依指標拆分的公司 selection 與有效值覆蓋"),
+      })
+      .strict()
+      .describe("本頁公司與指標的完整覆蓋狀態"),
+    sources: z.array(z.object(sourceShape).strict()).describe("本頁實際使用的 Mopsfin 來源呼叫"),
+    ...warningShape,
+  })
+  .strict();
+
 const tableSchema = z
   .object({
     title: z.string().describe("由上游表格標題或報表名稱正規化的表格名稱"),
@@ -1386,6 +2354,7 @@ const paginationSchema = z
 
 export const financialStatementOutputSchema = z
   .object({
+    ...successResultShape,
     ...sourceShape,
     query: z
       .object({
@@ -1429,6 +2398,7 @@ export const financialNoteOutputSchema = financialStatementOutputSchema.extend({
 
 export const industryDataOutputSchema = z
   .object({
+    ...successResultShape,
     ...sourceShape,
     query: z
       .object({
@@ -1450,6 +2420,7 @@ export const industryDataOutputSchema = z
 
 export const financialInstitutionOutputSchema = z
   .object({
+    ...successResultShape,
     ...sourceShape,
     query: z
       .object({
