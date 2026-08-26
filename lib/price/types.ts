@@ -1,6 +1,16 @@
 import type { CompanyMarket, CompanyMarketSelection } from "@/lib/company-master/types";
 
 export type OhlcStatus = "traded" | "no_trade";
+export type OhlcQualityStatus = "complete" | "partial" | "official_no_trade";
+export type OhlcMissingField =
+  | "open"
+  | "high"
+  | "low"
+  | "close"
+  | "volumeShares"
+  | "turnoverTwd"
+  | "tradeCount"
+  | "change";
 
 export interface OhlcBar {
   date: string;
@@ -8,8 +18,21 @@ export interface OhlcBar {
   high: number | null;
   low: number | null;
   close: number | null;
+  volumeShares: number | null;
+  turnoverTwd: number | null;
+  tradeCount: number | null;
+  change: number | null;
+  changeMarker: string | null;
   market: CompanyMarket;
   status: OhlcStatus;
+  qualityStatus: OhlcQualityStatus;
+  missingFields: OhlcMissingField[];
+}
+
+export interface PriceUnitNormalization {
+  sourceUnit: "share" | "lot" | "TWD" | "TWD_thousand" | "trade";
+  outputUnit: "share" | "TWD" | "trade";
+  multiplier: 1 | 1000;
 }
 
 export interface PriceSource {
@@ -18,6 +41,11 @@ export interface PriceSource {
   sourceUrl: string;
   retrievedAt: string;
   dataDate?: string;
+  normalization: {
+    volumeShares: PriceUnitNormalization;
+    turnoverTwd: PriceUnitNormalization;
+    tradeCount: PriceUnitNormalization;
+  };
 }
 
 export interface StockOhlcQuery {
@@ -35,6 +63,7 @@ export interface StockOhlcResult {
   timezone: "Asia/Taipei";
   interval: "1d";
   priceBasis: "raw_unadjusted";
+  dataQualityComplete: boolean;
   bars: OhlcBar[];
   coverage: {
     requestedStart: string;
@@ -51,17 +80,38 @@ export interface DailyMarketOhlcQuery {
   market: CompanyMarketSelection;
   date: "latest" | string;
   companyCodes?: string[];
+  universePolicy?: "compatible" | "strict_current_master";
+}
+
+export interface DailyMarketReconciliation {
+  market: CompanyMarket;
+  masterCount: number;
+  sourceRowCount: number;
+  matchedCount: number;
+  marketOnlyCodes: string[];
+  masterMissingCodes: string[];
+  matchRatio: number;
+  coverageComplete: boolean;
 }
 
 export interface DailyMarketOhlcResult {
-  query: DailyMarketOhlcQuery;
+  query: Omit<DailyMarketOhlcQuery, "universePolicy"> & {
+    universePolicy: "compatible" | "strict_current_master";
+  };
   dataDate: string;
   currency: "TWD";
   timezone: "Asia/Taipei";
   interval: "1d";
   priceBasis: "raw_unadjusted";
   classificationMethod: "current_master" | "historical_code_rule";
+  classificationPolicy:
+    | "current_master_strict"
+    | "current_master_with_code_fallback"
+    | "historical_code_rule";
   coverageComplete: true;
+  universeCoverageVerified: boolean;
+  dataQualityComplete: boolean;
+  reconciliation: DailyMarketReconciliation[];
   selectionComplete: boolean;
   missingCompanyCodes: string[];
   counts: {

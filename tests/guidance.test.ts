@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MOPSFIN_OFFICIAL_GUIDANCE,
+  MOPSFIN_SERVER_INSTRUCTIONS,
   companyMetricWarnings,
   financialInstitutionWarnings,
   metricGuidance,
@@ -22,6 +23,16 @@ function metric(
 }
 
 describe("LLM-facing official guidance", () => {
+  it("routes the new market tools and preserves completeness semantics", () => {
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_daily_market_valuation");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_monthly_revenue");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("成交量正規化為股");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("strict_current_master");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("valueStatus");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("filingCoverage");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("INCOMPLETE_COVERAGE");
+  });
+
   it("provides formulas and applicability for company and financial metrics", () => {
     expect(metricGuidance(metric("權益報酬率"))).toMatchObject({
       calculation: "（稅後純益 ÷ 平均權益總額）× 100%",

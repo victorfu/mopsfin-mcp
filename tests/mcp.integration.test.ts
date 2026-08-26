@@ -4,10 +4,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { companyMasterClient } from "@/lib/company-master/client";
 import { registerMopsfinTools } from "@/lib/mcp/register-tools";
+import { companyMetricOutputSchema } from "@/lib/mcp/schemas";
 import { mopsfinClient } from "@/lib/mopsfin/client";
 import { MOPSFIN_SERVER_INSTRUCTIONS } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
 import { priceClient } from "@/lib/price/client";
+import { monthlyRevenueClient } from "@/lib/revenue/client";
+import { valuationClient } from "@/lib/valuation/client";
 
 const source = {
   sourceName: "公開資訊觀測站－財務比較 E 點通",
@@ -44,6 +47,8 @@ const trend = {
     companyCodes: ["2330"],
     companies: ["2330 台積電"],
     basis: "quarterly" as const,
+    includeIndustryAverage: false,
+    includeCompanyAverage: false,
     history: "recent_12" as const,
   },
   unit: "%",
@@ -51,9 +56,35 @@ const trend = {
   series: [
     {
       label: "2330 台積電",
-      points: [{ period: "2026Q1", value: 20.5 }],
+      seriesType: "company" as const,
+      companyCode: "2330",
+      companyName: "台積電",
+      displayName: "2330 台積電",
+      points: [
+        { period: "2026Q1", value: 20.5, valueStatus: "reported" as const },
+      ],
     },
   ],
+  coverage: {
+    selectionComplete: true,
+    requestedCompanyCodes: ["2330"],
+    returnedCompanyCodes: ["2330"],
+    missingCompanyCodes: [],
+    noValidDataCompanyCodes: [],
+    commonThroughPeriod: "2026Q1",
+    companies: [
+      {
+        companyCode: "2330",
+        seriesReturned: true,
+        nonNullPoints: 1,
+        missingPoints: 0,
+        invalidPoints: 0,
+        firstReportedPeriod: "2026Q1",
+        latestReportedPeriod: "2026Q1",
+        missingPeriods: [],
+      },
+    ],
+  },
   warnings: [],
 };
 
@@ -170,6 +201,7 @@ const stockOhlc = {
   timezone: "Asia/Taipei" as const,
   interval: "1d" as const,
   priceBasis: "raw_unadjusted" as const,
+  dataQualityComplete: true,
   bars: [
     {
       date: "2026-01-02",
@@ -177,8 +209,15 @@ const stockOhlc = {
       high: 1585,
       low: 1545,
       close: 1585,
+      volumeShares: 25_000_000,
+      turnoverTwd: 39_200_000_000,
+      tradeCount: 50_000,
+      change: 30,
+      changeMarker: "+",
       market: "listed" as const,
       status: "traded" as const,
+      qualityStatus: "complete" as const,
+      missingFields: [],
     },
   ],
   coverage: {
@@ -195,20 +234,33 @@ const stockOhlc = {
       sourceUrl:
         "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260101&stockNo=2330&response=json",
       retrievedAt: "2026-08-25T00:00:00.000Z",
+      normalization: {
+        volumeShares: { sourceUnit: "share" as const, outputUnit: "share" as const, multiplier: 1 as const },
+        turnoverTwd: { sourceUnit: "TWD" as const, outputUnit: "TWD" as const, multiplier: 1 as const },
+        tradeCount: { sourceUnit: "trade" as const, outputUnit: "trade" as const, multiplier: 1 as const },
+      },
     },
   ],
   warnings: [],
 };
 
 const dailyMarketOhlc = {
-  query: { market: "all" as const, date: "2026-08-24" },
+  query: {
+    market: "all" as const,
+    date: "2026-08-24",
+    universePolicy: "compatible" as const,
+  },
   dataDate: "2026-08-24",
   currency: "TWD" as const,
   timezone: "Asia/Taipei" as const,
   interval: "1d" as const,
   priceBasis: "raw_unadjusted" as const,
   classificationMethod: "historical_code_rule" as const,
+  classificationPolicy: "historical_code_rule" as const,
   coverageComplete: true as const,
+  universeCoverageVerified: false,
+  dataQualityComplete: true,
+  reconciliation: [],
   selectionComplete: true,
   missingCompanyCodes: [],
   counts: { listed: 1, otc: 1, returned: 2 },
@@ -221,8 +273,15 @@ const dailyMarketOhlc = {
       high: 2410,
       low: 2375,
       close: 2375,
+      volumeShares: 18_000_000,
+      turnoverTwd: 43_000_000_000,
+      tradeCount: 65_000,
+      change: -20,
+      changeMarker: "-",
       market: "listed" as const,
       status: "traded" as const,
+      qualityStatus: "complete" as const,
+      missingFields: [],
     },
     {
       code: "3105",
@@ -232,8 +291,15 @@ const dailyMarketOhlc = {
       high: 372.5,
       low: 355,
       close: 355,
+      volumeShares: 9_000_000,
+      turnoverTwd: 3_200_000_000,
+      tradeCount: 12_000,
+      change: -10,
+      changeMarker: "-",
       market: "otc" as const,
       status: "traded" as const,
+      qualityStatus: "complete" as const,
+      missingFields: [],
     },
   ],
   sources: [
@@ -244,6 +310,11 @@ const dailyMarketOhlc = {
         "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20260824&type=ALLBUT0999&response=json",
       retrievedAt: "2026-08-25T00:00:00.000Z",
       dataDate: "2026-08-24",
+      normalization: {
+        volumeShares: { sourceUnit: "share" as const, outputUnit: "share" as const, multiplier: 1 as const },
+        turnoverTwd: { sourceUnit: "TWD" as const, outputUnit: "TWD" as const, multiplier: 1 as const },
+        tradeCount: { sourceUnit: "trade" as const, outputUnit: "trade" as const, multiplier: 1 as const },
+      },
     },
     {
       market: "otc" as const,
@@ -252,9 +323,213 @@ const dailyMarketOhlc = {
         "https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=2026%2F08%2F24&response=json",
       retrievedAt: "2026-08-25T00:00:00.000Z",
       dataDate: "2026-08-24",
+      normalization: {
+        volumeShares: { sourceUnit: "share" as const, outputUnit: "share" as const, multiplier: 1 as const },
+        turnoverTwd: { sourceUnit: "TWD" as const, outputUnit: "TWD" as const, multiplier: 1 as const },
+        tradeCount: { sourceUnit: "trade" as const, outputUnit: "trade" as const, multiplier: 1 as const },
+      },
     },
   ],
   warnings: [],
+};
+
+const latestMarketReconciliation = [
+  {
+    market: "listed" as const,
+    masterCount: 1,
+    sourceRowCount: 1,
+    matchedCount: 1,
+    marketOnlyCodes: [],
+    masterMissingCodes: [],
+    matchRatio: 1,
+    coverageComplete: true,
+  },
+  {
+    market: "otc" as const,
+    masterCount: 1,
+    sourceRowCount: 1,
+    matchedCount: 1,
+    marketOnlyCodes: [],
+    masterMissingCodes: [],
+    matchRatio: 1,
+    coverageComplete: true,
+  },
+];
+
+const dailyMarketValuation = {
+  query: {
+    market: "all" as const,
+    date: "latest" as const,
+    universePolicy: "compatible" as const,
+  },
+  dataDate: "2026-08-24",
+  currency: "TWD" as const,
+  classificationPolicy: "current_master_with_code_fallback" as const,
+  coverageComplete: true,
+  universeCoverageVerified: true,
+  selectionComplete: true,
+  missingCompanyCodes: [],
+  reconciliation: latestMarketReconciliation,
+  counts: {
+    raw: 2,
+    returned: 2,
+    withPe: 2,
+    withPb: 2,
+    withDividendYield: 2,
+  },
+  rows: [
+    {
+      code: "2330",
+      name: "台積電",
+      market: "listed" as const,
+      peRatio: 24.6,
+      priceToBookRatio: 7.9,
+      dividendYieldPercent: 1.8,
+      valueStatus: {
+        peRatio: "reported" as const,
+        priceToBookRatio: "reported" as const,
+        dividendYieldPercent: "reported" as const,
+      },
+    },
+    {
+      code: "3105",
+      name: "穩懋",
+      market: "otc" as const,
+      peRatio: 31.2,
+      priceToBookRatio: 4.1,
+      dividendYieldPercent: 0.9,
+      valueStatus: {
+        peRatio: "reported" as const,
+        priceToBookRatio: "reported" as const,
+        dividendYieldPercent: "reported" as const,
+      },
+    },
+  ],
+  sources: [
+    {
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      sourceName: "臺灣證券交易所－上市股票本益比、殖利率及股價淨值比",
+      sourceUrl: "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      dataDate: "2026-08-24",
+      rawCount: 1,
+      eligibleRowCount: 1,
+    },
+    {
+      market: "otc" as const,
+      exchange: "TPEx" as const,
+      sourceName: "證券櫃檯買賣中心－上櫃股票本益比分析",
+      sourceUrl:
+        "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      dataDate: "2026-08-24",
+      rawCount: 1,
+      eligibleRowCount: 1,
+    },
+  ],
+  warnings: ["latest 不是盤中即時估值。"],
+};
+
+const reportedRevenueStatuses = {
+  currentMonthRevenueTwd: "reported" as const,
+  previousMonthRevenueTwd: "reported" as const,
+  sameMonthLastYearRevenueTwd: "reported" as const,
+  momPercent: "reported" as const,
+  yoyPercent: "reported" as const,
+  currentYearCumulativeRevenueTwd: "reported" as const,
+  previousYearCumulativeRevenueTwd: "reported" as const,
+  cumulativeYoyPercent: "reported" as const,
+};
+
+const monthlyRevenue = {
+  query: {
+    market: "all" as const,
+    dataMonth: "latest" as const,
+    universePolicy: "strict_current_master" as const,
+  },
+  dataMonth: "2026-07",
+  currency: "TWD" as const,
+  amountUnit: "TWD" as const,
+  coverageComplete: true as const,
+  selectionComplete: true,
+  missingCompanyCodes: [],
+  filingCoverage: {
+    expectedCompanyCount: 2,
+    reportedCompanyCount: 2,
+    missingCompanyCodes: [],
+    coverageRatio: 1,
+    complete: true,
+  },
+  reconciliation: latestMarketReconciliation,
+  counts: { listed: 1, otc: 1, returned: 2 },
+  rows: [
+    {
+      code: "2330",
+      name: "台灣積體電路製造股份有限公司",
+      market: "listed" as const,
+      industryCode: "24",
+      sourceReportDate: "2026-08-10",
+      currentMonthRevenueTwd: 323_000_000_000,
+      previousMonthRevenueTwd: 310_000_000_000,
+      sameMonthLastYearRevenueTwd: 256_000_000_000,
+      momPercent: 4.19,
+      yoyPercent: 26.17,
+      currentYearCumulativeRevenueTwd: 2_100_000_000_000,
+      previousYearCumulativeRevenueTwd: 1_700_000_000_000,
+      cumulativeYoyPercent: 23.53,
+      note: null,
+      valueStatus: reportedRevenueStatuses,
+    },
+    {
+      code: "3105",
+      name: "穩懋半導體股份有限公司",
+      market: "otc" as const,
+      industryCode: "24",
+      sourceReportDate: "2026-08-10",
+      currentMonthRevenueTwd: 2_500_000_000,
+      previousMonthRevenueTwd: 2_400_000_000,
+      sameMonthLastYearRevenueTwd: 2_000_000_000,
+      momPercent: 4.17,
+      yoyPercent: 25,
+      currentYearCumulativeRevenueTwd: 16_000_000_000,
+      previousYearCumulativeRevenueTwd: 13_000_000_000,
+      cumulativeYoyPercent: 23.08,
+      note: "",
+      valueStatus: reportedRevenueStatuses,
+    },
+  ],
+  sources: [
+    {
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      sourceName: "臺灣證券交易所－上市公司每月營業收入彙總表",
+      sourceUrl: "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      rawCount: 1,
+      eligibleRowCount: 1,
+      dataMonth: "2026-07",
+      sourceReportDate: "2026-08-10",
+      sourceAmountUnit: "thousand_TWD" as const,
+      outputAmountUnit: "TWD" as const,
+      amountMultiplier: 1000 as const,
+    },
+    {
+      market: "otc" as const,
+      exchange: "TPEx" as const,
+      sourceName: "證券櫃檯買賣中心－上櫃公司每月營業收入彙總表",
+      sourceUrl: "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      rawCount: 1,
+      eligibleRowCount: 1,
+      dataMonth: "2026-07",
+      sourceReportDate: "2026-08-10",
+      sourceAmountUnit: "thousand_TWD" as const,
+      outputAmountUnit: "TWD" as const,
+      amountMultiplier: 1000 as const,
+    },
+  ],
+  warnings: ["latest 月份仍應檢查 filingCoverage。"],
 };
 
 interface JsonSchemaNode {
@@ -315,10 +590,47 @@ afterEach(() => {
 });
 
 describe("MCP protocol integration", () => {
-  it("initializes, lists ten tools and calls each tool with structured output", async () => {
+  it("enforces company-series identity as a discriminated output contract", () => {
+    const baseSeries = {
+      label: "2330 台積電",
+      points: [
+        { period: "2026Q1", value: 20.5, valueStatus: "reported" as const },
+      ],
+    };
+
+    expect(
+      companyMetricOutputSchema.safeParse({
+        ...trend,
+        series: [{ ...baseSeries, seriesType: "company" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      companyMetricOutputSchema.safeParse({
+        ...trend,
+        series: [
+          {
+            ...baseSeries,
+            seriesType: "industry_average",
+            companyCode: "2330",
+            companyName: "台積電",
+            displayName: "2330 台積電",
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(companyMetricOutputSchema.safeParse(trend).success).toBe(true);
+  });
+
+  it("initializes, lists twelve tools and calls each tool with structured output", async () => {
     vi.spyOn(companyMasterClient, "listCompanies").mockResolvedValue(companyMaster);
     vi.spyOn(priceClient, "getStockOhlc").mockResolvedValue(stockOhlc);
     vi.spyOn(priceClient, "getDailyMarketOhlc").mockResolvedValue(dailyMarketOhlc);
+    vi.spyOn(valuationClient, "getDailyMarketValuation").mockResolvedValue(
+      dailyMarketValuation,
+    );
+    vi.spyOn(monthlyRevenueClient, "getMonthlyRevenue").mockResolvedValue(
+      monthlyRevenue,
+    );
     vi.spyOn(mopsfinClient, "findCompanies").mockResolvedValue([
       { code: "2330", name: "台積電", displayName: "2330 台積電" },
     ]);
@@ -347,7 +659,14 @@ describe("MCP protocol integration", () => {
       },
       unit: "新台幣仟元",
       periods: ["2026Q1"],
-      series: [{ label: "半導體業", points: [{ period: "2026Q1", value: 100 }] }],
+      series: [
+        {
+          label: "半導體業",
+          points: [
+            { period: "2026Q1", value: 100, valueStatus: "reported" },
+          ],
+        },
+      ],
       warnings: [],
     });
     vi.spyOn(mopsfinClient, "getFinancialInstitutionMetric").mockResolvedValue({
@@ -365,18 +684,30 @@ describe("MCP protocol integration", () => {
       unit: "%",
       periods: ["2026Q1"],
       series: [
-        { label: "臺銀", points: [{ period: "2026Q1", value: 14.2 }] },
-        { label: "公司平均數", points: [{ period: "2026Q1", value: 14.2 }] },
+        {
+          label: "臺銀",
+          points: [
+            { period: "2026Q1", value: 14.2, valueStatus: "reported" },
+          ],
+        },
+        {
+          label: "公司平均數",
+          points: [
+            { period: "2026Q1", value: 14.2, valueStatus: "reported" },
+          ],
+        },
         {
           label: "銀行業資本適足性",
-          points: [{ period: "2026Q1", value: 15.1 }],
+          points: [
+            { period: "2026Q1", value: 15.1, valueStatus: "reported" },
+          ],
         },
       ],
       warnings: [],
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.1.0" },
+      { name: "mopsfin-test", version: "0.2.0" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -398,11 +729,16 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("TPEx");
     expect(client.getInstructions()).toContain("get_stock_ohlc");
     expect(client.getInstructions()).toContain("raw_unadjusted");
+    expect(client.getInstructions()).toContain("get_daily_market_valuation");
+    expect(client.getInstructions()).toContain("get_monthly_revenue");
+    expect(client.getInstructions()).toContain("filingCoverage");
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name)).toEqual([
       "find_companies",
       "get_stock_ohlc",
       "get_daily_market_ohlc",
+      "get_daily_market_valuation",
+      "get_monthly_revenue",
       "list_companies",
       "list_catalog",
       "get_company_metric",
@@ -488,6 +824,30 @@ describe("MCP protocol integration", () => {
     );
     expect(dailyOhlcTool?.description).toContain("latest 不是盤中即時價");
     expect(dailyOhlcTool?.description).toContain("selectionComplete=false");
+    expect(dailyOhlcTool?.description).toContain("strict_current_master");
+    expect(dailyOhlcTool?.description).toContain("成交量");
+    expect(dailyOhlcTool?.inputSchema.properties?.universe_policy).toMatchObject({
+      default: "compatible",
+    });
+    const valuationTool = listed.tools.find(
+      (tool) => tool.name === "get_daily_market_valuation",
+    );
+    expect(valuationTool?.description).toContain("strict_current_master");
+    expect(valuationTool?.description).toContain("valueStatus");
+    expect(valuationTool?.inputSchema.properties?.date).toMatchObject({
+      default: "latest",
+    });
+    expect(valuationTool?.inputSchema.properties?.universe_policy).toMatchObject({
+      default: "compatible",
+    });
+    const revenueTool = listed.tools.find(
+      (tool) => tool.name === "get_monthly_revenue",
+    );
+    expect(revenueTool?.description).toContain("filingCoverage");
+    expect(revenueTool?.description).toContain("1,000");
+    expect(revenueTool?.inputSchema.properties?.data_month).toMatchObject({
+      default: "latest",
+    });
     const financialTool = listed.tools.find(
       (tool) => tool.name === "get_financial_institution_metric",
     );
@@ -534,6 +894,8 @@ describe("MCP protocol integration", () => {
         },
       ],
       ["get_daily_market_ohlc", { market: "all", date: "2026-08-24" }],
+      ["get_daily_market_valuation", { market: "all" }],
+      ["get_monthly_revenue", { market: "all" }],
       ["list_companies", { market: "all" }],
       ["list_catalog", { kind: "all" }],
       [
@@ -619,14 +981,80 @@ describe("MCP protocol integration", () => {
         const structured = result.structuredContent as {
           dataDate: string;
           coverageComplete: boolean;
+          universeCoverageVerified: boolean;
+          dataQualityComplete: boolean;
           selectionComplete: boolean;
           counts: { returned: number };
         };
         expect(structured).toMatchObject({
           dataDate: "2026-08-24",
           coverageComplete: true,
+          universeCoverageVerified: false,
+          dataQualityComplete: true,
           selectionComplete: true,
           counts: { returned: 2 },
+        });
+      }
+      if (name === "get_daily_market_valuation") {
+        const structured = result.structuredContent as {
+          dataDate: string;
+          universeCoverageVerified: boolean;
+          counts: { returned: number };
+          rows: Array<{
+            code: string;
+            peRatio: number | null;
+            valueStatus: { peRatio: string };
+          }>;
+        };
+        expect(structured).toMatchObject({
+          dataDate: "2026-08-24",
+          universeCoverageVerified: true,
+          counts: { returned: 2 },
+        });
+        expect(structured.rows[0]).toMatchObject({
+          code: "2330",
+          peRatio: 24.6,
+          valueStatus: { peRatio: "reported" },
+        });
+      }
+      if (name === "get_monthly_revenue") {
+        const structured = result.structuredContent as {
+          dataMonth: string;
+          amountUnit: string;
+          filingCoverage: {
+            reportedCompanyCount: number;
+            expectedCompanyCount: number;
+          };
+          rows: Array<{ code: string; currentMonthRevenueTwd: number | null }>;
+        };
+        expect(structured).toMatchObject({
+          dataMonth: "2026-07",
+          amountUnit: "TWD",
+          filingCoverage: {
+            reportedCompanyCount: 2,
+            expectedCompanyCount: 2,
+          },
+        });
+        expect(structured.rows[0]).toMatchObject({
+          code: "2330",
+          currentMonthRevenueTwd: 323_000_000_000,
+        });
+      }
+      if (name === "get_company_metric") {
+        const structured = result.structuredContent as {
+          coverage: {
+            selectionComplete: boolean;
+            commonThroughPeriod: string | null;
+          };
+          series: Array<{ companyCode?: string; seriesType: string }>;
+        };
+        expect(structured.coverage).toMatchObject({
+          selectionComplete: true,
+          commonThroughPeriod: "2026Q1",
+        });
+        expect(structured.series[0]).toMatchObject({
+          companyCode: "2330",
+          seriesType: "company",
         });
       }
       if (name === "get_financial_institution_metric") {

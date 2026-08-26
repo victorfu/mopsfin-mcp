@@ -1,0 +1,18 @@
+[
+  {
+    "Date": "1150825",
+    "Code": "1101",
+    "Name": "台泥",
+    "PEratio": "",
+    "DividendYield": "3.25",
+    "PBratio": "not-a-number"
+  },
+  {
+    "Date": "1150825",
+    "Code": "2330",
+    "Name": "台積電",
+    "PEratio": "29.75",
+    "DividendYield": "1.42",
+    "PBratio": "8.91"
+  }
+]

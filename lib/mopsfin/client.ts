@@ -16,6 +16,7 @@ import { parseHtmlTables, paginateTables } from "./html";
 import { MopsfinHttpClient } from "./http";
 import { normalizeTrendJson } from "./normalize";
 import {
+  comparePeriods,
   latestPeriodCandidates,
   parsePeriod,
   sliceTrend,
@@ -31,6 +32,8 @@ import type {
   NormalizedTrend,
   ParsedHtmlResponse,
   SourceMetadata,
+  TrendSeries,
+  TrendSeriesType,
 } from "./types";
 
 export type HistoryMode = "recent_12" | "all";
@@ -108,6 +111,319 @@ function validateCompanyCodes(companyCodes: string[]): string[] {
     }
     return code;
   });
+}
+
+function validateUniqueCompanyCodes(codes: string[]): void {
+  const normalized = codes.map((code) => code.toLowerCase());
+  const duplicate = codes.find(
+    (_, index) => normalized.indexOf(normalized[index]) !== index,
+  );
+  if (duplicate) {
+    throw new MopsfinError(
+      "INVALID_ARGUMENT",
+      `company_codes 不得重複：${duplicate}。`,
+    );
+  }
+}
+
+function validateCompanyMetricRequest(options: {
+  basis: CompanyMetricBasis;
+  yoyQuarter?: number;
+  range: TrendRange;
+}): void {
+  if (options.basis === "cumulative_yoy") {
+    if (
+      options.yoyQuarter === undefined ||
+      !Number.isInteger(options.yoyQuarter) ||
+      options.yoyQuarter < 1 ||
+      options.yoyQuarter > 4
+    ) {
+      throw new MopsfinError(
+        "INVALID_ARGUMENT",
+        "basis 為 cumulative_yoy 時必須提供 1 至 4 的 yoy_quarter。",
+      );
+    }
+  } else if (options.yoyQuarter !== undefined) {
+    throw new MopsfinError(
+      "INVALID_ARGUMENT",
+      "basis 為 quarterly 時不得提供 yoy_quarter。",
+    );
+  }
+
+  if (options.range.startPeriod) parsePeriod(options.range.startPeriod);
+  if (options.range.endPeriod) parsePeriod(options.range.endPeriod);
+  if (
+    options.range.startPeriod &&
+    options.range.endPeriod &&
+    comparePeriods(options.range.startPeriod, options.range.endPeriod) > 0
+  ) {
+    throw new MopsfinError(
+      "INVALID_ARGUMENT",
+      "start_period 不得晚於 end_period。",
+    );
+  }
+}
+
+function canonicalIdentity(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function containsCompanyCode(value: string, code: string): boolean {
+  return new RegExp(
+    `(^|[^0-9A-Za-z])${escapeRegExp(code)}([^0-9A-Za-z]|$)`,
+    "i",
+  ).test(value);
+}
+
+function directCompanyMatches(
+  value: string,
+  companies: CompanySuggestion[],
+): CompanySuggestion[] {
+  const canonical = canonicalIdentity(value);
+  return companies.filter((company) => {
+    const exactAliases = [company.code, company.name, company.displayName].map(
+      canonicalIdentity,
+    );
+    return (
+      exactAliases.includes(canonical) ||
+      containsCompanyCode(value, company.code)
+    );
+  });
+}
+
+function companyIdentityAliases(
+  trend: NormalizedTrend,
+  companies: CompanySuggestion[],
+): Map<string, Set<string>> {
+  const aliases = new Map(
+    companies.map((company) => [
+      company.code,
+      new Set(
+        [company.code, company.name, company.displayName].map(canonicalIdentity),
+      ),
+    ]),
+  );
+  const metadataLists = [trend.checkedNames, trend.displayNames];
+  const metadataLength = Math.max(
+    trend.showNames.length,
+    trend.checkedNames.length,
+    trend.displayNames.length,
+  );
+  const claimedMetadataPositions = new Map<string, number>();
+
+  for (let index = 0; index < metadataLength; index += 1) {
+    const identityValues = [
+      trend.showNames[index],
+      ...metadataLists.flatMap((list) => (list[index] ? [list[index]] : [])),
+    ].filter((value): value is string => Boolean(value));
+    const matches = new Map<string, CompanySuggestion>();
+    for (const value of identityValues) {
+      for (const company of directCompanyMatches(value, companies)) {
+        matches.set(company.code, company);
+      }
+    }
+    if (matches.size > 1) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        `Mopsfin 公司 identity metadata 在位置 ${index + 1} 互相衝突。`,
+      );
+    }
+    const company = [...matches.values()][0];
+    if (!company) continue;
+    const priorPosition = claimedMetadataPositions.get(company.code);
+    if (priorPosition !== undefined && priorPosition !== index) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        `Mopsfin 對公司 ${company.code} 回傳重複的 identity metadata。`,
+      );
+    }
+    claimedMetadataPositions.set(company.code, index);
+    const companyAliases = aliases.get(company.code) as Set<string>;
+    for (const value of [
+      trend.showNames[index],
+      trend.checkedNames[index],
+      trend.displayNames[index],
+    ]) {
+      if (value) companyAliases.add(canonicalIdentity(value));
+    }
+  }
+
+  return aliases;
+}
+
+function classifyAverageSeries(
+  label: string,
+  extraNames: string[],
+  options: {
+    includeIndustryAverage: boolean;
+    includeCompanyAverage: boolean;
+  },
+): Exclude<TrendSeriesType, "company"> {
+  const canonical = canonicalIdentity(label);
+  if (/產業.*平均|同業.*平均|業別.*平均|業平均/.test(canonical)) {
+    return "industry_average";
+  }
+  if (/公司平均|所選.*平均|選取.*平均|選擇.*平均/.test(canonical)) {
+    return "selection_average";
+  }
+
+  const isUpstreamExtra = extraNames.some(
+    (name) => canonicalIdentity(name) === canonical,
+  );
+  if (isUpstreamExtra) {
+    if (options.includeIndustryAverage && /產業|業$/.test(canonical)) {
+      return "industry_average";
+    }
+    if (options.includeCompanyAverage && /平均/.test(canonical)) {
+      return "selection_average";
+    }
+    if (options.includeIndustryAverage && !options.includeCompanyAverage) {
+      return "industry_average";
+    }
+    if (options.includeCompanyAverage && !options.includeIndustryAverage) {
+      return "selection_average";
+    }
+  }
+  return "other";
+}
+
+function identifyCompanySeries(
+  trend: NormalizedTrend,
+  companies: CompanySuggestion[],
+  options: {
+    includeIndustryAverage: boolean;
+    includeCompanyAverage: boolean;
+  },
+): NormalizedTrend {
+  const aliases = companyIdentityAliases(trend, companies);
+  const claimedCompanies = new Set<string>();
+  const series = trend.series.map((item): TrendSeries => {
+    const base = { label: item.label, points: item.points };
+    const nonCompanyType = classifyAverageSeries(
+      item.label,
+      trend.extraNames,
+      options,
+    );
+    if (nonCompanyType !== "other") {
+      return { ...base, seriesType: nonCompanyType };
+    }
+    const canonicalLabel = canonicalIdentity(item.label);
+    const candidates = companies.filter(
+      (company) =>
+        aliases.get(company.code)?.has(canonicalLabel) ||
+        containsCompanyCode(item.label, company.code),
+    );
+    if (candidates.length > 1) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        `Mopsfin series「${item.label}」同時符合多家公司，無法安全綁定 identity。`,
+      );
+    }
+    const company = candidates[0];
+    if (!company) {
+      return { ...base, seriesType: "other" };
+    }
+    if (claimedCompanies.has(company.code)) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        `Mopsfin 對公司 ${company.code} 回傳多個 company series，無法安全選擇。`,
+      );
+    }
+    claimedCompanies.add(company.code);
+    return {
+      ...base,
+      seriesType: "company",
+      companyCode: company.code,
+      companyName: company.name,
+      displayName: company.displayName,
+    };
+  });
+
+  return { ...trend, series };
+}
+
+function companyCoverage(
+  trend: NormalizedTrend,
+  companies: CompanySuggestion[],
+) {
+  const companySeries = new Map(
+    trend.series.flatMap((series) =>
+      series.seriesType === "company" && series.companyCode
+        ? [[series.companyCode, series] as const]
+        : [],
+    ),
+  );
+  const details = companies.map((company) => {
+    const series = companySeries.get(company.code);
+    const pointsByPeriod = new Map<string, TrendSeries["points"][number]>();
+    for (const point of series?.points ?? []) {
+      if (pointsByPeriod.has(point.period)) {
+        throw new MopsfinError(
+          "UPSTREAM_BAD_RESPONSE",
+          `Mopsfin 對公司 ${company.code} 的 ${point.period} 回傳重複資料點。`,
+        );
+      }
+      pointsByPeriod.set(point.period, point);
+    }
+    const reportedPeriods = trend.periods.filter(
+      (period) => pointsByPeriod.get(period)?.valueStatus === "reported",
+    );
+    const missingPeriods = trend.periods.filter(
+      (period) => pointsByPeriod.get(period)?.valueStatus !== "reported",
+    );
+    const invalidPoints = [...pointsByPeriod.values()].filter(
+      (point) => point.valueStatus === "invalid_upstream",
+    ).length;
+    return {
+      companyCode: company.code,
+      seriesReturned: series !== undefined,
+      nonNullPoints: reportedPeriods.length,
+      missingPoints: missingPeriods.length,
+      invalidPoints,
+      firstReportedPeriod: reportedPeriods[0] ?? null,
+      latestReportedPeriod: reportedPeriods.at(-1) ?? null,
+      missingPeriods,
+    };
+  });
+  const returnedCompanyCodes = companies
+    .filter((company) => companySeries.has(company.code))
+    .map((company) => company.code);
+  const missingCompanyCodes = companies
+    .filter((company) => !companySeries.has(company.code))
+    .map((company) => company.code);
+  const noValidDataCompanyCodes = details
+    .filter((detail) => detail.nonNullPoints === 0)
+    .map((detail) => detail.companyCode);
+  const commonThroughPeriod =
+    [...trend.periods]
+      .reverse()
+      .find((period) =>
+        companies.every(
+          (company) =>
+            companySeries
+              .get(company.code)
+              ?.points.some(
+                (point) =>
+                  point.period === period && point.valueStatus === "reported",
+              ) === true,
+        ),
+      ) ?? null;
+
+  return {
+    selectionComplete:
+      missingCompanyCodes.length === 0 &&
+      noValidDataCompanyCodes.length === 0,
+    requestedCompanyCodes: companies.map((company) => company.code),
+    returnedCompanyCodes,
+    missingCompanyCodes,
+    noValidDataCompanyCodes,
+    commonThroughPeriod,
+    companies: details,
+  };
 }
 
 function defaultPostFields(
@@ -207,14 +523,11 @@ export class MopsfinClient {
     includeCompanyAverage: boolean;
     range: TrendRange;
   }) {
-    if (options.basis === "cumulative_yoy" && !options.yoyQuarter) {
-      throw new MopsfinError(
-        "INVALID_ARGUMENT",
-        "basis 為 cumulative_yoy 時必須提供 yoy_quarter。",
-      );
-    }
+    validateCompanyMetricRequest(options);
+    const companyCodes = validateCompanyCodes(options.companyCodes);
+    validateUniqueCompanyCodes(companyCodes);
     const metric = await this.requireMetric(options.metricCode, "data");
-    const companies = await this.resolveCompanies(options.companyCodes);
+    const companies = await this.resolveCompanies(companyCodes);
     const response = await this.http.post("/compare/data", {
       ...defaultPostFields(metric),
       companyId: companies.map((company) => company.displayName),
@@ -223,8 +536,38 @@ export class MopsfinClient {
       bcodeAvg: options.includeIndustryAverage,
       companyAvg: options.includeCompanyAverage,
     });
-    const trend = sliceTrend(normalizeTrendJson(parseJson(response.body)), options.range);
-    this.assertTrendHasData(trend);
+    const identifiedTrend = identifyCompanySeries(
+      normalizeTrendJson(parseJson(response.body)),
+      companies,
+      options,
+    );
+    const trend = sliceTrend(identifiedTrend, {
+      ...options.range,
+      recentSeriesTypes: ["company"],
+      recentReportedOnly: true,
+    });
+    const coverage = companyCoverage(trend, companies);
+    if (coverage.noValidDataCompanyCodes.length === companies.length) {
+      throw new MopsfinError(
+        "NO_DATA",
+        "Mopsfin 未回傳任何受查公司的有效財務指標資料。",
+      );
+    }
+
+    const selectionWarnings: string[] = [];
+    if (coverage.missingCompanyCodes.length > 0) {
+      selectionWarnings.push(
+        `Mopsfin 未回傳公司 series：${coverage.missingCompanyCodes.join("、")}；selectionComplete=false。`,
+      );
+    }
+    const returnedWithoutData = coverage.noValidDataCompanyCodes.filter(
+      (code) => !coverage.missingCompanyCodes.includes(code),
+    );
+    if (returnedWithoutData.length > 0) {
+      selectionWarnings.push(
+        `下列公司在本次期別範圍沒有有效數值：${returnedWithoutData.join("、")}；selectionComplete=false。`,
+      );
+    }
 
     return {
       ...this.source("/compare/data"),
@@ -235,13 +578,17 @@ export class MopsfinClient {
         companies: companies.map((company) => company.displayName),
         basis: options.basis,
         ...(options.yoyQuarter ? { yoyQuarter: options.yoyQuarter } : {}),
+        includeIndustryAverage: options.includeIndustryAverage,
+        includeCompanyAverage: options.includeCompanyAverage,
         ...options.range,
       },
       unit: trend.unit || metric.unit,
       periods: trend.periods,
       series: trend.series,
+      coverage,
       warnings: mergeWarnings(
         this.trendWarnings(trend),
+        selectionWarnings,
         companyMetricWarnings(
           metric,
           options.basis,
@@ -621,7 +968,9 @@ export class MopsfinClient {
   private assertTrendHasData(trend: NormalizedTrend): void {
     if (
       trend.periods.length === 0 ||
-      !trend.series.some((series) => series.points.length > 0)
+      !trend.series.some((series) =>
+        series.points.some((point) => point.valueStatus === "reported"),
+      )
     ) {
       throw new MopsfinError("NO_DATA", "Mopsfin 查無符合條件的趨勢資料。");
     }
@@ -629,7 +978,11 @@ export class MopsfinClient {
 
   private trendWarnings(trend: NormalizedTrend): string[] {
     const warnings: string[] = [...trend.normalizationWarnings];
-    if (trend.series.some((series) => series.points.some((point) => point.value === null))) {
+    if (
+      trend.series.some((series) =>
+        series.points.some((point) => point.valueStatus === "missing"),
+      )
+    ) {
       warnings.push("部分資料點缺值；可能是該公司不適用或尚未申報。 ");
     }
     return warnings.map((warning) => warning.trim());

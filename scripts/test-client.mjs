@@ -17,6 +17,8 @@ try {
     "find_companies",
     "get_stock_ohlc",
     "get_daily_market_ohlc",
+    "get_daily_market_valuation",
+    "get_monthly_revenue",
     "list_companies",
     "list_catalog",
     "get_company_metric",
@@ -26,6 +28,11 @@ try {
     "get_financial_institution_metric",
   ];
   const names = tools.map((tool) => tool.name);
+  if (names.length !== expected.length) {
+    throw new Error(
+      `Expected exactly ${expected.length} tools, received ${names.length}: ${names.join(", ")}`,
+    );
+  }
   for (const name of expected) {
     if (!names.includes(name)) throw new Error(`Missing tool: ${name}`);
   }

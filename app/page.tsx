@@ -6,7 +6,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 
 連線資訊：
 - 名稱：Mopsfin 台股財務
-- 說明：查詢 TWSE／TPEx 上市櫃公司完整母體與官方日線 OHLC，以及 Mopsfin 財務比較 E 點通提供的公司財報、財務指標、附註、產業與金融機構資料。
+- 說明：查詢 TWSE／TPEx 上市櫃公司完整母體、官方日線價量、最新估值與月營收，以及 Mopsfin 財務比較 E 點通提供的公司財報、財務指標、附註、產業與金融機構資料。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
 - 驗證方式：不需要登入、API Key、Token 或 OAuth
@@ -17,14 +17,16 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 2. 如果你能操作目前應用程式的設定介面，請帶我完成新增，並在任何會改變帳號設定的步驟前讓我確認。
 3. 如果你不能直接操作設定，請不要聲稱已完成；請按照目前平台的最新介面名稱，一次只告訴我一個清楚步驟，等我完成後再繼續。
 4. URL 必須完整使用 /api/mcp，請勿改成網站首頁、/mcp 或其他路徑；若出現 OAuth 進階欄位，請保持空白。
-5. 連線後確認可以看到 10 個唯讀工具：find_companies、get_stock_ohlc、get_daily_market_ohlc、list_companies、list_catalog、get_company_metric、get_financial_statement、get_financial_note、get_industry_data、get_financial_institution_metric。
+5. 連線後確認可以看到 12 個唯讀工具：find_companies、get_stock_ohlc、get_daily_market_ohlc、get_daily_market_valuation、get_monthly_revenue、list_companies、list_catalog、get_company_metric、get_financial_statement、get_financial_note、get_industry_data、get_financial_institution_metric。
 6. 最後在新對話啟用此連接器，並測試：「請先找出 2330 對應的公司，再查詢最近 12 季營業收入；標示期別、單位、來源與資料擷取時間。」
 7. 若我的方案或工作區政策不允許新增自訂 MCP，請明確告訴我限制及需要聯絡的管理員角色。`;
 
 const tools = [
   ["find_companies", "用代號或名稱尋找台灣公司"],
-  ["get_stock_ohlc", "查詢單一台股跨期原始日線開高低收"],
-  ["get_daily_market_ohlc", "查詢單日上市、上櫃或全部市場 OHLC"],
+  ["get_stock_ohlc", "查詢單一台股跨期原始日線價量"],
+  ["get_daily_market_ohlc", "查詢單日上市、上櫃或全部市場價量"],
+  ["get_daily_market_valuation", "查詢官方最新本益比、股價淨值比與殖利率"],
+  ["get_monthly_revenue", "查詢官方最新月營收、MoM、YoY 與累計營收"],
   ["list_companies", "列出全部、僅上市或僅上櫃的完整公司母體"],
   ["list_catalog", "查看可用指標、報表、附註與期別"],
   ["get_company_metric", "查詢公司財務趨勢、比率與年增率"],
@@ -54,7 +56,7 @@ export default function Home() {
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
-          上市櫃公司母體與官方日線 OHLC，並查詢 Mopsfin 提供的公司財報、指標、附註、產業與金融機構資料。
+          上市櫃公司母體、官方日線價量、最新估值與月營收，並查詢 Mopsfin 提供的公司財報、指標、附註、產業與金融機構資料。
         </p>
 
         <div className="endpointCard">
@@ -69,7 +71,7 @@ export default function Home() {
           <li><span aria-hidden="true">●</span> 服務已上線</li>
           <li>Streamable HTTP</li>
           <li>免登入、免 API Key</li>
-          <li>10 個唯讀工具</li>
+          <li>12 個唯讀工具</li>
         </ul>
       </section>
 
@@ -113,7 +115,7 @@ export default function Home() {
             </li>
             <li>
               <span className="stepNumber">4</span>
-              <div><strong>檢查並開始使用</strong><p>建立後確認辨識出 10 個工具。開啟新對話，從工具選單加入這個 MCP 連線。</p></div>
+              <div><strong>檢查並開始使用</strong><p>建立後確認辨識出 12 個工具。開啟新對話，從工具選單加入這個 MCP 連線。</p></div>
             </li>
           </ol>
 
@@ -226,9 +228,10 @@ export default function Home() {
         <div>
           <h2 id="notice-title">資料來源與注意事項</h2>
           <div className="noticeContent">
-            <p>公司母體與原始日線 OHLC 直接讀取 TWSE／TPEx 官方資料；財務查詢直接讀取公開資訊觀測站「財務比較 E 點通」。本服務不另建財務或價格資料庫。</p>
+            <p>公司母體、原始日線價量、最新估值與月營收直接讀取 TWSE／TPEx 官方資料；財務查詢直接讀取公開資訊觀測站「財務比較 E 點通」。本服務不另建財務或市場資料庫。</p>
             <p><code>list_companies</code> 可用 <code>market=all</code>、<code>listed</code> 或 <code>otc</code> 分別取得全部、僅上市或僅上櫃公司；TDR、ETF、ETN、權證與特別股不在公司母體內。</p>
-            <p>OHLC 價格為新台幣原始未還原權值日線，不是盤中即時價，也不提供 adjusted close；長區間個股查詢需依 <code>coverageComplete</code> 與 <code>nextCursor</code> 續查。</p>
+            <p>OHLC 價格為新台幣原始未還原權值日線，另提供官方成交股數、成交金額、成交筆數與漲跌；不是盤中即時價，也不提供 adjusted close。長區間個股查詢需依 <code>coverageComplete</code> 與 <code>nextCursor</code> 續查。</p>
+            <p><code>get_daily_market_valuation</code> 與 <code>get_monthly_revenue</code> 第一版只提供官方最新批次資料；空白或 N/A 保留為 null 並附資料狀態，不會改寫成 0。</p>
             <p>上市櫃公司通常一年申報 4 次；興櫃與公開發行公司可能僅申報半年與年度，部分公司只需申報年度。查不到某季不一定代表連線失敗。</p>
             <p>本服務不是臺灣證券交易所或證券櫃檯買賣中心的官方服務，僅供資訊查詢，不構成投資建議。重要決策前請回到官方市場名錄與原始申報資料查核。</p>
             <div className="sourceLinks">
@@ -237,6 +240,10 @@ export default function Home() {
               <a href="https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O" target="_blank" rel="noreferrer">TPEx 上櫃公司名錄 <span aria-hidden="true">↗</span></a>
               <a href="https://www.twse.com.tw/zh/trading/historical/stock-day.html" target="_blank" rel="noreferrer">TWSE 個股日成交 <span aria-hidden="true">↗</span></a>
               <a href="https://www.tpex.org.tw/zh-tw/mainboard/trading/info/stock-pricing.html" target="_blank" rel="noreferrer">TPEx 個股日成交 <span aria-hidden="true">↗</span></a>
+              <a href="https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL" target="_blank" rel="noreferrer">TWSE 最新估值 <span aria-hidden="true">↗</span></a>
+              <a href="https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis" target="_blank" rel="noreferrer">TPEx 最新估值 <span aria-hidden="true">↗</span></a>
+              <a href="https://openapi.twse.com.tw/v1/opendata/t187ap05_L" target="_blank" rel="noreferrer">TWSE 月營收 <span aria-hidden="true">↗</span></a>
+              <a href="https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O" target="_blank" rel="noreferrer">TPEx 月營收 <span aria-hidden="true">↗</span></a>
               <a href="https://mopsfin.twse.com.tw/terms" target="_blank" rel="noreferrer">官方使用說明 <span aria-hidden="true">↗</span></a>
               <a href="/api/health">服務狀態 <span aria-hidden="true">→</span></a>
             </div>

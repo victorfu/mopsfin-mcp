@@ -9,10 +9,13 @@ import type {
 import { MopsfinError } from "@/lib/mopsfin/errors";
 
 import type {
+  DailyMarketReconciliation,
   DailyMarketOhlcQuery,
   DailyMarketOhlcResult,
   OhlcBar,
+  OhlcMissingField,
   PriceSource,
+  PriceUnitNormalization,
   StockOhlcQuery,
   StockOhlcResult,
 } from "./types";
@@ -210,27 +213,142 @@ function parsePrice(raw: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
+function parseNonNegativeNumber(raw: unknown, multiplier = 1): number | null {
+  const parsed = parsePrice(raw);
+  if (parsed === null || parsed < 0) return null;
+  const normalized = parsed * multiplier;
+  return Number.isSafeInteger(normalized) ? normalized : null;
+}
+
+function normalizeMarker(raw: unknown): string | null {
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const marker = String(raw)
+    .replace(/<[^>]*>/g, "")
+    .replace(/&plus;|&#43;|&#x2b;/gi, "+")
+    .replace(/&minus;|&#45;|&#x2d;/gi, "-")
+    .replace(/＋/g, "+")
+    .replace(/－/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+  return !marker || /^(?:--|---)$/.test(marker) ? null : marker;
+}
+
+function parseChange(
+  rawChange: unknown,
+  rawMarker?: unknown,
+): { change: number | null; changeMarker: string | null } {
+  const markers = new Set<string>();
+  const explicitMarker = normalizeMarker(rawMarker);
+  const explicitSign =
+    explicitMarker === "+" || explicitMarker === "-" ? explicitMarker : null;
+  if (explicitMarker && !explicitSign) markers.add(explicitMarker);
+
+  if (typeof rawChange !== "string" && typeof rawChange !== "number") {
+    return {
+      change: null,
+      changeMarker: markers.size > 0 ? [...markers].join(" ") : null,
+    };
+  }
+  let normalized = String(rawChange)
+    .replace(/,/g, "")
+    .replace(/＋/g, "+")
+    .replace(/－/g, "-")
+    .trim();
+  if (explicitSign && !/^[+-]/.test(normalized)) {
+    normalized = `${explicitSign}${normalized}`;
+  }
+  if (!normalized || /^(?:--|---)$/.test(normalized)) {
+    return {
+      change: null,
+      changeMarker: markers.size > 0 ? [...markers].join(" ") : null,
+    };
+  }
+  const match = /^(.*?)([+-]?(?:\d+(?:\.\d*)?|\.\d+))$/.exec(normalized);
+  if (!match) {
+    markers.add(normalized);
+    return { change: null, changeMarker: [...markers].join(" ") };
+  }
+  const prefix = match[1].trim();
+  if (prefix) markers.add(prefix);
+  const change = Number(match[2]);
+  return {
+    change: Number.isFinite(change) ? change : null,
+    changeMarker: markers.size > 0 ? [...markers].join(" ") : null,
+  };
+}
+
+interface RawBarValues {
+  open: unknown;
+  high: unknown;
+  low: unknown;
+  close: unknown;
+  volume?: unknown;
+  turnover?: unknown;
+  tradeCount?: unknown;
+  change?: unknown;
+  changeMarker?: unknown;
+  volumeMultiplier?: number;
+  turnoverMultiplier?: number;
+}
+
 function normalizeBar(
   date: string,
   market: CompanyMarket,
-  rawOpen: unknown,
-  rawHigh: unknown,
-  rawLow: unknown,
-  rawClose: unknown,
+  raw: RawBarValues,
 ): OhlcBar {
-  const values = [rawOpen, rawHigh, rawLow, rawClose].map(parsePrice);
-  const traded = values.some((value) => value !== null && value > 0);
-  const normalized = traded
-    ? values.map((value) => (value !== null && value > 0 ? value : null))
-    : [null, null, null, null];
+  const normalized = [raw.open, raw.high, raw.low, raw.close]
+    .map(parsePrice)
+    .map((value) => (value !== null && value > 0 ? value : null));
+  const volumeShares = parseNonNegativeNumber(
+    raw.volume,
+    raw.volumeMultiplier ?? 1,
+  );
+  const turnoverTwd = parseNonNegativeNumber(
+    raw.turnover,
+    raw.turnoverMultiplier ?? 1,
+  );
+  const tradeCount = parseNonNegativeNumber(raw.tradeCount);
+  const { change, changeMarker } = parseChange(raw.change, raw.changeMarker);
+  const traded =
+    normalized.some((value) => value !== null) ||
+    [volumeShares, turnoverTwd, tradeCount].some(
+      (value) => value !== null && value > 0,
+    );
+  const officialNoTrade =
+    !traded && volumeShares === 0 && turnoverTwd === 0 && tradeCount === 0;
+  const missingFields = (
+    [
+      ["open", normalized[0]],
+      ["high", normalized[1]],
+      ["low", normalized[2]],
+      ["close", normalized[3]],
+      ["volumeShares", volumeShares],
+      ["turnoverTwd", turnoverTwd],
+      ["tradeCount", tradeCount],
+      ["change", change],
+    ] as const
+  )
+    .filter(([, value]) => value === null)
+    .map(([field]) => field satisfies OhlcMissingField);
   return {
     date,
     open: normalized[0],
     high: normalized[1],
     low: normalized[2],
     close: normalized[3],
+    volumeShares,
+    turnoverTwd,
+    tradeCount,
+    change,
+    changeMarker,
     market,
     status: traded ? "traded" : "no_trade",
+    qualityStatus: officialNoTrade
+      ? "official_no_trade"
+      : missingFields.length === 0
+        ? "complete"
+        : "partial",
+    missingFields,
   };
 }
 
@@ -244,6 +362,110 @@ function findField(fields: unknown[], names: string[]): number {
     });
   }
   return index;
+}
+
+function findOptionalField(fields: unknown[], names: string[]): number | null {
+  const normalized = fields.map((field) => String(field).replace(/\s+/g, ""));
+  const index = normalized.findIndex((field) => names.includes(field));
+  return index < 0 ? null : index;
+}
+
+interface MeasuredField {
+  index: number;
+  normalization: PriceUnitNormalization;
+}
+
+function findMeasuredField(
+  fields: unknown[],
+  candidates: Array<{
+    names: string[];
+    normalization: PriceUnitNormalization;
+  }>,
+): MeasuredField | null {
+  for (const candidate of candidates) {
+    const index = findOptionalField(fields, candidate.names);
+    if (index !== null) return { index, normalization: candidate.normalization };
+  }
+  return null;
+}
+
+const SHARE_NORMALIZATION = {
+  sourceUnit: "share",
+  outputUnit: "share",
+  multiplier: 1,
+} as const satisfies PriceUnitNormalization;
+const LOT_NORMALIZATION = {
+  sourceUnit: "lot",
+  outputUnit: "share",
+  multiplier: 1000,
+} as const satisfies PriceUnitNormalization;
+const TWD_NORMALIZATION = {
+  sourceUnit: "TWD",
+  outputUnit: "TWD",
+  multiplier: 1,
+} as const satisfies PriceUnitNormalization;
+const TWD_THOUSAND_NORMALIZATION = {
+  sourceUnit: "TWD_thousand",
+  outputUnit: "TWD",
+  multiplier: 1000,
+} as const satisfies PriceUnitNormalization;
+const TRADE_NORMALIZATION = {
+  sourceUnit: "trade",
+  outputUnit: "trade",
+  multiplier: 1,
+} as const satisfies PriceUnitNormalization;
+
+function sourceNormalization(
+  volumeShares: PriceUnitNormalization = SHARE_NORMALIZATION,
+  turnoverTwd: PriceUnitNormalization = TWD_NORMALIZATION,
+): PriceSource["normalization"] {
+  return { volumeShares, turnoverTwd, tradeCount: TRADE_NORMALIZATION };
+}
+
+function rawAt(row: unknown[], index: number | null): unknown {
+  return index === null ? undefined : row[index];
+}
+
+function assertDeclaredRowCount(
+  rawCount: unknown,
+  actualCount: number,
+  context: string,
+): void {
+  if (rawCount === undefined || rawCount === null || rawCount === "") return;
+  const normalized =
+    typeof rawCount === "number"
+      ? rawCount
+      : Number(String(rawCount).replace(/,/g, "").trim());
+  if (!Number.isSafeInteger(normalized) || normalized < 0) {
+    fail("UPSTREAM_BAD_RESPONSE", `${context} 的官方宣告筆數格式錯誤。`, {
+      declaredCount: rawCount,
+      actualCount,
+    });
+  }
+  if (normalized !== actualCount) {
+    fail("UPSTREAM_BAD_RESPONSE", `${context} 的官方宣告筆數與資料列數不一致。`, {
+      declaredCount: normalized,
+      actualCount,
+    });
+  }
+}
+
+function sameNormalizedBar(left: OhlcBar, right: OhlcBar): boolean {
+  return (
+    left.date === right.date &&
+    left.open === right.open &&
+    left.high === right.high &&
+    left.low === right.low &&
+    left.close === right.close &&
+    left.volumeShares === right.volumeShares &&
+    left.turnoverTwd === right.turnoverTwd &&
+    left.tradeCount === right.tradeCount &&
+    left.change === right.change &&
+    left.changeMarker === right.changeMarker &&
+    left.status === right.status &&
+    left.qualityStatus === right.qualityStatus &&
+    left.missingFields.join("|") === right.missingFields.join("|")
+  );
 }
 
 async function mapWithConcurrency<T, R>(
@@ -299,7 +521,7 @@ function decodeCursor(cursor: string): CursorPayload {
       typeof parsed.endDate !== "string" ||
       typeof parsed.nextMonth !== "string" ||
       typeof parsed.sawData !== "boolean" ||
-      !/^\d{4}-\d{2}$/.test(parsed.nextMonth)
+      !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(parsed.nextMonth)
     ) {
       fail("INVALID_ARGUMENT", "cursor 內容格式錯誤。");
     }
@@ -311,11 +533,19 @@ function decodeCursor(cursor: string): CursorPayload {
 }
 
 function uniqueSources(results: MonthResult[]): PriceSource[] {
-  const byMarket = new Map<CompanyMarket, PriceSource>();
-  for (const result of results) byMarket.set(result.market, result.source);
-  return [...byMarket.values()].sort((left, right) =>
-    left.market.localeCompare(right.market),
-  );
+  const byMarketAndUnits = new Map<string, PriceSource>();
+  for (const result of results) {
+    const key = `${result.market}:${JSON.stringify(result.source.normalization)}`;
+    byMarketAndUnits.set(key, result.source);
+  }
+  return [...byMarketAndUnits.values()].sort((left, right) => {
+    const marketOrder = left.market.localeCompare(right.market);
+    return marketOrder !== 0
+      ? marketOrder
+      : JSON.stringify(left.normalization).localeCompare(
+          JSON.stringify(right.normalization),
+        );
+  });
 }
 
 export class PriceClient {
@@ -422,11 +652,31 @@ export class PriceClient {
     for (const result of monthResults) {
       for (const bar of result.bars) {
         if (bar.date < query.startDate || bar.date > query.endDate) continue;
-        if (byDate.has(bar.date)) {
-          fail("UPSTREAM_BAD_RESPONSE", "同一股票同一日期出現跨市場重複 OHLC。", {
-            companyCode: query.companyCode,
-            date: bar.date,
-          });
+        const existing = byDate.get(bar.date);
+        if (existing) {
+          if (
+            existing.market === bar.market ||
+            !sameNormalizedBar(existing, bar)
+          ) {
+            fail(
+              "UPSTREAM_BAD_RESPONSE",
+              existing.market === bar.market
+                ? "同一股票同一市場同一日期出現重複成交資料。"
+                : "同一股票同一日期出現不一致的跨市場成交資料。",
+              {
+                companyCode: query.companyCode,
+                date: bar.date,
+                markets: [existing.market, bar.market],
+              },
+            );
+          }
+          if (
+            bar.market === currentCompany?.market ||
+            (!currentCompany && bar.market === "listed")
+          ) {
+            byDate.set(bar.date, bar);
+          }
+          continue;
         }
         byDate.set(bar.date, bar);
       }
@@ -458,10 +708,18 @@ export class PriceClient {
       });
     }
 
+    const dataQualityComplete = bars.every(
+      (bar) => bar.qualityStatus !== "partial",
+    );
     const warnings = [
-      "價格為官方原始未還原權值日線，不含 adjusted close、成交量或成交金額。",
+      "價格為官方原始未還原權值日線，不含 adjusted close；不可直接視為含公司行動調整的報酬率。",
       "只回實際官方交易日期；週末、休市與停牌日期不補合成 bar。",
     ];
+    if (!dataQualityComplete) {
+      warnings.push(
+        "部分 bars 的官方成交或價格欄位缺失／無法解析；請依 qualityStatus 與 missingFields 判斷。",
+      );
+    }
     if (observedNames.length > 1) {
       warnings.push(
         `此代號在查詢相關資料中出現多個名稱：${observedNames.join("、")}；可能是改名或代號重用。`,
@@ -479,6 +737,7 @@ export class PriceClient {
       timezone: "Asia/Taipei",
       interval: "1d",
       priceBasis: "raw_unadjusted",
+      dataQualityComplete,
       bars,
       coverage: {
         requestedStart: query.startDate,
@@ -504,11 +763,37 @@ export class PriceClient {
   async getDailyMarketOhlc(
     query: DailyMarketOhlcQuery,
   ): Promise<DailyMarketOhlcResult> {
-    const requestedCodes = query.companyCodes
-      ? [...new Set(query.companyCodes.map((code) => code.trim()))]
+    const normalizedRequestedCodes = query.companyCodes?.map((code) => code.trim());
+    const requestedCodes = normalizedRequestedCodes
+      ? [...new Set(normalizedRequestedCodes)]
       : undefined;
+    if (normalizedRequestedCodes && normalizedRequestedCodes.length === 0) {
+      fail("INVALID_ARGUMENT", "company_codes 至少要有一個公司股票代號。");
+    }
+    if (normalizedRequestedCodes && normalizedRequestedCodes.length > 500) {
+      fail("INVALID_ARGUMENT", "company_codes 最多只能指定 500 個代號。");
+    }
+    if (
+      normalizedRequestedCodes &&
+      requestedCodes?.length !== normalizedRequestedCodes.length
+    ) {
+      fail("INVALID_ARGUMENT", "company_codes 不得包含重複代號。");
+    }
     if (requestedCodes?.some((code) => !/^\d{4}$/.test(code))) {
       fail("INVALID_ARGUMENT", "company_codes 只能包含四碼公司股票代號。");
+    }
+    const universePolicy = query.universePolicy ?? "compatible";
+    if (
+      universePolicy !== "compatible" &&
+      universePolicy !== "strict_current_master"
+    ) {
+      fail("INVALID_ARGUMENT", "universe_policy 不支援指定的政策。");
+    }
+    if (universePolicy === "strict_current_master" && query.date !== "latest") {
+      fail(
+        "INVALID_ARGUMENT",
+        "strict_current_master 只支援 date=latest，不能用目前母體驗證歷史日期。",
+      );
     }
     if (query.date !== "latest") {
       parseIsoDate(query.date, "date");
@@ -541,51 +826,159 @@ export class PriceClient {
         })),
       });
     }
+    for (const result of results) {
+      const sourceCodes = new Set<string>();
+      for (const row of result.rows) {
+        if (!row.code || !row.name) {
+          fail("UPSTREAM_BAD_RESPONSE", "單日全市場行情包含空白代號或名稱。", {
+            market: result.market,
+            code: row.code,
+            name: row.name,
+          });
+        }
+        if (sourceCodes.has(row.code)) {
+          fail("UPSTREAM_BAD_RESPONSE", "單日市場來源包含重複證券代號。", {
+            market: result.market,
+            code: row.code,
+            dataDate: result.dataDate,
+          });
+        }
+        sourceCodes.add(row.code);
+      }
+    }
 
-    const classificationMethod =
-      query.date === "latest" ? "current_master" : "historical_code_rule";
+    const classificationMethod = query.date === "latest"
+      ? "current_master"
+      : "historical_code_rule";
+    const classificationPolicy = query.date === "latest"
+      ? universePolicy === "strict_current_master"
+        ? "current_master_strict"
+        : "current_master_with_code_fallback"
+      : "historical_code_rule";
     let allowedCurrentCodes: Set<string> | undefined;
-    const currentMasterFallbackCodes = new Set<string>();
-    if (classificationMethod === "current_master") {
+    let currentMasterMarketByCode: Map<string, CompanyMarket> | undefined;
+    let reconciliation: DailyMarketReconciliation[] = [];
+    if (query.date === "latest") {
       const master = await this.companyMaster.listCompanies({
         market: query.market,
         includeFinancial: true,
         includeKy: true,
       });
       allowedCurrentCodes = new Set(master.companies.map((company) => company.code));
+      currentMasterMarketByCode = new Map(
+        master.companies.map((company) => [company.code, company.market]),
+      );
+      reconciliation = results.map((result) => {
+        const marketMasterCodes = new Set(
+          master.companies
+            .filter((company) => company.market === result.market)
+            .map((company) => company.code),
+        );
+        const sourceCompanyCodes = new Set(
+          result.rows
+            .filter(
+              (row) => !/-DR$/i.test(row.name) && /^[1-9]\d{3}$/.test(row.code),
+            )
+            .map((row) => row.code),
+        );
+        const matchedCount = [...marketMasterCodes].filter((code) =>
+          sourceCompanyCodes.has(code),
+        ).length;
+        const marketOnlyCodes = [...sourceCompanyCodes]
+          .filter((code) => !marketMasterCodes.has(code))
+          .sort();
+        const masterMissingCodes = [...marketMasterCodes]
+          .filter((code) => !sourceCompanyCodes.has(code))
+          .sort();
+        const matchRatio =
+          marketMasterCodes.size === 0
+            ? sourceCompanyCodes.size === 0
+              ? 1
+              : 0
+            : Number((matchedCount / marketMasterCodes.size).toFixed(6));
+        const coverageComplete =
+          marketOnlyCodes.length === 0 && masterMissingCodes.length === 0;
+        return {
+          market: result.market,
+          masterCount: marketMasterCodes.size,
+          sourceRowCount: sourceCompanyCodes.size,
+          matchedCount,
+          marketOnlyCodes,
+          masterMissingCodes,
+          matchRatio,
+          coverageComplete,
+        };
+      });
+      const coverageInsufficient = reconciliation.some((item) =>
+        universePolicy === "strict_current_master"
+          ? !item.coverageComplete
+          : item.matchRatio < 0.95,
+      );
+      if (coverageInsufficient) {
+        fail(
+          "INCOMPLETE_COVERAGE",
+          universePolicy === "strict_current_master"
+            ? "最新全市場行情未與目前公司母體完全吻合。"
+            : "最新全市場行情與目前公司母體吻合率低於 95%。",
+          { universePolicy, reconciliation },
+        );
+      }
     }
+    const universeCoverageVerified =
+      query.date === "latest" &&
+      reconciliation.every((item) => item.coverageComplete);
 
     let rows = results.flatMap((result) => result.rows);
     rows = rows.filter((row) => {
       if (/-DR$/i.test(row.name)) return false;
-      if (classificationMethod === "current_master") {
-        if (allowedCurrentCodes?.has(row.code)) return true;
-        const eligibleFallback = /^[1-9]\d{3}$/.test(row.code);
-        if (
-          eligibleFallback &&
-          (!requestedCodes || requestedCodes.includes(row.code))
-        ) {
-          currentMasterFallbackCodes.add(row.code);
-        }
-        return eligibleFallback;
+      const eligibleCompanyCode = /^[1-9]\d{3}$/.test(row.code);
+      if (!eligibleCompanyCode) return false;
+      if (classificationPolicy === "current_master_strict") {
+        return allowedCurrentCodes?.has(row.code) ?? false;
       }
-      return /^[1-9]\d{3}$/.test(row.code);
+      return true;
     });
+    const currentMasterFallbackCodes = new Set(
+      query.date === "latest"
+        ? rows
+            .filter((row) => !allowedCurrentCodes?.has(row.code))
+            .map((row) => row.code)
+        : [],
+    );
     if (requestedCodes) {
       const selected = new Set(requestedCodes);
       rows = rows.filter((row) => selected.has(row.code));
     }
     rows.sort((left, right) => left.code.localeCompare(right.code));
-    const seenCodes = new Set<string>();
+    const byCode = new Map<string, DailyRow>();
     for (const row of rows) {
-      if (seenCodes.has(row.code)) {
-        fail("UPSTREAM_BAD_RESPONSE", "單日全市場行情出現跨市場重複公司代號。", {
-          code: row.code,
-          dataDate: dates[0],
-        });
+      const existing = byCode.get(row.code);
+      if (existing) {
+        if (
+          existing.market === row.market ||
+          existing.name !== row.name ||
+          !sameNormalizedBar(existing, row)
+        ) {
+          fail(
+            "UPSTREAM_BAD_RESPONSE",
+            "單日全市場行情出現不一致的跨市場重複公司代號。",
+            {
+              code: row.code,
+              dataDate: dates[0],
+              markets: [existing.market, row.market],
+            },
+          );
+        }
+        const preferredMarket =
+          currentMasterMarketByCode?.get(row.code) ?? "listed";
+        if (row.market === preferredMarket) byCode.set(row.code, row);
+        continue;
       }
-      seenCodes.add(row.code);
+      byCode.set(row.code, row);
     }
+    rows = [...byCode.values()].sort((left, right) =>
+      left.code.localeCompare(right.code),
+    );
 
     const returnedCodes = new Set(rows.map((row) => row.code));
     const missingCompanyCodes = requestedCodes
@@ -599,25 +992,43 @@ export class PriceClient {
       });
     }
 
+    const dataQualityComplete = rows.every(
+      (row) => row.qualityStatus !== "partial",
+    );
     const warnings = [
-      "價格為官方原始未還原權值日線，不含 adjusted close、成交量或成交金額。",
+      "價格為官方原始未還原權值日線，不含 adjusted close；不可直接視為含公司行動調整的報酬率。",
       query.date === "latest"
         ? "latest 代表最近完成交易日，不是盤中即時報價。"
         : "歷史完整市場以四碼、首碼非 0 且非 -DR 的官方證券列辨識公司股票。",
     ];
+    if (!dataQualityComplete) {
+      warnings.push(
+        "部分 bars 的官方成交或價格欄位缺失／無法解析；請依 qualityStatus 與 missingFields 判斷。",
+      );
+    }
     if (missingCompanyCodes.length > 0) {
       warnings.push(`以下代號未出現在指定市場日期：${missingCompanyCodes.join("、")}。`);
     }
-    if (currentMasterFallbackCodes.size > 0) {
+    const returnedFallbackCodes = [...currentMasterFallbackCodes].filter((code) =>
+      returnedCodes.has(code),
+    );
+    if (returnedFallbackCodes.length > 0) {
       warnings.push(
-        `以下最新行情代號尚未出現在目前公司母體快照，但符合公司股票代號規則：${[...currentMasterFallbackCodes].join("、")}。`,
+        `以下最新行情代號尚未出現在目前公司母體快照，但 compatible 政策依公司股票代號規則保留：${returnedFallbackCodes.join("、")}。`,
+      );
+    }
+    if (query.date === "latest" && !universeCoverageVerified) {
+      warnings.push(
+        "最新行情公司集合通過 compatible 防截斷門檻但未與目前 master 完全吻合；請保留 reconciliation 差異。",
       );
     }
 
     return {
       query: {
-        ...query,
+        market: query.market,
+        date: query.date,
         ...(requestedCodes ? { companyCodes: requestedCodes } : {}),
+        universePolicy,
       },
       dataDate: dates[0],
       currency: "TWD",
@@ -625,7 +1036,11 @@ export class PriceClient {
       interval: "1d",
       priceBasis: "raw_unadjusted",
       classificationMethod,
+      classificationPolicy,
       coverageComplete: true,
+      universeCoverageVerified,
+      dataQualityComplete,
+      reconciliation,
       selectionComplete: missingCompanyCodes.length === 0,
       missingCompanyCodes,
       counts: {
@@ -715,30 +1130,70 @@ export class PriceClient {
   ): MonthResult {
     const payload = snapshot.payload as Record<string, unknown>;
     const stat = String(payload?.stat ?? "");
-    const source = this.priceSource(
+    const defaultSource = this.priceSource(
       "listed",
       "臺灣證券交易所－個股日成交資訊",
       sourceUrl,
       snapshot.retrievedAt,
     );
     if (stat !== "OK") {
-      if (/沒有符合條件/.test(stat)) return { market: "listed", source, bars: [] };
+      if (/沒有符合條件/.test(stat)) {
+        return { market: "listed", source: defaultSource, bars: [] };
+      }
       fail("UPSTREAM_BAD_RESPONSE", `TWSE 個股 OHLC 回傳異常：${stat || "未知狀態"}`);
     }
+    const fields = Array.isArray(payload.fields) ? payload.fields : [];
     const data = Array.isArray(payload.data) ? payload.data : [];
+    assertDeclaredRowCount(payload.total, data.length, "TWSE 個股 OHLC");
+    if (fields.length === 0) {
+      fail("UPSTREAM_BAD_RESPONSE", "TWSE 個股 OHLC 回應缺少欄位定義。");
+    }
+    const dateIndex = findField(fields, ["日期"]);
+    const openIndex = findField(fields, ["開盤價", "開盤"]);
+    const highIndex = findField(fields, ["最高價", "最高"]);
+    const lowIndex = findField(fields, ["最低價", "最低"]);
+    const closeIndex = findField(fields, ["收盤價", "收盤"]);
+    const volume = findMeasuredField(fields, [
+      { names: ["成交股數"], normalization: SHARE_NORMALIZATION },
+      { names: ["成交張數"], normalization: LOT_NORMALIZATION },
+    ]);
+    const turnover = findMeasuredField(fields, [
+      { names: ["成交金額", "成交金額(元)"], normalization: TWD_NORMALIZATION },
+      {
+        names: ["成交仟元", "成交金額(仟元)"],
+        normalization: TWD_THOUSAND_NORMALIZATION,
+      },
+    ]);
+    const tradeCountIndex = findOptionalField(fields, ["成交筆數", "筆數"]);
+    const changeIndex = findOptionalField(fields, ["漲跌價差", "漲跌"]);
+    const changeMarkerIndex = findOptionalField(fields, ["註記", "漲跌(+/-)"]);
+    const normalization = sourceNormalization(
+      volume?.normalization ?? SHARE_NORMALIZATION,
+      turnover?.normalization ?? TWD_NORMALIZATION,
+    );
+    const source = { ...defaultSource, normalization };
     const title = typeof payload.title === "string" ? payload.title : "";
     const nameMatch = /^\s*\d+年\d+月\s+\S+\s+(.+?)\s+各日成交資訊/.exec(title);
     const bars = data.map((raw) => {
-      if (!Array.isArray(raw) || raw.length < 7) {
+      if (!Array.isArray(raw)) {
         fail("UPSTREAM_BAD_RESPONSE", "TWSE 個股 OHLC 資料列格式錯誤。");
       }
       return normalizeBar(
-        parseRocDate(raw[0]),
+        parseRocDate(raw[dateIndex]),
         "listed",
-        raw[3],
-        raw[4],
-        raw[5],
-        raw[6],
+        {
+          open: raw[openIndex],
+          high: raw[highIndex],
+          low: raw[lowIndex],
+          close: raw[closeIndex],
+          volume: rawAt(raw, volume?.index ?? null),
+          turnover: rawAt(raw, turnover?.index ?? null),
+          tradeCount: rawAt(raw, tradeCountIndex),
+          change: rawAt(raw, changeIndex),
+          changeMarker: rawAt(raw, changeMarkerIndex),
+          volumeMultiplier: volume?.normalization.multiplier,
+          turnoverMultiplier: turnover?.normalization.multiplier,
+        },
       );
     });
     return {
@@ -754,11 +1209,13 @@ export class PriceClient {
     sourceUrl: string,
   ): MonthResult {
     const payload = snapshot.payload as Record<string, unknown>;
-    const source = this.priceSource(
+    const defaultSource = this.priceSource(
       "otc",
       "證券櫃檯買賣中心－個股日成交資訊",
       sourceUrl,
       snapshot.retrievedAt,
+      undefined,
+      sourceNormalization(LOT_NORMALIZATION, TWD_THOUSAND_NORMALIZATION),
     );
     if (String(payload?.stat ?? "") !== "ok") {
       fail("UPSTREAM_BAD_RESPONSE", "TPEx 個股 OHLC 回傳狀態錯誤。", {
@@ -769,6 +1226,7 @@ export class PriceClient {
     const table = tables[0] as Record<string, unknown> | undefined;
     const fields = Array.isArray(table?.fields) ? table.fields : [];
     const data = Array.isArray(table?.data) ? table.data : [];
+    assertDeclaredRowCount(table?.totalCount, data.length, "TPEx 個股 OHLC");
     if (fields.length === 0) {
       fail("UPSTREAM_BAD_RESPONSE", "TPEx 個股 OHLC 回應缺少欄位定義。");
     }
@@ -777,6 +1235,27 @@ export class PriceClient {
     const highIndex = findField(fields, ["最高"]);
     const lowIndex = findField(fields, ["最低"]);
     const closeIndex = findField(fields, ["收盤"]);
+    const volume = findMeasuredField(fields, [
+      { names: ["成交股數"], normalization: SHARE_NORMALIZATION },
+      { names: ["成交張數"], normalization: LOT_NORMALIZATION },
+    ]);
+    const turnover = findMeasuredField(fields, [
+      { names: ["成交金額", "成交金額(元)"], normalization: TWD_NORMALIZATION },
+      {
+        names: ["成交仟元", "成交金額(仟元)"],
+        normalization: TWD_THOUSAND_NORMALIZATION,
+      },
+    ]);
+    const tradeCountIndex = findOptionalField(fields, ["成交筆數", "筆數"]);
+    const changeIndex = findOptionalField(fields, ["漲跌價差", "漲跌"]);
+    const changeMarkerIndex = findOptionalField(fields, ["註記", "漲跌(+/-)"]);
+    const source = {
+      ...defaultSource,
+      normalization: sourceNormalization(
+        volume?.normalization ?? LOT_NORMALIZATION,
+        turnover?.normalization ?? TWD_THOUSAND_NORMALIZATION,
+      ),
+    };
     const bars = data.map((raw) => {
       if (!Array.isArray(raw)) {
         fail("UPSTREAM_BAD_RESPONSE", "TPEx 個股 OHLC 資料列格式錯誤。");
@@ -784,10 +1263,19 @@ export class PriceClient {
       return normalizeBar(
         parseRocDate(raw[dateIndex]),
         "otc",
-        raw[openIndex],
-        raw[highIndex],
-        raw[lowIndex],
-        raw[closeIndex],
+        {
+          open: raw[openIndex],
+          high: raw[highIndex],
+          low: raw[lowIndex],
+          close: raw[closeIndex],
+          volume: rawAt(raw, volume?.index ?? null),
+          turnover: rawAt(raw, turnover?.index ?? null),
+          tradeCount: rawAt(raw, tradeCountIndex),
+          change: rawAt(raw, changeIndex),
+          changeMarker: rawAt(raw, changeMarkerIndex),
+          volumeMultiplier: volume?.normalization.multiplier,
+          turnoverMultiplier: turnover?.normalization.multiplier,
+        },
       );
     });
     return {
@@ -838,6 +1326,9 @@ export class PriceClient {
       fail("NO_DATA", "TWSE 最新完成交易日查無行情。");
     }
     const rows = snapshot.payload.map((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        fail("UPSTREAM_BAD_RESPONSE", "TWSE 最新行情包含非物件資料列。");
+      }
       const row = raw as Record<string, unknown>;
       const date = parseCompactRocDate(row.Date);
       return {
@@ -846,10 +1337,16 @@ export class PriceClient {
         ...normalizeBar(
           date,
           "listed",
-          row.OpeningPrice,
-          row.HighestPrice,
-          row.LowestPrice,
-          row.ClosingPrice,
+          {
+            open: row.OpeningPrice,
+            high: row.HighestPrice,
+            low: row.LowestPrice,
+            close: row.ClosingPrice,
+            volume: row.TradeVolume,
+            turnover: row.TradeValue,
+            tradeCount: row.Transaction,
+            change: row.Change,
+          },
         ),
       };
     });
@@ -876,12 +1373,24 @@ export class PriceClient {
       fail("NO_DATA", "TPEx 最新完成交易日查無行情。");
     }
     const rows = snapshot.payload.map((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        fail("UPSTREAM_BAD_RESPONSE", "TPEx 最新行情包含非物件資料列。");
+      }
       const row = raw as Record<string, unknown>;
       const date = parseCompactRocDate(row.Date);
       return {
         code: String(row.SecuritiesCompanyCode ?? "").trim(),
         name: String(row.CompanyName ?? "").trim(),
-        ...normalizeBar(date, "otc", row.Open, row.High, row.Low, row.Close),
+        ...normalizeBar(date, "otc", {
+          open: row.Open,
+          high: row.High,
+          low: row.Low,
+          close: row.Close,
+          volume: row.TradingShares,
+          turnover: row.TransactionAmount,
+          tradeCount: row.TransactionNumber,
+          change: row.Change,
+        }),
       };
     });
     const dates = [...new Set(rows.map((row) => row.date))];
@@ -924,7 +1433,11 @@ export class PriceClient {
     const tables = Array.isArray(payload.tables) ? payload.tables : [];
     const table = tables.find((candidate) => {
       const fields = (candidate as Record<string, unknown>)?.fields;
-      return Array.isArray(fields) && fields[0] === "證券代號";
+      return (
+        Array.isArray(fields) &&
+        findOptionalField(fields, ["證券代號"]) !== null &&
+        findOptionalField(fields, ["收盤價"]) !== null
+      );
     }) as Record<string, unknown> | undefined;
     return this.parseDailyTable(
       "listed",
@@ -944,6 +1457,8 @@ export class PriceClient {
         high: ["最高價"],
         low: ["最低價"],
         close: ["收盤價"],
+        change: ["漲跌價差", "漲跌"],
+        changeMarker: ["漲跌(+/-)", "註記"],
       },
     );
   }
@@ -987,6 +1502,8 @@ export class PriceClient {
         high: ["最高"],
         low: ["最低"],
         close: ["收盤"],
+        change: ["漲跌", "漲跌價差"],
+        changeMarker: ["註記", "漲跌(+/-)"],
       },
     );
   }
@@ -996,10 +1513,25 @@ export class PriceClient {
     dataDate: string,
     table: Record<string, unknown> | undefined,
     source: PriceSource,
-    names: Record<"code" | "name" | "open" | "high" | "low" | "close", string[]>,
+    names: Record<
+      | "code"
+      | "name"
+      | "open"
+      | "high"
+      | "low"
+      | "close"
+      | "change"
+      | "changeMarker",
+      string[]
+    >,
   ): DailyResult {
     const fields = Array.isArray(table?.fields) ? table.fields : [];
     const data = Array.isArray(table?.data) ? table.data : [];
+    assertDeclaredRowCount(
+      table?.totalCount,
+      data.length,
+      `${source.sourceName} ${dataDate}`,
+    );
     if (fields.length === 0 || data.length === 0) {
       fail("NO_DATA", `${source.sourceName} 在 ${dataDate} 查無資料。`);
     }
@@ -1010,7 +1542,21 @@ export class PriceClient {
       high: findField(fields, names.high),
       low: findField(fields, names.low),
       close: findField(fields, names.close),
+      change: findOptionalField(fields, names.change),
+      changeMarker: findOptionalField(fields, names.changeMarker),
     };
+    const volume = findMeasuredField(fields, [
+      { names: ["成交股數"], normalization: SHARE_NORMALIZATION },
+      { names: ["成交張數"], normalization: LOT_NORMALIZATION },
+    ]);
+    const turnover = findMeasuredField(fields, [
+      { names: ["成交金額", "成交金額(元)"], normalization: TWD_NORMALIZATION },
+      {
+        names: ["成交仟元", "成交金額(仟元)"],
+        normalization: TWD_THOUSAND_NORMALIZATION,
+      },
+    ]);
+    const tradeCountIndex = findOptionalField(fields, ["成交筆數", "筆數"]);
     const rows = data.map((raw) => {
       if (!Array.isArray(raw)) {
         fail("UPSTREAM_BAD_RESPONSE", `${source.sourceName} 資料列格式錯誤。`);
@@ -1021,14 +1567,34 @@ export class PriceClient {
         ...normalizeBar(
           dataDate,
           market,
-          raw[indexes.open],
-          raw[indexes.high],
-          raw[indexes.low],
-          raw[indexes.close],
+          {
+            open: raw[indexes.open],
+            high: raw[indexes.high],
+            low: raw[indexes.low],
+            close: raw[indexes.close],
+            volume: rawAt(raw, volume?.index ?? null),
+            turnover: rawAt(raw, turnover?.index ?? null),
+            tradeCount: rawAt(raw, tradeCountIndex),
+            change: rawAt(raw, indexes.change),
+            changeMarker: rawAt(raw, indexes.changeMarker),
+            volumeMultiplier: volume?.normalization.multiplier,
+            turnoverMultiplier: turnover?.normalization.multiplier,
+          },
         ),
       };
     });
-    return { market, dataDate, source, rows };
+    return {
+      market,
+      dataDate,
+      source: {
+        ...source,
+        normalization: sourceNormalization(
+          volume?.normalization ?? source.normalization.volumeShares,
+          turnover?.normalization ?? source.normalization.turnoverTwd,
+        ),
+      },
+      rows,
+    };
   }
 
   private priceSource(
@@ -1037,6 +1603,7 @@ export class PriceClient {
     sourceUrl: string,
     retrievedAt: string,
     dataDate?: string,
+    normalization: PriceSource["normalization"] = sourceNormalization(),
   ): PriceSource {
     return {
       market,
@@ -1044,6 +1611,7 @@ export class PriceClient {
       sourceUrl,
       retrievedAt,
       ...(dataDate ? { dataDate } : {}),
+      normalization,
     };
   }
 
@@ -1079,7 +1647,7 @@ export class PriceClient {
           headers: {
             Accept: "application/json",
             Referer: `${url.origin}/`,
-            "User-Agent": "mopsfin-mcp/0.1 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": "mopsfin-mcp/0.2.0 (+https://mopsfin.twse.com.tw/)",
           },
         });
         const body = await response.text();

@@ -7,10 +7,26 @@ function asStringArray(value: unknown): string[] {
     : [];
 }
 
-function asNumberOrNull(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const number = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(number) ? number : null;
+const MISSING_VALUE_MARKERS = new Set(["", "-", "--", "—", "N/A", "NA"]);
+
+function normalizeValue(value: unknown): Pick<TrendPoint, "value" | "valueStatus"> {
+  if (value === null || value === undefined) {
+    return { value: null, valueStatus: "missing" };
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (MISSING_VALUE_MARKERS.has(trimmed.toUpperCase())) {
+      return { value: null, valueStatus: "missing" };
+    }
+    const number = Number(trimmed.replaceAll(",", ""));
+    return Number.isFinite(number)
+      ? { value: number, valueStatus: "reported" }
+      : { value: null, valueStatus: "invalid_upstream" };
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return { value, valueStatus: "reported" };
+  }
+  return { value: null, valueStatus: "invalid_upstream" };
 }
 
 function normalizeLineSeries(
@@ -24,6 +40,7 @@ function normalizeLineSeries(
     if (!Array.isArray(record.data)) return [];
     const label = String(record.label ?? "資料");
     let droppedPointCount = 0;
+    let invalidValueCount = 0;
     const points: TrendPoint[] = record.data.flatMap((rawPoint) => {
       if (!Array.isArray(rawPoint) || rawPoint.length < 2) return [];
       const rawIndex = rawPoint[0];
@@ -40,17 +57,24 @@ function normalizeLineSeries(
         droppedPointCount += 1;
         return [];
       }
-      return [
-        {
-          period: periods[index],
-          value: asNumberOrNull(rawPoint[1]),
-          ...(typeof rawPoint[2] === "string" ? { status: rawPoint[2] } : {}),
-        },
-      ];
+      const normalizedValue = normalizeValue(rawPoint[1]);
+      if (normalizedValue.valueStatus === "invalid_upstream") {
+        invalidValueCount += 1;
+      }
+      return [{
+        period: periods[index],
+        ...normalizedValue,
+        ...(typeof rawPoint[2] === "string" ? { status: rawPoint[2] } : {}),
+      }];
     });
     if (droppedPointCount > 0) {
       warnings.push(
         `Mopsfin「${label}」有 ${droppedPointCount} 個資料點缺少有效期別索引；已忽略以避免錯置期別。`,
+      );
+    }
+    if (invalidValueCount > 0) {
+      warnings.push(
+        `Mopsfin「${label}」有 ${invalidValueCount} 個無法解析的非數字資料值；已標記 invalid_upstream 並保留為 null。`,
       );
     }
     return [{ label, points }];
@@ -67,6 +91,7 @@ function normalizeBarSeries(
     return String(index);
   });
   let droppedPointCount = 0;
+  let invalidValueCount = 0;
   const points: TrendPoint[] = graphData.flatMap((rawPoint) => {
     if (!Array.isArray(rawPoint) || rawPoint.length < 2) return [];
     const rawIndex = rawPoint[0];
@@ -83,17 +108,27 @@ function normalizeBarSeries(
       droppedPointCount += 1;
       return [];
     }
-    return [{ period: labels[index], value: asNumberOrNull(rawPoint[1]) }];
+    const normalizedValue = normalizeValue(rawPoint[1]);
+    if (normalizedValue.valueStatus === "invalid_upstream") {
+      invalidValueCount += 1;
+    }
+    return [{ period: labels[index], ...normalizedValue }];
   });
+  const warnings: string[] = [];
+  if (droppedPointCount > 0) {
+    warnings.push(
+      `Mopsfin 產業統計有 ${droppedPointCount} 個資料點缺少有效期別索引；已忽略以避免錯置期別。`,
+    );
+  }
+  if (invalidValueCount > 0) {
+    warnings.push(
+      `Mopsfin 產業統計有 ${invalidValueCount} 個無法解析的非數字資料值；已標記 invalid_upstream 並保留為 null。`,
+    );
+  }
   return {
     periods: labels,
     series: [{ label: "產業統計", points }],
-    warnings:
-      droppedPointCount > 0
-        ? [
-            `Mopsfin 產業統計有 ${droppedPointCount} 個資料點缺少有效期別索引；已忽略以避免錯置期別。`,
-          ]
-        : [],
+    warnings,
   };
 }
 

@@ -10,12 +10,16 @@ import {
 } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
 import { priceClient } from "@/lib/price/client";
+import { monthlyRevenueClient } from "@/lib/revenue/client";
+import { valuationClient } from "@/lib/valuation/client";
 
 import {
   companyMetricInputSchema,
   companyMetricOutputSchema,
   dailyMarketOhlcInputSchema,
   dailyMarketOhlcOutputSchema,
+  dailyMarketValuationInputSchema,
+  dailyMarketValuationOutputSchema,
   financialInstitutionInputSchema,
   financialInstitutionOutputSchema,
   financialNoteInputSchema,
@@ -30,6 +34,8 @@ import {
   listCatalogOutputSchema,
   listCompaniesInputSchema,
   listCompaniesOutputSchema,
+  monthlyRevenueInputSchema,
+  monthlyRevenueOutputSchema,
   stockOhlcInputSchema,
   stockOhlcOutputSchema,
 } from "./schemas";
@@ -122,7 +128,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢單一台股歷史日線 OHLC",
       description:
-        "查詢單一四碼公司股票在指定起訖日期內的官方原始日線開高低收。服務按月份讀取 TWSE／TPEx，支援目前上市櫃、已下市櫃與上櫃轉上市歷史；轉板月份會合併兩市場並拒絕同日衝突。TWSE 個股月資料自 2010-01-04、TPEx 自 1994-01-01 起支援。每頁最多處理 12 個日曆月份，coverage.coverageComplete=false 時必須以完全相同的 company_code、start_date、end_date 帶回 nextCursor 繼續，不能把單頁誤稱完整區間。價格固定為 TWD、Asia/Taipei、1d、raw_unadjusted，不含 adjusted close、成交量或成交金額；無成交列以 null OHLC 與 no_trade 表示，不補週末、休市或停牌日期。",
+        "查詢單一四碼公司股票在指定起訖日期內的官方原始日線開高低收、成交量（股）、成交金額（TWD）、成交筆數與漲跌價差。服務按月份讀取 TWSE／TPEx，支援目前上市櫃、已下市櫃與上櫃轉上市歷史；轉板月份會合併兩市場並拒絕同日衝突。TWSE 個股月資料自 2010-01-04、TPEx 自 1994-01-01 起支援。每頁最多處理 12 個日曆月份，coverage.coverageComplete=false 時必須以完全相同的 company_code、start_date、end_date 帶回 nextCursor 繼續。價格固定為 TWD、Asia/Taipei、1d、raw_unadjusted，不含 adjusted close；每根 bar 的 qualityStatus、missingFields 與頂層 dataQualityComplete 揭露欄位完整性，無成交列以 null OHLC 與 official_no_trade 表示，不補週末、休市或停牌日期。",
       inputSchema: stockOhlcInputSchema,
       outputSchema: stockOhlcOutputSchema,
       annotations,
@@ -150,20 +156,77 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢單日台股市場 OHLC",
       description:
-        "查詢最近完成交易日或指定 YYYY-MM-DD 的上市、上櫃或全部公司股票官方原始 OHLC。market=listed 只取 TWSE、market=otc 只取 TPEx、market=all 要求兩市場資料日期一致；latest 不是盤中即時價，指定假日或未來日期不會靜默退回前一日。company_codes 可選且最多 500 家，省略時回完整市場；指定代號部分缺失時以 selectionComplete=false、missingCompanyCodes 與 warnings 揭露，全部缺失則回 NO_DATA。latest 以目前 company master 過濾公司股票；歷史日期以四碼首碼非 0 且非 -DR 規則排除 ETF、ETN、TDR 等非公司商品。價格固定為 TWD、Asia/Taipei、1d、raw_unadjusted，不含 adjusted close、成交量或成交金額。",
+        "查詢最近完成交易日或指定 YYYY-MM-DD 的上市、上櫃或全部公司股票官方原始 OHLC、成交量（股）、成交金額（TWD）、成交筆數與漲跌價差。market=all 要求 TWSE／TPEx 資料日期一致；latest 不是盤中即時價，指定假日或未來日期不會靜默退回前一日。company_codes 可選且最多 500 家；部分缺失以 selectionComplete=false 揭露。latest 預設 universe_policy=compatible，會保留四碼公司代號 fallback 並回傳 reconciliation，但各市場與目前 master 的 matchRatio 低於 95% 仍回 INCOMPLETE_COVERAGE；strict_current_master 僅支援 latest 且要求完全吻合。歷史日期只使用可解釋但未經目前母體驗證的代號規則。價格為 TWD、Asia/Taipei、1d、raw_unadjusted；qualityStatus、missingFields、dataQualityComplete 與單位 normalization 不可忽略。",
       inputSchema: dailyMarketOhlcInputSchema,
       outputSchema: dailyMarketOhlcOutputSchema,
       annotations,
     },
-    async ({ market, date, company_codes }) => {
+    async ({ market, date, company_codes, universe_policy }) => {
       try {
         const data = await priceClient.getDailyMarketOhlc({
           market,
           date,
+          universePolicy: universe_policy,
           ...(company_codes ? { companyCodes: company_codes } : {}),
         });
         return success(
-          `${data.dataDate} ${market} 市場：回傳 ${data.counts.returned} 家公司 OHLC，coverageComplete=true、selectionComplete=${data.selectionComplete}。`,
+          `${data.dataDate} ${market} 市場：回傳 ${data.counts.returned} 家公司價量資料，coverageComplete=true、universeCoverageVerified=${data.universeCoverageVerified}、selectionComplete=${data.selectionComplete}。`,
+          data,
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_daily_market_valuation",
+    {
+      title: "查詢最新台股市場估值",
+      description:
+        "查詢 TWSE／TPEx 官方最近完成交易日的上市、上櫃或全部公司本益比、股價淨值比與殖利率。v1 的 date 固定為 latest，不是盤中即時估值，也不提供歷史估值序列；market=all 要求兩個來源資料日期一致。預設 universe_policy=compatible，因目前公司 master 可能包含暫停交易或當日無估值列的合法公司，結果會保留四碼公司代號 fallback 並揭露 reconciliation、coverageComplete 與 universeCoverageVerified，但各市場 matchRatio 低於 95% 仍以 INCOMPLETE_COVERAGE 拒絕疑似截斷來源；strict_current_master 是要求集合完全吻合的 opt-in 診斷模式。company_codes 可選且最多 500 家，部分缺失透過 selectionComplete 與 missingCompanyCodes 揭露。官方空白、N/A 或不具計算意義的估值回 null 與逐欄 valueStatus，不可改寫為 0；本工具不自行重算財報分母或股利。",
+      inputSchema: dailyMarketValuationInputSchema,
+      outputSchema: dailyMarketValuationOutputSchema,
+      annotations,
+    },
+    async ({ market, date, company_codes, universe_policy }) => {
+      try {
+        const data = await valuationClient.getDailyMarketValuation({
+          market,
+          date,
+          universePolicy: universe_policy,
+          ...(company_codes ? { companyCodes: company_codes } : {}),
+        });
+        return success(
+          `${data.dataDate} ${market} 市場：回傳 ${data.counts.returned} 家公司估值，universeCoverageVerified=${data.universeCoverageVerified}、selectionComplete=${data.selectionComplete}。`,
+          data,
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_monthly_revenue",
+    {
+      title: "查詢最新台股月營收",
+      description:
+        "查詢公開資訊觀測站官方最新資料年月的上市、上櫃或全部公司月營收、月增率、年增率與累計營收年增率。v1 的 data_month 固定為 latest，不提供歷史月序列；market=all 要求 TWSE／TPEx 來源資料年月一致。官方金額原始單位為仟元，本工具固定乘以 1,000 並輸出 TWD，百分比沿用官方值；每個數值都有 valueStatus，缺值與無法解析值回 null，不可當成 0。預設 universe_policy=strict_current_master，市場外代號會排除；coverageComplete 代表必要來源完整，filingCoverage 則比較最新資料列與目前 company master，未達 100% 可能源於申報進度、資料適用性或公司狀態差異，兩者不可混用。company_codes 可選且最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt。",
+      inputSchema: monthlyRevenueInputSchema,
+      outputSchema: monthlyRevenueOutputSchema,
+      annotations,
+    },
+    async ({ market, data_month, company_codes, universe_policy }) => {
+      try {
+        const data = await monthlyRevenueClient.getMonthlyRevenue({
+          market,
+          dataMonth: data_month,
+          universePolicy: universe_policy,
+          ...(company_codes ? { companyCodes: company_codes } : {}),
+        });
+        return success(
+          `${data.dataMonth} ${market} 市場：回傳 ${data.counts.returned} 家公司月營收，申報覆蓋 ${data.filingCoverage.reportedCompanyCount}/${data.filingCoverage.expectedCompanyCount}、selectionComplete=${data.selectionComplete}。`,
           data,
         );
       } catch (error) {
@@ -296,7 +359,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢公司財務指標",
       description:
-        "查詢公司財務趨勢、財務結構、償債／經營／獲利／成長能力及現金流指標。metric_code 必須取自 list_catalog 中 family=data；一次比較 1–10 家公司。預設 basis=quarterly，代表 Mopsfin 單季口徑：上市櫃 Q4 通常由全年累計減 Q3，興櫃／公開發行 Q2 通常為半年累計、Q4 通常由全年累計減 Q2。basis=cumulative_yoy 代表指定季度的累計同比，必須提供 yoy_quarter。預設回最近 12 個可用期別；缺值可能是不適用、未申報或沒有該季度，不可視為 0。使用數值前應讀取 unit、query、warnings，並可用 list_catalog 取得該指標公式與適用限制。",
+        "查詢公司財務趨勢、財務結構、償債／經營／獲利／成長能力及現金流指標。metric_code 必須取自 list_catalog 中 family=data；一次比較 1–10 家公司。每個公司 series 會回傳獨立 companyCode、companyName、displayName 與 seriesType，避免依 label 猜身份；逐點 valueStatus 區分 reported、missing、invalid_upstream，null 不可視為 0。coverage 會揭露 requested／returned／missing／no-valid-data 公司、逐公司缺期與所有公司共同有值的 commonThroughPeriod；selectionComplete=false 代表至少一家公司缺 series 或本次範圍完全沒有 reported 值。預設 basis=quarterly；basis=cumulative_yoy 必須提供 yoy_quarter。可選產業平均與所選公司簡單平均，兩者都不是市值加權；使用前應讀取 unit、query、coverage、warnings 與 list_catalog guidance。",
       inputSchema: companyMetricInputSchema,
       outputSchema: companyMetricOutputSchema,
       annotations,

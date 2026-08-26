@@ -14,6 +14,12 @@ const reportHtml = readFileSync(
   fileURLToPath(new URL("./fixtures/report.html", import.meta.url)),
   "utf8",
 );
+const companyMetricPartial = readFileSync(
+  fileURLToPath(
+    new URL("./fixtures/company-metric-partial.json", import.meta.url),
+  ),
+  "utf8",
+);
 
 function response(body: string, contentType = "text/html") {
   return new Response(body, {
@@ -111,6 +117,241 @@ describe("MopsfinClient", () => {
     ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
   });
 
+  it("binds reordered company series through upstream identity metadata and reports partial coverage", async () => {
+    const suggestions: Record<string, string> = {
+      "2330": "2330 台積電",
+      "2454": "2454 聯發科",
+      "2317": "2317 鴻海",
+    };
+    const fetchMock = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/") return response(catalogHtml);
+      if (parsed.pathname === "/suggestCompany") {
+        const query = parsed.searchParams.get("query") ?? "";
+        return response(
+          JSON.stringify({ suggestions: [suggestions[query]] }),
+          "application/json",
+        );
+      }
+      if (parsed.pathname === "/compare/data") {
+        const body = init?.body as URLSearchParams;
+        expect(body.getAll("companyId")).toEqual([
+          "2330 台積電",
+          "2454 聯發科",
+          "2317 鴻海",
+        ]);
+        expect(body.get("bcodeAvg")).toBe("true");
+        expect(body.get("companyAvg")).toBe("true");
+        return response(companyMetricPartial, "application/json");
+      }
+      throw new Error(`unexpected ${parsed.pathname}`);
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, { retryDelayMs: 0 }),
+    );
+
+    const result = await client.getCompanyMetric({
+      metricCode: "RevenueYoY",
+      companyCodes: ["2330", "2454", "2317"],
+      basis: "quarterly",
+      includeIndustryAverage: true,
+      includeCompanyAverage: true,
+      range: { history: "recent_12" },
+    });
+
+    expect(result.periods).toHaveLength(12);
+    expect(result.periods[0]).toBe("2022Q2");
+    expect(result.periods.at(-1)).toBe("2025Q1");
+    expect(result.query).toMatchObject({
+      includeIndustryAverage: true,
+      includeCompanyAverage: true,
+    });
+    expect(
+      result.series.find((series) => series.label === "TSMC"),
+    ).toMatchObject({
+      seriesType: "company",
+      companyCode: "2330",
+      companyName: "台積電",
+      displayName: "2330 台積電",
+    });
+    expect(
+      result.series.find((series) => series.label === "MediaTek"),
+    ).toMatchObject({
+      seriesType: "company",
+      companyCode: "2454",
+      companyName: "聯發科",
+    });
+    expect(
+      result.series.find((series) => series.label === "公司平均數")
+        ?.seriesType,
+    ).toBe("selection_average");
+    expect(
+      result.series.find((series) => series.label === "半導體產業平均")
+        ?.seriesType,
+    ).toBe("industry_average");
+    expect(result.coverage).toEqual({
+      selectionComplete: false,
+      requestedCompanyCodes: ["2330", "2454", "2317"],
+      returnedCompanyCodes: ["2330", "2454"],
+      missingCompanyCodes: ["2317"],
+      noValidDataCompanyCodes: ["2454", "2317"],
+      commonThroughPeriod: null,
+      companies: [
+        {
+          companyCode: "2330",
+          seriesReturned: true,
+          nonNullPoints: 12,
+          missingPoints: 0,
+          invalidPoints: 0,
+          firstReportedPeriod: "2022Q2",
+          latestReportedPeriod: "2025Q1",
+          missingPeriods: [],
+        },
+        {
+          companyCode: "2454",
+          seriesReturned: true,
+          nonNullPoints: 0,
+          missingPoints: 12,
+          invalidPoints: 1,
+          firstReportedPeriod: null,
+          latestReportedPeriod: null,
+          missingPeriods: result.periods,
+        },
+        {
+          companyCode: "2317",
+          seriesReturned: false,
+          nonNullPoints: 0,
+          missingPoints: 12,
+          invalidPoints: 0,
+          firstReportedPeriod: null,
+          latestReportedPeriod: null,
+          missingPeriods: result.periods,
+        },
+      ],
+    });
+    expect(result.warnings.join(" ")).toContain("invalid_upstream");
+    expect(result.warnings.join(" ")).toContain("未回傳公司 series：2317");
+  });
+
+  it("returns NO_DATA when only averages have reported values", async () => {
+    const fetchMock = vi.fn(async (url: URL | RequestInfo) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/") return response(catalogHtml);
+      if (parsed.pathname === "/suggestCompany") {
+        return response(JSON.stringify({ suggestions: ["2330 台積電"] }));
+      }
+      if (parsed.pathname === "/compare/data") {
+        return response(
+          JSON.stringify({
+            ylabel: "%",
+            xaxisList: ["2025Q1"],
+            graphData: [
+              { label: "2330 台積電", data: [[0, null, "尚未申報"]] },
+              { label: "公司平均數", data: [[0, 10]] },
+            ],
+            showNameList: ["台積電"],
+            checkedNameList: ["2330 台積電"],
+            displayCompanyId: ["2330 台積電"],
+          }),
+          "application/json",
+        );
+      }
+      throw new Error(`unexpected ${parsed.pathname}`);
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, { retryDelayMs: 0 }),
+    );
+
+    await expect(
+      client.getCompanyMetric({
+        metricCode: "RevenueYoY",
+        companyCodes: ["2330"],
+        basis: "quarterly",
+        includeIndustryAverage: false,
+        includeCompanyAverage: true,
+        range: { history: "recent_12" },
+      }),
+    ).rejects.toMatchObject({ code: "NO_DATA" });
+  });
+
+  it("rejects ambiguous duplicate company series rather than guessing", async () => {
+    const fetchMock = vi.fn(async (url: URL | RequestInfo) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/") return response(catalogHtml);
+      if (parsed.pathname === "/suggestCompany") {
+        return response(JSON.stringify({ suggestions: ["2330 台積電"] }));
+      }
+      return response(
+        JSON.stringify({
+          ylabel: "%",
+          xaxisList: ["2025Q1"],
+          graphData: [
+            { label: "2330 台積電", data: [[0, 1]] },
+            { label: "台積電", data: [[0, 1]] },
+          ],
+          checkedNameList: ["2330 台積電"],
+          displayCompanyId: ["2330 台積電"],
+        }),
+        "application/json",
+      );
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, { retryDelayMs: 0 }),
+    );
+
+    await expect(
+      client.getCompanyMetric({
+        metricCode: "RevenueYoY",
+        companyCodes: ["2330"],
+        basis: "quarterly",
+        includeIndustryAverage: false,
+        includeCompanyAverage: false,
+        range: { history: "all" },
+      }),
+    ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+  });
+
+  it("validates duplicate selections, incompatible YOY options, and reversed ranges before fetching", async () => {
+    const fetchMock = vi.fn();
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, { retryDelayMs: 0 }),
+    );
+    const base = {
+      metricCode: "RevenueYoY",
+      basis: "quarterly" as const,
+      includeIndustryAverage: false,
+      includeCompanyAverage: false,
+    };
+
+    await expect(
+      client.getCompanyMetric({
+        ...base,
+        companyCodes: ["2330", "2330"],
+        range: { history: "all" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      client.getCompanyMetric({
+        ...base,
+        companyCodes: ["2330"],
+        yoyQuarter: 4,
+        range: { history: "all" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    await expect(
+      client.getCompanyMetric({
+        ...base,
+        companyCodes: ["2330"],
+        range: {
+          history: "all",
+          startPeriod: "2025Q2",
+          endPeriod: "2025Q1",
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("requests and explains financial-industry and selected-institution averages", async () => {
     const fetchMock = vi.fn(async (url: URL | RequestInfo, init?: RequestInit) => {
       const parsed = new URL(String(url));
@@ -168,6 +409,8 @@ describe("MopsfinClient", () => {
     expect(
       result.series.find((series) => series.label === "銀行業資本適足性")
         ?.points,
-    ).toEqual([{ period: "2025Q4", value: 15.1 }]);
+    ).toEqual([
+      { period: "2025Q4", value: 15.1, valueStatus: "reported" },
+    ]);
   });
 });

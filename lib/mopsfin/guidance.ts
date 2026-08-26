@@ -1,13 +1,15 @@
 import type { MetricDefinition } from "./types";
 
 export const MOPSFIN_SERVER_INSTRUCTIONS = `
-這是一個公開、唯讀、無資料庫的台灣公司財務與價格資料 MCP Server。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體與 OHLC 價格直接取自 TWSE 與 TPEx 官方資料。
+這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、最新日估值與最新月營收直接取自 TWSE、TPEx 與公開資訊觀測站官方資料。
 
-使用順序：需要完整上市櫃母體或全市場掃描代號時先呼叫 list_companies；只知道特定公司名稱或代號時使用 find_companies。不要用 find_companies 枚舉全市場。list_companies 的 market=listed 只回上市（含創新板）、market=otc 只回上櫃、market=all 回兩者全部；include_financial=false 或 include_ky=false 可排除金融保險業或 KY 公司。查單一股票跨期歷史價格使用 get_stock_ohlc；查同一交易日的完整市場或一批代號使用 get_daily_market_ohlc。不知道 metric_code、industry_codes、institution_codes 或可用期別時先呼叫 list_catalog。list_catalog 也會回傳官方資料範圍、各指標公式、值的計算基礎與適用限制，回答前應讀取相關 guidance。
+使用順序：需要完整上市櫃母體或全市場掃描代號時先呼叫 list_companies；只知道特定公司名稱或代號時使用 find_companies。不要用 find_companies 枚舉全市場。list_companies 的 market=listed 只回上市（含創新板）、market=otc 只回上櫃、market=all 回兩者全部；include_financial=false 或 include_ky=false 可排除金融保險業或 KY 公司。查單一股票跨期歷史價量使用 get_stock_ohlc；查同一交易日的完整市場或一批代號使用 get_daily_market_ohlc；查最近官方本益比／股價淨值比／殖利率使用 get_daily_market_valuation；查最近官方月營收與年增率使用 get_monthly_revenue。不知道 metric_code、industry_codes、institution_codes 或可用期別時先呼叫 list_catalog。list_catalog 也會回傳官方資料範圍、各指標公式、值的計算基礎與適用限制，回答前應讀取相關 guidance。
 
 公司母體：list_companies 只列 TWSE／TPEx 公司普通股母體，不含 ETF、ETN、權證、特別股與 TDR。上市來源的 TDR 會固定排除，因為 Mopsfin 不涵蓋 TDR。market=all 只有在上市與上櫃兩個必要來源都成功，且各來源通過單一出表日期與最低筆數完整性檢查時才回傳 coverageComplete=true；應保留 sources、各自 reportDate、snapshotId、counts 與 warnings。公司列在母體只表示目前屬上市櫃公司，不保證每個 Mopsfin 指標或期別都有資料。
 
-價格資料：兩個 OHLC 工具只回官方原始未還原權值日線，priceBasis=raw_unadjusted、幣別 TWD、時區 Asia/Taipei、interval=1d，不提供盤中即時價、adjusted close、成交量或成交金額。get_stock_ohlc 每頁最多處理 12 個月份；coverageComplete=false 時必須用 nextCursor 續查，不能把局部頁面描述成完整 requested range。TWSE 個股月資料自 2010-01-04、TPEx 自 1994-01-01 起；可探測已下市櫃代號並合併上櫃轉上市月份。get_daily_market_ohlc 的 latest 是最近完成交易日；market=all 要求兩市場日期一致，指定假日或未來日不退回其他日期。null/no_trade 不可改寫為 0。
+價格資料：兩個 OHLC 工具回官方原始未還原權值日線，priceBasis=raw_unadjusted、幣別 TWD、時區 Asia/Taipei、interval=1d，並將成交量正規化為股、成交金額正規化為 TWD，同時保留成交筆數、漲跌價差、changeMarker、逐列 qualityStatus／missingFields 與來源 normalization；不提供盤中即時價或 adjusted close。get_stock_ohlc 每頁最多處理 12 個月份；coverageComplete=false 時必須用 nextCursor 續查，不能把局部頁面描述成完整 requested range。TWSE 個股月資料自 2010-01-04、TPEx 自 1994-01-01 起；可探測已下市櫃代號並合併上櫃轉上市月份。get_daily_market_ohlc 的 latest 是最近完成交易日；market=all 要求兩市場日期一致，指定假日或未來日不退回其他日期。latest 的 universe_policy=compatible 允許四碼公司代號 fallback，但各市場 matchRatio 低於 95% 仍拒絕疑似截斷資料；universeCoverageVerified 與 reconciliation.coverageComplete 只在集合與目前 master 完全吻合時為 true。strict_current_master 無法精確核對時回 INCOMPLETE_COVERAGE。null、no_trade 或 partial 不可改寫為 0。
+
+估值與月營收：get_daily_market_valuation 與 get_monthly_revenue 的 v1 都只支援 latest，沒有歷史快照或資料庫。估值預設 compatible，因目前公司 master 可能包含暫停交易或當日無估值列的合法公司；必須保留 reconciliation 與 universeCoverageVerified，但各市場 matchRatio 低於 95% 仍拒絕疑似截斷來源。strict_current_master 僅作要求集合完全吻合的 opt-in 診斷，不吻合時報錯。本益比、股價淨值比或殖利率不具計算意義時以 null 與逐欄 valueStatus 表示。月營收金額從官方仟元乘以 1,000 正規化為 TWD；coverageComplete 只代表必要來源成功且年月一致，filingCoverage 才表示最新資料列相對目前 master 的覆蓋，未達 100% 可能源於申報進度、資料適用性或公司狀態差異。sourceReportDate 是資料集出表日期，不是個別公司 filedAt。兩工具都不可把 null 或 invalid_upstream 當成 0。
 
 資料範圍：涵蓋上市、上櫃、興櫃、公開發行公司，以及依法申報財報的未公開發行金融業；不含 TDR 發行公司。資料為採用 IFRSs 後的財務資訊，上市、上櫃、興櫃及金管會主管金融業通常自 2013 年起，公開發行公司通常自 2015 年起，特殊情況依實際採用 IFRSs 年度。
 
@@ -15,11 +17,11 @@ export const MOPSFIN_SERVER_INSTRUCTIONS = `
 
 數值解讀：綜合損益表與現金流量表是各季累計；quarterly 是 Mopsfin 的單季口徑，上市櫃 Q4 通常由全年累計減 Q3 累計，興櫃／公開發行 Q2 通常是前兩季累計、Q4 通常由全年累計減 Q2 累計；cumulative_yoy 是指定季度的累計同比，必須提供 yoy_quarter。產業統計是各季累計，產業趨勢同時涉及單季與累計口徑。比較不同公司或期間前，務必確認 unit、periods、basis、warnings 與 metric guidance。
 
-平均數：公司指標的所選公司平均數是所選公司的簡單平均，產業平均數是依產業分類計算的上市與上櫃公司指標平均。金融機構指標可另外要求相應金控／銀行／票券業的產業平均，以及本次所選機構的簡單平均。所有平均數都由 Mopsfin 計算，不是市值加權；應依 series.label 分辨個別公司／機構與平均 series。
+平均數與公司指標覆蓋：公司指標的所選公司平均數是所選公司的簡單平均，產業平均數是依產業分類計算的上市與上櫃公司指標平均。金融機構指標可另外要求相應金控／銀行／票券業的產業平均，以及本次所選機構的簡單平均。所有平均數都由 Mopsfin 計算，不是市值加權。get_company_metric 應依 seriesType 與 companyCode 分辨公司／平均 series，不可只解析 label；每點 valueStatus 與 coverage.selectionComplete、noValidDataCompanyCodes、missingPeriods、commonThroughPeriod 都是答案的一部分。
 
-更新與責任：Mopsfin 每日更新一次，可能較公開資訊觀測站最新申報落後約一日；公司母體應以 list_companies 的各來源 reportDate、價格應以 OHLC 工具的 dataDate／coverage／sources 為準。本服務不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP，也不構成投資建議；重要判斷應回查官方公司名錄、行情與公開資訊觀測站原始申報。
+更新與責任：Mopsfin 每日更新一次，可能較公開資訊觀測站最新申報落後約一日；公司母體應以 list_companies 的各來源 reportDate、價格與估值應以 dataDate、月營收應以 dataMonth／sourceReportDate，並連同 coverage／sources 為準。本服務不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP，也不構成投資建議；重要判斷應回查官方公司名錄、行情與公開資訊觀測站原始申報。
 
-錯誤語意：INVALID_ARGUMENT 表示參數不合法；NOT_FOUND 表示代號不在即時目錄；NO_DATA 表示該條件／期別無可用資料；UPSTREAM_TIMEOUT、UPSTREAM_RATE_LIMITED、UPSTREAM_BAD_RESPONSE 分別表示上游逾時、限流或格式／服務異常。
+錯誤語意：INVALID_ARGUMENT 表示參數不合法；NOT_FOUND 表示代號不在即時目錄；NO_DATA 表示該條件／期別無可用資料；INCOMPLETE_COVERAGE 表示官方來源有回應但不足以符合 strict 公司母體或完整性要求；UPSTREAM_TIMEOUT、UPSTREAM_RATE_LIMITED、UPSTREAM_BAD_RESPONSE 分別表示上游逾時、限流或格式／服務異常。
 `.trim();
 
 export const MOPSFIN_OFFICIAL_GUIDANCE = {

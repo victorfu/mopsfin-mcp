@@ -1,5 +1,5 @@
 import { MopsfinError } from "./errors";
-import type { NormalizedTrend } from "./types";
+import type { NormalizedTrend, TrendSeriesType } from "./types";
 
 const PERIOD_PATTERN = /^(\d{4})Q([1-4])$/;
 
@@ -73,9 +73,27 @@ export function sliceTrend(
     history: "recent_12" | "all";
     startPeriod?: string;
     endPeriod?: string;
+    recentSeriesTypes?: TrendSeriesType[];
+    recentReportedOnly?: boolean;
   },
 ): NormalizedTrend {
-  let selected = trend.periods.filter((period) => PERIOD_PATTERN.test(period));
+  const invalidPeriods = trend.periods.filter(
+    (period) => !PERIOD_PATTERN.test(period),
+  );
+  if (invalidPeriods.length > 0) {
+    throw new MopsfinError(
+      "UPSTREAM_BAD_RESPONSE",
+      `Mopsfin 回傳無效期別：${invalidPeriods.join("、")}。`,
+    );
+  }
+  if (new Set(trend.periods).size !== trend.periods.length) {
+    throw new MopsfinError(
+      "UPSTREAM_BAD_RESPONSE",
+      "Mopsfin 回傳重複期別，無法安全建立時間序列。",
+    );
+  }
+
+  let selected = [...trend.periods].sort(comparePeriods);
 
   if (options.startPeriod) {
     parsePeriod(options.startPeriod);
@@ -89,17 +107,49 @@ export function sliceTrend(
       (period) => comparePeriods(period, options.endPeriod as string) <= 0,
     );
   }
-  if (!options.startPeriod && !options.endPeriod && options.history === "recent_12") {
+  if (
+    !options.startPeriod &&
+    !options.endPeriod &&
+    options.history === "recent_12"
+  ) {
+    if (options.recentSeriesTypes || options.recentReportedOnly) {
+      const allowedTypes = options.recentSeriesTypes
+        ? new Set(options.recentSeriesTypes)
+        : null;
+      selected = selected.filter((period) =>
+        trend.series.some(
+          (series) =>
+            (!allowedTypes ||
+              (series.seriesType !== undefined &&
+                allowedTypes.has(series.seriesType))) &&
+            series.points.some(
+              (point) =>
+                point.period === period &&
+                (!options.recentReportedOnly ||
+                  point.valueStatus === "reported"),
+            ),
+        ),
+      );
+    }
     selected = selected.slice(-12);
   }
 
   const periodSet = new Set(selected);
+  const periodOrder = new Map(
+    selected.map((period, index) => [period, index] as const),
+  );
   return {
     ...trend,
     periods: selected,
     series: trend.series.map((series) => ({
       ...series,
-      points: series.points.filter((point) => periodSet.has(point.period)),
+      points: series.points
+        .filter((point) => periodSet.has(point.period))
+        .sort(
+          (left, right) =>
+            (periodOrder.get(left.period) ?? 0) -
+            (periodOrder.get(right.period) ?? 0),
+        ),
     })),
   };
 }

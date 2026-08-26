@@ -43,13 +43,40 @@ export interface CompanySuggestion {
 export interface TrendPoint {
   period: string;
   value: number | null;
+  valueStatus: "reported" | "missing" | "invalid_upstream";
   status?: string;
 }
 
-export interface TrendSeries {
+export type TrendSeriesType =
+  | "company"
+  | "industry_average"
+  | "selection_average"
+  | "other";
+
+interface TrendSeriesBase {
   label: string;
   points: TrendPoint[];
 }
+
+export type TrendSeries =
+  | (TrendSeriesBase & {
+      seriesType: "company";
+      companyCode: string;
+      companyName: string;
+      displayName: string;
+    })
+  | (TrendSeriesBase & {
+      seriesType: Exclude<TrendSeriesType, "company">;
+      companyCode?: never;
+      companyName?: never;
+      displayName?: never;
+    })
+  | (TrendSeriesBase & {
+      seriesType?: undefined;
+      companyCode?: never;
+      companyName?: never;
+      displayName?: never;
+    });
 
 export interface NormalizedTrend {
   periods: string[];
