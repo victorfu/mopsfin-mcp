@@ -1,5 +1,6 @@
 import { load } from "cheerio";
 
+import { MopsfinError } from "./errors";
 import type {
   NormalizedTable,
   PaginatedTables,
@@ -11,6 +12,40 @@ interface ActiveSpan {
   value: string;
 }
 
+interface HtmlResourceBudget {
+  expandedCells: number;
+}
+
+const MAX_HTML_CHARACTERS = 8_000_000;
+const MAX_TOP_LEVEL_TABLES = 100;
+const MAX_ROWS_PER_TABLE = 20_000;
+const MAX_COLUMNS_PER_TABLE = 500;
+const MAX_CELL_SPAN = 1_000;
+const MAX_EXPANDED_CELLS = 1_000_000;
+
+function resourceLimit(message: string, details: Record<string, unknown>): never {
+  throw new MopsfinError("UPSTREAM_BAD_RESPONSE", message, {
+    reason: "UPSTREAM_RESOURCE_LIMIT",
+    category: "upstream",
+    retryable: false,
+    action: "none",
+    details,
+  });
+}
+
+function normalizedSpan(raw: string | undefined, attribute: "rowspan" | "colspan"): number {
+  if (raw === undefined) return 1;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1 || value > MAX_CELL_SPAN) {
+    resourceLimit(`Mopsfin HTML ${attribute} 超出安全範圍。`, {
+      attribute,
+      value: raw,
+      maximum: MAX_CELL_SPAN,
+    });
+  }
+  return value;
+}
+
 function cleanText(value: string): string {
   return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -18,7 +53,14 @@ function cleanText(value: string): string {
 function expandRows(
   $: ReturnType<typeof load>,
   rowElements: ReturnType<ReturnType<typeof load>>,
+  budget: HtmlResourceBudget,
 ): string[][] {
+  if (rowElements.length > MAX_ROWS_PER_TABLE) {
+    resourceLimit("Mopsfin HTML 單一表格列數超出安全上限。", {
+      rows: rowElements.length,
+      maximum: MAX_ROWS_PER_TABLE,
+    });
+  }
   const grid: string[][] = [];
   const active = new Map<number, ActiveSpan>();
 
@@ -43,8 +85,22 @@ function expandRows(
         consumeActive();
         const cell = $(cellElement);
         const value = cleanText(cell.text());
-        const colspan = Math.max(1, Number(cell.attr("colspan") ?? 1));
-        const rowspan = Math.max(1, Number(cell.attr("rowspan") ?? 1));
+        const colspan = normalizedSpan(cell.attr("colspan"), "colspan");
+        const rowspan = normalizedSpan(cell.attr("rowspan"), "rowspan");
+
+        if (column + colspan > MAX_COLUMNS_PER_TABLE) {
+          resourceLimit("Mopsfin HTML 單一表格欄數超出安全上限。", {
+            columns: column + colspan,
+            maximum: MAX_COLUMNS_PER_TABLE,
+          });
+        }
+        budget.expandedCells += colspan * rowspan;
+        if (budget.expandedCells > MAX_EXPANDED_CELLS) {
+          resourceLimit("Mopsfin HTML 展開後儲存格數超出安全上限。", {
+            expandedCells: budget.expandedCells,
+            maximum: MAX_EXPANDED_CELLS,
+          });
+        }
 
         for (let offset = 0; offset < colspan; offset += 1) {
           row[column + offset] = value;
@@ -77,6 +133,12 @@ function expandRows(
 }
 
 export function parseHtmlTables(html: string): ParsedHtmlResponse {
+  if (html.length > MAX_HTML_CHARACTERS) {
+    resourceLimit("Mopsfin HTML 回應大小超出安全上限。", {
+      characters: html.length,
+      maximum: MAX_HTML_CHARACTERS,
+    });
+  }
   const $ = load(html);
   $("script, style, noscript").remove();
 
@@ -86,9 +148,18 @@ export function parseHtmlTables(html: string): ParsedHtmlResponse {
     .get()
     .filter(Boolean);
   const tables: NormalizedTable[] = [];
+  const budget: HtmlResourceBudget = { expandedCells: 0 };
+  const topLevelTables = $("table").filter(
+    (_, table) => $(table).parents("table").length === 0,
+  );
+  if (topLevelTables.length > MAX_TOP_LEVEL_TABLES) {
+    resourceLimit("Mopsfin HTML 表格數超出安全上限。", {
+      tables: topLevelTables.length,
+      maximum: MAX_TOP_LEVEL_TABLES,
+    });
+  }
 
-  $("table")
-    .filter((_, table) => $(table).parents("table").length === 0)
+  topLevelTables
     .each((index, tableElement) => {
       const table = $(tableElement);
       const caption = cleanText(table.children("caption").first().text());
@@ -106,8 +177,8 @@ export function parseHtmlTables(html: string): ParsedHtmlResponse {
             $(row).closest("table").get(0) === tableElement &&
             $(row).closest("thead").length === 0,
         );
-      const headers = expandRows($, headerRows);
-      const rows = expandRows($, bodyRows);
+      const headers = expandRows($, headerRows, budget);
+      const rows = expandRows($, bodyRows, budget);
 
       if (headers.length > 0 || rows.length > 0) {
         tables.push({ title, headers, rows });

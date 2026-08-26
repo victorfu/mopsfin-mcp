@@ -11,6 +11,7 @@ import {
 } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
 import { priceClient } from "@/lib/price/client";
+import { recordMcpToolError } from "@/lib/observability/telemetry";
 import { reactionClient } from "@/lib/reaction/client";
 import { monthlyRevenueClient } from "@/lib/revenue/client";
 import { valuationClient } from "@/lib/valuation/client";
@@ -85,6 +86,7 @@ function success<T extends object>(summary: string, data: T, hints: ResultMetaHi
 
 function failure(error: unknown) {
   const normalized = asMopsfinError(error);
+  recordMcpToolError(normalized);
   const structuredContent = structuredError(normalized);
   const details = Object.keys(structuredContent.error.details as object).length
     ? ` ${JSON.stringify(structuredContent.error.details)}`
@@ -158,7 +160,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢單一台股歷史日線 OHLC",
       description:
-        "查詢單一四碼公司股票在指定起訖日期內的官方原始日線開高低收、成交量（股）、成交金額（TWD）、成交筆數與漲跌價差。服務按月份讀取 TWSE／TPEx，支援目前上市櫃、已下市櫃與上櫃轉上市歷史；轉板月份會合併兩市場並拒絕同日衝突。TWSE 個股月資料自 2010-01-04、TPEx 自 1994-01-01 起支援。每頁最多處理 12 個日曆月份，coverage.coverageComplete=false 時必須以完全相同的 company_code、start_date、end_date 帶回 nextCursor 繼續。價格固定為 TWD、Asia/Taipei、1d、raw_unadjusted，不含 adjusted close；每根 bar 的 qualityStatus、missingFields 與頂層 dataQualityComplete 揭露欄位完整性，無成交列以 null OHLC 與 official_no_trade 表示，不補週末、休市或停牌日期。",
+        "查詢單一四碼公司股票在指定起訖日期內的官方原始日線開高低收、成交量（股）、成交金額（TWD）、成交筆數與漲跌價差。服務按月份讀取 TWSE／TPEx，支援目前上市櫃、已下市櫃與上櫃轉上市歷史；轉板月份會合併兩市場並拒絕同日衝突。TWSE 個股月資料自 2010-01-04、TPEx 自 1994-01-01 起支援。每頁最多處理 12 個日曆月份，coverage.coverageComplete=false 時必須以完全相同的 company_code、start_date、end_date 帶回 nextCursor 繼續。官方 no-data response 若缺少 title/date，source.snapshotIdentity=unverified_empty、dataMonth 省略，meta.quality.source=partial 並帶 SOURCE_SNAPSHOT_IDENTITY_UNVERIFIED，不得把該空回應宣稱為已核對 requested month。價格固定為 TWD、Asia/Taipei、1d、raw_unadjusted，不含 adjusted close；每根 bar 的 qualityStatus、missingFields 與頂層 dataQualityComplete 揭露欄位完整性，無成交列以 null OHLC 與 official_no_trade 表示，不補週末、休市或停牌日期。",
       inputSchema: stockOhlcInputSchema,
       outputSchema: stockOhlcOutputSchema,
       annotations,
@@ -171,9 +173,33 @@ export function registerMopsfinTools(server: McpServer): void {
           endDate: end_date,
           ...(cursor ? { cursor } : {}),
         });
+        const unverifiedSources = data.sources.filter(
+          (item) => item.snapshotIdentity === "unverified_empty",
+        );
         return success(
           `${company_code}：本頁 ${data.bars.length} 根日線，已覆蓋至 ${data.coverage.coveredThrough}，coverageComplete=${data.coverage.coverageComplete}。`,
           data,
+          {
+            source: unverifiedSources.length > 0 ? "partial" : "complete",
+            issues:
+              unverifiedSources.length > 0
+                ? [
+                    {
+                      code: "SOURCE_SNAPSHOT_IDENTITY_UNVERIFIED",
+                      severity: "warning",
+                      scope: "source",
+                      message:
+                        "部分官方 no-data response 未提供 title/date，無法把空回應驗證綁定至 requested month。",
+                      refs: {
+                        companyCodes: [company_code],
+                        fields: ["sources.snapshotIdentity", "sources.dataMonth"],
+                        periods: [],
+                        sourceUrls: unverifiedSources.map((item) => item.sourceUrl),
+                      },
+                    },
+                  ]
+                : [],
+          },
         );
       } catch (error) {
         return failure(error);
@@ -254,7 +280,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "比較台股與市場 benchmark 的 reaction signals",
       description:
-        "比較 1–50 家目前上市櫃公司與其官方市場價格指數在 5／20／60／120 個 benchmark 交易日視窗的原始報酬，並回傳 excess return、平均成交股數、平均成交金額、短長窗量能比、最大回撤及距區間高點。個股固定使用 raw_unadjusted 收盤價，benchmark 固定使用 TAIEX／櫃買 price index，不含股息再投資，也不把日曆日或前一成交日代填 exact session。官方 change marker、轉板／歷史市場不符或多個 observed names 會保留 raw stock 與 benchmark return，但 excessReturnPercentagePoints=null 並列明不可比原因。每頁最多 10 家且受 48 個官方市場月份請求單位限制；cursor 與 meta snapshotId 綁定 query、目前 master 與 benchmark，不會把尚未查詢公司的個股 OHLC 值冒充 point-in-time 快照。這些是可重算的市場反應代理，不是主觀 score，也不能單獨證明市場尚未反應或股票錯價；回答前須檢查 comparability、status、meta.quality 與 meta.page。",
+        "比較 1–50 家目前上市櫃公司與其官方市場價格指數在 5／20／60／120 個 benchmark 交易日視窗的原始報酬，並回傳 excess return、平均成交股數、平均成交金額、短長窗量能比、最大回撤及距區間高點。個股固定使用 raw_unadjusted 收盤價，benchmark 固定使用 TAIEX／櫃買 price index，不含股息再投資，也不把日曆日或前一成交日代填 exact session。官方 change marker、轉板／歷史市場不符或多個 observed names 會保留 raw stock 與 benchmark return，但 excessReturnPercentagePoints=null 並列明不可比原因；個股 no-data response 若缺少月份 identity，stockSources 與 meta.quality 會明示 unverified。每頁最多 10 家且受 48 個官方市場月份請求單位限制；cursor 與 meta snapshotId 綁定 query、目前 master 與 benchmark，不會把尚未查詢公司的個股 OHLC 值冒充 point-in-time 快照。這些是可重算的市場反應代理，不是主觀 score，也不能單獨證明市場尚未反應或股票錯價；回答前須檢查 comparability、status、meta.quality 與 meta.page。",
       inputSchema: stockReactionSignalsInputSchema,
       outputSchema: stockReactionSignalsOutputSchema,
       annotations,
@@ -276,6 +302,9 @@ export function registerMopsfinTools(server: McpServer): void {
           .map((company) => company.companyCode);
         const valuesComplete =
           data.coverage.dataQualityComplete && notComparableCodes.length === 0;
+        const unverifiedStockSources = data.stockSources.filter(
+          (item) => item.snapshotIdentity === "unverified_empty",
+        );
         const page = {
           mode: "cursor" as const,
           unit: "company" as const,
@@ -298,6 +327,7 @@ export function registerMopsfinTools(server: McpServer): void {
             },
             page,
             snapshotId: data.pagination.snapshotId,
+            source: unverifiedStockSources.length > 0 ? "partial" : "complete",
             universe: "verified",
             selection: "complete",
             values: valuesComplete ? "complete" : "partial",
@@ -315,6 +345,30 @@ export function registerMopsfinTools(server: McpServer): void {
                   sourceUrls: [],
                 },
               },
+              ...(unverifiedStockSources.length > 0
+                ? [
+                    {
+                      code: "SOURCE_SNAPSHOT_IDENTITY_UNVERIFIED",
+                      severity: "warning" as const,
+                      scope: "source" as const,
+                      message:
+                        "部分個股官方 no-data response 未提供 title/date，無法把空回應驗證綁定至 requested month。",
+                      refs: {
+                        companyCodes: data.companies.map(
+                          (company) => company.companyCode,
+                        ),
+                        fields: [
+                          "stockSources.snapshotIdentity",
+                          "stockSources.dataMonth",
+                        ],
+                        periods: resolvedDates,
+                        sourceUrls: unverifiedStockSources.map(
+                          (item) => item.sourceUrl,
+                        ),
+                      },
+                    },
+                  ]
+                : []),
               {
                 code: "STATELESS_PAGE_VALUES_NOT_PINNED",
                 severity: "info",
@@ -440,7 +494,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢台股單月營收",
       description:
-        "查詢上市、上櫃或全部公司在 latest 或 2013-01 起指定 YYYY-MM 的官方單月營收、月增率、年增率與累計營收年增率。latest 以 TWSE／TPEx OpenAPI 發現月份，再與同月或前一月 MOPS archive 核對共同有效月份；explicit month 採 exact archive，不退回其他月份。歷史 archive 是目前可取得的修訂後檔案，不是 point-in-time vintage，current master 的 industryCode／reconciliation 只能輔助，應以該月 sourceIndustryName 辨識歷史產業。官方金額原始單位為仟元，本工具固定乘以 1,000 輸出 TWD；每欄 valueStatus 區分 reported、missing、invalid_upstream，null 不可當 0。latest 省略 universe_policy 時使用 strict_current_master，歷史月份使用 compatible 且不允許 strict。coverageComplete 是相容欄位：latest 成功完成必要來源、格式與 snapshot identity 核對時為 true，歷史 archive 因無 declared row count 固定為 false；另以 sourceCoverage 說明 rowset 是否能由目前 master 核對，filingCoverage 則只讓 latest 輔助判讀申報進度，歷史值固定是跨時點不可驗證。company_codes 最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt；省略 page_size/cursor 維持完整回傳。",
+        "查詢上市、上櫃或全部公司在 latest 或 2013-01 起指定 YYYY-MM 的官方單月營收、月增率、年增率與累計營收年增率。latest 以 TWSE／TPEx OpenAPI 發現月份，再與同月或前一月 MOPS archive 核對共同有效月份；若同月不同出表日僅少量重疊公司數值不同，視為官方修訂、採較新 snapshot 並 warning，同出表日或大範圍衝突則報錯。explicit month 採 exact archive，不退回其他月份。歷史 archive 是目前可取得的修訂後檔案，不是 point-in-time vintage，current master 的 industryCode／reconciliation 只能輔助，應以該月 sourceIndustryName 辨識歷史產業。官方金額原始單位為仟元，本工具固定乘以 1,000 輸出 TWD；每欄 valueStatus 區分 reported、missing、invalid_upstream，null 不可當 0。latest 省略 universe_policy 時使用 strict_current_master，歷史月份使用 compatible 且不允許 strict。coverageComplete 是相容欄位：latest 成功完成必要來源、格式與 snapshot identity 核對時為 true，歷史 archive 因無 declared row count 固定為 false；另以 sourceCoverage 說明 rowset 是否能由目前 master 核對，filingCoverage 則只讓 latest 輔助判讀申報進度，歷史值固定是跨時點不可驗證。company_codes 最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt；省略 page_size/cursor 維持完整回傳。",
       inputSchema: monthlyRevenueInputSchema,
       outputSchema: monthlyRevenueOutputSchema,
       annotations,
@@ -692,9 +746,9 @@ export function registerMopsfinTools(server: McpServer): void {
   server.registerTool(
     "list_companies",
     {
-      title: "列出上市櫃公司完整母體",
+      title: "列出上市櫃公司目前母體",
       description:
-        "從 TWSE 上市公司基本資料與 TPEx 上櫃股票基本資料官方 OpenAPI 建立可供財務與市場工具使用的目前公司母體。market=listed 只回上市公司且包含創新板，market=otc 只回上櫃公司，market=all 同時取得兩市場；任何必要來源失敗、同一來源出表日期不一致或筆數低於完整性基準時整體報錯。來源不包含 ETF、ETN、權證或特別股，上市 TDR 固定排除；include_financial 與 include_ky 可排除金融保險業或 KY 公司。公司列另提供成立日期、實收資本額 TWD、已發行普通股數、面額原文、財報類型 raw code 與逐欄 profileValueStatus；這些是目前 snapshot，不可當歷史股數或直接推算歷史市值。省略 page_size/cursor 時維持完整 companies 回傳；提供 page_size 後以 snapshot-bound cursor 分頁。各市場出表日期、來源／排除筆數、profileCoverage、snapshotId 與 coverageComplete 都是答案的一部分；公司存在於母體不保證每個財務指標或期別有資料。",
+        "從 TWSE 上市公司基本資料與 TPEx 上櫃股票基本資料官方 OpenAPI 建立可供財務與市場工具使用的目前公司母體。market=listed 只回上市公司且包含創新板，market=otc 只回上櫃公司，market=all 同時取得兩市場；任何必要來源失敗、同一來源出表日期不一致或筆數低於安全門檻時整體報錯。官方來源沒有 declared row count，因此 coverageVerification.status=heuristic；coverageComplete=true 僅代表必要來源、schema、單一出表日期、唯一代號與最低筆數 gate 通過，不可宣稱官方完整 rowset。來源不包含 ETF、ETN、權證或特別股，上市 TDR 固定排除；include_financial 與 include_ky 可排除金融保險業或 KY 公司。公司列另提供成立日期、實收資本額 TWD、已發行普通股數、面額原文、財報類型 raw code 與逐欄 profileValueStatus；這些是目前 snapshot，不可當歷史股數或直接推算歷史市值。省略 page_size/cursor 時維持整個本次 accepted snapshot 的 companies 回傳；提供 page_size 後以內容快照綁定 cursor。頂層 snapshotId 只是 market＋reportDate 的來源日期標籤，meta.asOf.snapshotId 才是 cursor 使用的內容 fingerprint；meta.asOf.resolved 取自官方 reportDate，不使用 generatedAt 冒充資料日期。各市場出表日期、來源／排除筆數、minimumExpectedCount、profileCoverage、coverageVerification 與 warnings 都是答案的一部分；公司存在於母體不保證每個財務指標或期別有資料。",
       inputSchema: listCompaniesInputSchema,
       outputSchema: listCompaniesOutputSchema,
       annotations,
@@ -737,9 +791,41 @@ export function registerMopsfinTools(server: McpServer): void {
         const marketLabel =
           market === "listed" ? "上市" : market === "otc" ? "上櫃" : "上市及上櫃";
         return success(
-          `${marketLabel}公司母體本頁 ${pageData.counts.returned} 家（上市 ${pageData.counts.listed}、上櫃 ${pageData.counts.otc}），coverageComplete=true。`,
+          `${marketLabel}公司母體本頁 ${pageData.counts.returned} 家（上市 ${pageData.counts.listed}、上櫃 ${pageData.counts.otc}）；已通過 heuristic coverage gate，但官方未提供 declared row count。`,
           pageData,
-          { page: paginated.page, snapshotId, universe: "verified" },
+          {
+            selector: "snapshot",
+            resolved: {
+              granularity: "date",
+              from:
+                data.sources
+                  .map((item) => item.reportDate)
+                  .sort()[0] ?? null,
+              through:
+                data.sources
+                  .map((item) => item.reportDate)
+                  .sort()
+                  .at(-1) ?? null,
+            },
+            page: paginated.page,
+            snapshotId,
+            universe: "unverified",
+            issues: [
+              {
+                code: "MASTER_ROWSET_HEURISTIC",
+                severity: "warning",
+                scope: "universe",
+                message:
+                  "官方公司基本資料來源沒有 declared row count；本次只通過必要來源、schema、單一出表日期、唯一代號與最低筆數 heuristic gate，不能證明完整 rowset。",
+                refs: {
+                  companyCodes: [],
+                  fields: ["coverageVerification", "coverageComplete", "sources.minimumExpectedCount"],
+                  periods: data.sources.map((item) => item.reportDate),
+                  sourceUrls: data.sources.map((item) => item.sourceUrl),
+                },
+              },
+            ],
+          },
         );
       } catch (error) {
         return failure(error);

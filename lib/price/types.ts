@@ -40,6 +40,12 @@ export interface PriceSource {
   sourceName: string;
   sourceUrl: string;
   retrievedAt: string;
+  /**
+   * Whether the upstream response itself exposed enough identity metadata to
+   * bind it to the requested date/month. Older injected test doubles may omit
+   * this field, but production PriceClient sources always set it.
+   */
+  snapshotIdentity?: "verified" | "unverified_empty";
   dataDate?: string;
   dataMonth?: string;
   normalization: {

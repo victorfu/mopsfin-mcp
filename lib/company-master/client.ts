@@ -1,4 +1,15 @@
+import {
+  OfficialJsonLoader,
+  type OfficialJsonLoaderOptions,
+} from "@/lib/market-data/client-utils";
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import {
+  createSharedUpstreamFlight,
+  getCurrentDeadline,
+  UpstreamReliabilityError,
+  type AbsoluteDeadline,
+  type SharedUpstreamFlight,
+} from "@/lib/upstream/reliability";
 
 import type {
   CompanyMarket,
@@ -8,8 +19,6 @@ import type {
   MasterCompany,
 } from "./types";
 
-type FetchLike = typeof fetch;
-
 interface SourceConfig {
   market: CompanyMarket;
   exchange: "TWSE" | "TPEx";
@@ -17,11 +26,7 @@ interface SourceConfig {
   sourceUrl: string;
 }
 
-interface CompanyMasterClientOptions {
-  timeoutMs?: number;
-  retryDelayMs?: number;
-  maxAttempts?: number;
-  cacheTtlMs?: number;
+interface CompanyMasterClientOptions extends OfficialJsonLoaderOptions {
   minimumCompanyCounts?: Partial<Record<CompanyMarket, number>>;
 }
 
@@ -41,16 +46,11 @@ const SOURCE_CONFIGS: Record<CompanyMarket, SourceConfig> = {
 };
 
 const DEFAULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
-const DEFAULT_TIMEOUT_MS = 20_000;
-const DEFAULT_RETRY_DELAY_MS = 250;
+const DEFAULT_FLIGHT_DEADLINE_MS = 50_000;
 const DEFAULT_MINIMUM_COMPANY_COUNTS: Record<CompanyMarket, number> = {
   listed: 1_000,
   otc: 800,
 };
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function fail(message: string, details?: Record<string, unknown>): never {
   throw new MopsfinError("UPSTREAM_BAD_RESPONSE", message, { details });
@@ -260,6 +260,7 @@ export function normalizeCompanyMarketPayload(
   payload: unknown,
   config: SourceConfig,
   retrievedAt: string,
+  minimumExpectedCount: number,
 ): CompanyMarketSnapshot {
   if (!Array.isArray(payload) || payload.length === 0) {
     fail(`${config.market} 公司基本資料不是非空陣列。`, {
@@ -310,36 +311,55 @@ export function normalizeCompanyMarketPayload(
       rawCount: payload.length,
       excludedTdrCount,
       companyCount: companies.length,
+      minimumExpectedCount,
     },
     companies,
   };
 }
 
 export class CompanyMasterClient {
-  private readonly timeoutMs: number;
-  private readonly retryDelayMs: number;
-  private readonly maxAttempts: number;
   private readonly cacheTtlMs: number;
+  private readonly flightDeadlineMs: number;
   private readonly minimumCompanyCounts: Record<CompanyMarket, number>;
+  private readonly loader: OfficialJsonLoader;
   private readonly cached = new Map<
     CompanyMarket,
     { expiresAt: number; snapshot: CompanyMarketSnapshot }
   >();
-  private readonly pending = new Map<CompanyMarket, Promise<CompanyMarketSnapshot>>();
+  private readonly pending = new Map<
+    CompanyMarket,
+    SharedUpstreamFlight<CompanyMarketSnapshot>
+  >();
 
   constructor(
-    private readonly fetchImpl: FetchLike = fetch,
+    fetchImpl: typeof fetch = fetch,
     private readonly now: () => Date = () => new Date(),
     options: CompanyMasterClientOptions = {},
   ) {
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
-    this.maxAttempts = options.maxAttempts ?? 2;
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
+    this.flightDeadlineMs = options.deadlineMs ?? DEFAULT_FLIGHT_DEADLINE_MS;
+    if (!Number.isSafeInteger(this.flightDeadlineMs) || this.flightDeadlineMs < 1) {
+      throw new TypeError("deadlineMs 必須是正整數。");
+    }
+    // This client's two-entry market cache owns freshness and force-refresh
+    // semantics. The shared loader cache is disabled while its deadline,
+    // retries, body/row limits, and global backpressure gate remain active.
+    this.loader = new OfficialJsonLoader(fetchImpl, now, {
+      ...options,
+      cacheTtlMs: 0,
+    });
     this.minimumCompanyCounts = {
       ...DEFAULT_MINIMUM_COMPANY_COUNTS,
       ...options.minimumCompanyCounts,
     };
+    for (const market of ["listed", "otc"] as const) {
+      const minimum = this.minimumCompanyCounts[market];
+      if (!Number.isInteger(minimum) || minimum < 1) {
+        throw new TypeError(
+          `minimumCompanyCounts.${market} 必須是正整數。`,
+        );
+      }
+    }
   }
 
   async getMarketSnapshot(
@@ -347,24 +367,60 @@ export class CompanyMasterClient {
     force = false,
   ): Promise<CompanyMarketSnapshot> {
     const now = this.now().getTime();
+    const callerDeadline = getCurrentDeadline();
     const cached = this.cached.get(market);
     if (!force && cached && cached.expiresAt > now) return cached.snapshot;
     const existing = this.pending.get(market);
-    if (!force && existing) return existing;
+    if (existing) return this.waitForSnapshot(existing, callerDeadline);
 
-    const request = this.loadMarket(market)
-      .then((snapshot) => {
+    const request = createSharedUpstreamFlight(
+      this.flightDeadlineMs,
+      async () => {
+        const snapshot = await this.loadMarket(market);
         this.cached.set(market, {
           expiresAt: this.now().getTime() + this.cacheTtlMs,
           snapshot,
         });
         return snapshot;
-      })
-      .finally(() => {
-        this.pending.delete(market);
-      });
+      },
+    );
     this.pending.set(market, request);
-    return request;
+    const clearRequest = () => {
+      if (this.pending.get(market) === request) this.pending.delete(market);
+    };
+    void request.promise.then(clearRequest, clearRequest);
+    return this.waitForSnapshot(request, callerDeadline);
+  }
+
+  private async waitForSnapshot(
+    request: SharedUpstreamFlight<CompanyMarketSnapshot>,
+    deadline: AbsoluteDeadline | undefined,
+  ): Promise<CompanyMarketSnapshot> {
+    try {
+      return await request.wait(deadline);
+    } catch (error) {
+      if (error instanceof UpstreamReliabilityError) {
+        const deadlineExceeded =
+          error.code === "DEADLINE_EXCEEDED" ||
+          (error.cause instanceof UpstreamReliabilityError &&
+            error.cause.code === "DEADLINE_EXCEEDED");
+        throw new MopsfinError(
+          "UPSTREAM_TIMEOUT",
+          deadlineExceeded
+            ? "公司母體查詢超過本次工作的總時間上限。"
+            : "公司母體查詢已取消。",
+          {
+            cause: error,
+            reason: deadlineExceeded
+              ? "UPSTREAM_DEADLINE_EXCEEDED"
+              : "UPSTREAM_OPERATION_ABORTED",
+            retryable: true,
+            action: "retry",
+          },
+        );
+      }
+      throw error;
+    }
   }
 
   async listCompanies(
@@ -428,6 +484,7 @@ export class CompanyMasterClient {
     const warnings = [
       "本清單代表 TWSE／TPEx 官方公司母體，不保證每家公司在 Mopsfin 的每個指標或期別都有資料。",
       "上市清單已排除 TDR；ETF、ETN、權證與特別股不在本工具的公司母體內。",
+      "coverageComplete=true 僅代表必要來源、必要欄位、單一出表日期、唯一代號與最低筆數 heuristic gate 均通過；官方來源沒有 declared row count，因此無法證明完整 rowset。",
     ];
     if (!query.includeFinancial) {
       warnings.push(`已依產業代號 17 排除 ${excludedFinancial} 家金融保險業公司。`);
@@ -442,6 +499,11 @@ export class CompanyMasterClient {
       snapshotId: sources
         .map((source) => `${source.market}-${source.reportDate}`)
         .join("+"),
+      coverageVerification: {
+        status: "heuristic",
+        method: "required_sources_schema_single_report_date_minimum_count",
+        officialDeclaredRowCountAvailable: false,
+      },
       coverageComplete: true,
       sources,
       counts: {
@@ -466,12 +528,13 @@ export class CompanyMasterClient {
   private async loadMarket(market: CompanyMarket): Promise<CompanyMarketSnapshot> {
     const config = SOURCE_CONFIGS[market];
     const payload = await this.requestJson(config);
+    const minimum = this.minimumCompanyCounts[market];
     const snapshot = normalizeCompanyMarketPayload(
       payload,
       config,
       this.now().toISOString(),
+      minimum,
     );
-    const minimum = this.minimumCompanyCounts[market];
     if (snapshot.companies.length < minimum) {
       fail(`${config.exchange} 公司基本資料筆數低於完整性基準。`, {
         market,
@@ -483,86 +546,7 @@ export class CompanyMasterClient {
   }
 
   private async requestJson(config: SourceConfig): Promise<unknown> {
-    let lastError: MopsfinError | undefined;
-
-    for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-      try {
-        const response = await this.fetchImpl(config.sourceUrl, {
-          method: "GET",
-          cache: "no-store",
-          redirect: "error",
-          signal: controller.signal,
-          headers: {
-            Accept: "application/json",
-            "User-Agent": "mopsfin-mcp/0.3.0 (+https://mopsfin.twse.com.tw/)",
-          },
-        });
-        const body = await response.text();
-        if (response.ok) {
-          try {
-            return JSON.parse(body) as unknown;
-          } catch (error) {
-            throw new MopsfinError(
-              "UPSTREAM_BAD_RESPONSE",
-              `${config.exchange} 公司基本資料不是有效 JSON。`,
-              { cause: error },
-            );
-          }
-        }
-
-        lastError = new MopsfinError(
-          response.status === 429
-            ? "UPSTREAM_RATE_LIMITED"
-            : "UPSTREAM_BAD_RESPONSE",
-          `${config.exchange} 公司基本資料回傳 HTTP ${response.status}。`,
-          { status: response.status },
-        );
-        if (response.status !== 429 && response.status < 500) throw lastError;
-      } catch (error) {
-        if (error instanceof MopsfinError) {
-          lastError = error;
-          if (
-            error.code === "UPSTREAM_BAD_RESPONSE" &&
-            error.status !== undefined &&
-            error.status < 500
-          ) {
-            throw error;
-          }
-          if (
-            error.code === "UPSTREAM_BAD_RESPONSE" &&
-            error.status === undefined
-          ) {
-            throw error;
-          }
-        } else if (error instanceof DOMException && error.name === "AbortError") {
-          lastError = new MopsfinError(
-            "UPSTREAM_TIMEOUT",
-            `${config.exchange} 公司基本資料查詢逾時。`,
-            { cause: error },
-          );
-        } else {
-          lastError = new MopsfinError(
-            "UPSTREAM_BAD_RESPONSE",
-            `${config.exchange} 公司基本資料網路查詢失敗。`,
-            { cause: error },
-          );
-        }
-      } finally {
-        clearTimeout(timeout);
-      }
-
-      if (attempt + 1 < this.maxAttempts) await delay(this.retryDelayMs);
-    }
-
-    throw (
-      lastError ??
-      new MopsfinError(
-        "UPSTREAM_BAD_RESPONSE",
-        `${config.exchange} 公司基本資料查詢失敗。`,
-      )
-    );
+    return (await this.loader.get(config)).payload;
   }
 }
 

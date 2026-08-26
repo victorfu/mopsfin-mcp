@@ -3,6 +3,13 @@ import { load } from "cheerio";
 import { CATALOG_TTL_MS } from "./constants";
 import { MopsfinError } from "./errors";
 import { MopsfinHttpClient } from "./http";
+import {
+  createSharedUpstreamFlight,
+  getCurrentDeadline,
+  UpstreamReliabilityError,
+  type AbsoluteDeadline,
+  type SharedUpstreamFlight,
+} from "@/lib/upstream/reliability";
 import type {
   Catalog,
   EndpointFamily,
@@ -10,6 +17,8 @@ import type {
   IndustryDefinition,
   MetricDefinition,
 } from "./types";
+
+const CATALOG_FLIGHT_DEADLINE_MS = 50_000;
 
 function inferFamily(classes: string[]): EndpointFamily {
   if (classes.includes("qaClass")) return "bcode";
@@ -125,30 +134,66 @@ export function parseCatalogHtml(html: string, now = new Date()): Catalog {
 
 export class CatalogService {
   private cached?: { expiresAt: number; value: Catalog };
-  private pending?: Promise<Catalog>;
+  private pending?: SharedUpstreamFlight<Catalog>;
 
   constructor(private readonly http: MopsfinHttpClient) {}
 
   async getCatalog(force = false): Promise<Catalog> {
     const now = Date.now();
+    const callerDeadline = getCurrentDeadline();
     if (!force && this.cached && this.cached.expiresAt > now) {
       return this.cached.value;
     }
-    if (!force && this.pending) {
-      return this.pending;
+    if (this.pending) {
+      return this.waitForCatalog(this.pending, callerDeadline);
     }
 
-    this.pending = this.http
-      .get("/")
-      .then(({ body }) => parseCatalogHtml(body))
-      .then((catalog) => {
+    const request = createSharedUpstreamFlight(
+      CATALOG_FLIGHT_DEADLINE_MS,
+      async () => {
+        const { body } = await this.http.get("/");
+        const catalog = parseCatalogHtml(body);
         this.cached = { value: catalog, expiresAt: Date.now() + CATALOG_TTL_MS };
         return catalog;
-      })
-      .finally(() => {
-        this.pending = undefined;
-      });
+      },
+    );
+    this.pending = request;
+    const clearRequest = () => {
+      if (this.pending === request) this.pending = undefined;
+    };
+    void request.promise.then(clearRequest, clearRequest);
 
-    return this.pending;
+    return this.waitForCatalog(request, callerDeadline);
+  }
+
+  private async waitForCatalog(
+    request: SharedUpstreamFlight<Catalog>,
+    deadline: AbsoluteDeadline | undefined,
+  ): Promise<Catalog> {
+    try {
+      return await request.wait(deadline);
+    } catch (error) {
+      if (error instanceof UpstreamReliabilityError) {
+        const deadlineExceeded =
+          error.code === "DEADLINE_EXCEEDED" ||
+          (error.cause instanceof UpstreamReliabilityError &&
+            error.cause.code === "DEADLINE_EXCEEDED");
+        throw new MopsfinError(
+          "UPSTREAM_TIMEOUT",
+          deadlineExceeded
+            ? "Mopsfin 目錄查詢超過本次工作的總時間上限。"
+            : "Mopsfin 目錄查詢已取消。",
+          {
+            cause: error,
+            reason: deadlineExceeded
+              ? "UPSTREAM_DEADLINE_EXCEEDED"
+              : "UPSTREAM_OPERATION_ABORTED",
+            retryable: true,
+            action: "retry",
+          },
+        );
+      }
+      throw error;
+    }
   }
 }

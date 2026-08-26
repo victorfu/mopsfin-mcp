@@ -55,6 +55,11 @@ function master(companies: MasterCompany[]) {
       query: { market: "all", includeFinancial: true, includeKy: true },
       generatedAt: "2026-08-25T00:00:00.000Z",
       snapshotId: "test",
+      coverageVerification: {
+        status: "heuristic",
+        method: "required_sources_schema_single_report_date_minimum_count",
+        officialDeclaredRowCountAvailable: false,
+      },
       coverageComplete: true,
       sources: [],
       counts: {
@@ -281,6 +286,167 @@ describe("PriceClient getStockOhlc", () => {
       tradeCount: 100,
       change: 35,
       qualityStatus: "complete",
+    });
+  });
+
+  it.each([
+    {
+      label: "TWSE title month",
+      market: "listed" as const,
+      code: "2330",
+      name: "台積電",
+      payload: twseMonth(
+        "2330",
+        "台積電",
+        [
+          [
+            "115/01/02",
+            "1,000",
+            "1,000,000",
+            "100",
+            "101",
+            "99",
+            "100",
+            "+1",
+            "10",
+            "",
+          ],
+        ],
+        "115年02月",
+      ),
+    },
+    {
+      label: "TPEx payload date",
+      market: "otc" as const,
+      code: "3105",
+      name: "穩懋",
+      payload: tpexMonth("3105", "穩懋", [], "20260201"),
+    },
+  ])("rejects a wrong requested-month snapshot identity from $label", async ({
+    market,
+    code,
+    name,
+    payload,
+  }) => {
+    const client = new PriceClient(
+      vi.fn().mockResolvedValue(response(payload)) as typeof fetch,
+      now,
+      master([company(code, name, market, "1994-09-05")]),
+      { retryDelayMs: 0, maxAttempts: 1 },
+    );
+
+    await expect(
+      client.getStockOhlc({
+        companyCode: code,
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+      }),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "SOURCE_SNAPSHOT_MISMATCH",
+      category: "upstream",
+      retryable: false,
+      action: "none",
+      details: {
+        companyCode: code,
+        requestedMonth: "2026-01",
+        sourceUrl: expect.stringContaining("date="),
+      },
+    });
+  });
+
+  it("evicts a mismatched month snapshot so an explicit retry can recover", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        response(tpexMonth("3105", "穩懋", [], "20260201")),
+      )
+      .mockResolvedValueOnce(
+        response(
+          tpexMonth(
+            "3105",
+            "穩懋",
+            [
+              [
+                "115/01/02",
+                "10",
+                "3,550",
+                "370.50",
+                "372.50",
+                "355.00",
+                "355.00",
+                "-18.00",
+                "300",
+              ],
+            ],
+            "20260101",
+          ),
+        ),
+      );
+    const client = new PriceClient(
+      fetchMock as typeof fetch,
+      now,
+      master([company("3105", "穩懋", "otc", "1994-09-05")]),
+      { retryDelayMs: 0, maxAttempts: 1 },
+    );
+    const query = {
+      companyCode: "3105",
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+    };
+
+    await expect(client.getStockOhlc(query)).rejects.toMatchObject({
+      reason: "SOURCE_SNAPSHOT_MISMATCH",
+    });
+    await expect(client.getStockOhlc(query)).resolves.toMatchObject({
+      bars: [expect.objectContaining({ date: "2026-01-02", close: 355 })],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a row outside the requested month even when source headers match", async () => {
+    const client = new PriceClient(
+      vi.fn().mockResolvedValue(
+        response(
+          twseMonth(
+            "2330",
+            "台積電",
+            [
+              [
+                "115/02/02",
+                "1,000",
+                "1,000,000",
+                "100",
+                "101",
+                "99",
+                "100",
+                "+1",
+                "10",
+                "",
+              ],
+            ],
+            "115年01月",
+          ),
+        ),
+      ) as typeof fetch,
+      now,
+      master([company("2330", "台積電", "listed", "1994-09-05")]),
+      { retryDelayMs: 0, maxAttempts: 1 },
+    );
+
+    await expect(
+      client.getStockOhlc({
+        companyCode: "2330",
+        startDate: "2026-01-01",
+        endDate: "2026-01-31",
+      }),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "SOURCE_SNAPSHOT_MISMATCH",
+      details: {
+        requestedMonth: "2026-01",
+        rowDate: "2026-02-02",
+      },
     });
   });
 
@@ -522,6 +688,62 @@ describe("PriceClient getStockOhlc", () => {
       market: "listed",
       close: 2.33,
     });
+  });
+
+  it("does not break a cross-market probe when an official empty response has no month identity", async () => {
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.hostname === "www.twse.com.tw") {
+        return response({ stat: "很抱歉，沒有符合條件的資料!" });
+      }
+      return response(
+        tpexMonth(
+          "5301",
+          "寶得利",
+          [
+            [
+              "104/01/05",
+              "10",
+              "500",
+              "50",
+              "51",
+              "49",
+              "50",
+              "+1",
+              "20",
+            ],
+          ],
+          "20150101",
+        ),
+      );
+    });
+    const client = new PriceClient(fetchMock as typeof fetch, now, master([]), {
+      retryDelayMs: 0,
+    });
+
+    const result = await client.getStockOhlc({
+      companyCode: "5301",
+      startDate: "2015-01-01",
+      endDate: "2015-01-31",
+    });
+
+    expect(result.bars).toEqual([
+      expect.objectContaining({ date: "2015-01-05", market: "otc" }),
+    ]);
+    const listedSource = result.sources.find(
+      (source) => source.market === "listed",
+    );
+    expect(listedSource?.snapshotIdentity).toBe("unverified_empty");
+    expect(listedSource).not.toHaveProperty("dataMonth");
+    expect(
+      result.sources.find((source) => source.market === "otc"),
+    ).toMatchObject({
+      snapshotIdentity: "verified",
+      dataMonth: "2015-01",
+    });
+    expect(result.warnings.join(" ")).toContain(
+      "requested-month snapshot identity",
+    );
   });
 
   it("preserves official no-trade dates as null OHLC instead of zero", async () => {

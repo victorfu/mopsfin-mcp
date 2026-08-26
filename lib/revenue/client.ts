@@ -21,6 +21,24 @@ import type {
   OfficialMarketClientOptions,
 } from "@/lib/market-data/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import {
+  AbsoluteDeadline,
+  assertRowCount,
+  BoundedSemaphore,
+  BoundedTtlLru,
+  createSharedUpstreamFlight,
+  createAttemptAbortScope,
+  delayWithinDeadline,
+  globalUpstreamSemaphore,
+  parseRetryAfterMs,
+  readResponseTextWithLimit,
+  recordUpstreamReliabilityEvent,
+  retryDelayMs,
+  UpstreamReliabilityError,
+  waitForPromiseWithinDeadline,
+  type AttemptAbortScope,
+  type SharedUpstreamFlight,
+} from "@/lib/upstream/reliability";
 
 import { parseRevenueCsv, RevenueCsvParseError } from "./csv";
 
@@ -62,6 +80,16 @@ interface RevenueCsvSourceConfig extends OfficialSourceConfig {
 interface LoadedRevenueSources {
   sourceResults: ParsedRevenueSource[];
   warnings: string[];
+}
+
+interface RevenueReliabilityOptions {
+  deadlineMs?: number;
+  maxResponseBytes?: number;
+  maxJsonArrayLength?: number;
+  maxCsvRows?: number;
+  cacheMaxEntries?: number;
+  cacheMaxBytes?: number;
+  semaphore?: BoundedSemaphore;
 }
 
 const OPENAPI_SOURCE_CONFIGS: Record<CompanyMarket, OfficialSourceConfig> = {
@@ -122,10 +150,6 @@ const NUMERIC_ROW_FIELDS = [
   "previousYearCumulativeRevenueTwd",
   "cumulativeYoyPercent",
 ] as const satisfies ReadonlyArray<keyof MonthlyRevenueRow>;
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 function validateUniversePolicy(universePolicy: unknown): asserts universePolicy is MonthlyRevenueQuery["universePolicy"] {
   if (universePolicy !== "compatible" && universePolicy !== "strict_current_master") {
@@ -420,78 +444,137 @@ class OfficialRevenueCsvLoader {
   private readonly retryDelayMs: number;
   private readonly maxAttempts: number;
   private readonly cacheTtlMs: number;
-  private readonly cache = new Map<
-    string,
-    { expiresAt: number; value: CsvSnapshot }
-  >();
-  private readonly pending = new Map<string, Promise<CsvSnapshot>>();
+  private readonly deadlineMs: number;
+  private readonly maxResponseBytes: number;
+  private readonly maxRows: number;
+  private readonly semaphore: BoundedSemaphore;
+  private readonly cache: BoundedTtlLru<string, CsvSnapshot>;
+  private readonly pending = new Map<string, SharedUpstreamFlight<CsvSnapshot>>();
 
   constructor(
     private readonly fetchImpl: typeof fetch,
     private readonly now: () => Date,
-    options: OfficialMarketClientOptions,
+    options: OfficialMarketClientOptions & RevenueReliabilityOptions,
   ) {
     this.timeoutMs = options.timeoutMs ?? 20_000;
     this.retryDelayMs = options.retryDelayMs ?? 250;
-    this.maxAttempts = options.maxAttempts ?? 2;
+    this.maxAttempts = Math.max(1, options.maxAttempts ?? 2);
     this.cacheTtlMs = options.cacheTtlMs ?? 5 * 60 * 1000;
+    this.deadlineMs = options.deadlineMs ?? 50_000;
+    this.maxResponseBytes = options.maxResponseBytes ?? 8 * 1024 * 1024;
+    this.maxRows = options.maxCsvRows ?? 10_000;
+    this.semaphore = options.semaphore ?? globalUpstreamSemaphore;
+    this.cache = new BoundedTtlLru(
+      options.cacheMaxEntries ?? 64,
+      options.cacheMaxBytes ?? 32 * 1024 * 1024,
+    );
   }
 
-  async get(config: RevenueCsvSourceConfig): Promise<CsvSnapshot> {
+  async get(
+    config: RevenueCsvSourceConfig,
+    operationDeadline?: AbsoluteDeadline,
+  ): Promise<CsvSnapshot> {
+    const deadline = operationDeadline ?? new AbsoluteDeadline(this.deadlineMs);
+    const ownsDeadline = operationDeadline === undefined;
     const now = this.now().getTime();
-    const cached = this.cache.get(config.sourceUrl);
-    if (cached && cached.expiresAt > now) return cached.value;
-    const inFlight = this.pending.get(config.sourceUrl);
-    if (inFlight) return inFlight;
-
-    const request = this.requestCsv(config)
-      .then((snapshot) => {
-        this.cache.set(config.sourceUrl, {
-          expiresAt: this.now().getTime() + this.cacheTtlMs,
-          value: snapshot,
-        });
-        return snapshot;
-      })
-      .finally(() => this.pending.delete(config.sourceUrl));
-    this.pending.set(config.sourceUrl, request);
-    return request;
+    try {
+      deadline.throwIfExpired();
+      const cached = this.cache.get(config.sourceUrl, now);
+      if (cached) return cached;
+      let flight = this.pending.get(config.sourceUrl);
+      if (!flight) {
+        flight = createSharedUpstreamFlight(
+          this.deadlineMs,
+          async (sharedDeadline) => {
+            const { snapshot, byteLength } = await this.requestCsv(
+              config,
+              sharedDeadline,
+            );
+            this.cache.set(config.sourceUrl, snapshot, {
+              ttlMs: this.cacheTtlMs,
+              weight: byteLength,
+              nowMs: this.now().getTime(),
+            });
+            return snapshot;
+          },
+        );
+        this.pending.set(config.sourceUrl, flight);
+        const currentFlight = flight;
+        const clearFlight = () => {
+          if (this.pending.get(config.sourceUrl) === currentFlight) {
+            this.pending.delete(config.sourceUrl);
+          }
+        };
+        void flight.promise.then(clearFlight, clearFlight);
+      }
+      return await flight.wait(deadline);
+    } catch (error) {
+      if (error instanceof UpstreamReliabilityError) {
+        throw this.timeoutError(config, error);
+      }
+      throw error;
+    } finally {
+      if (ownsDeadline) deadline.dispose();
+    }
   }
 
-  private async requestCsv(config: RevenueCsvSourceConfig): Promise<CsvSnapshot> {
+  private async requestCsv(
+    config: RevenueCsvSourceConfig,
+    deadline: AbsoluteDeadline,
+  ): Promise<{ snapshot: CsvSnapshot; byteLength: number }> {
     let lastError: MopsfinError | undefined;
 
     for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      let scope: AttemptAbortScope | undefined;
+      let release: (() => void) | undefined;
+      let upstreamRetryAfterMs: number | null = null;
       try {
+        scope = createAttemptAbortScope(deadline, this.timeoutMs);
+        release = await this.semaphore.acquire(scope.signal);
         const response = await this.fetchImpl(config.sourceUrl, {
           method: "GET",
           cache: "no-store",
           redirect: "error",
-          signal: controller.signal,
+          signal: scope.signal,
           headers: {
             Accept: "text/csv,text/plain;q=0.9,*/*;q=0.1",
-            "User-Agent": "mopsfin-mcp/0.3.0 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": "mopsfin-mcp/0.3.1 (+https://mopsfin.twse.com.tw/)",
           },
         });
-        const body = await response.text();
+        const body = await readResponseTextWithLimit(
+          response,
+          this.maxResponseBytes,
+        );
+        upstreamRetryAfterMs = parseRetryAfterMs(
+          response.headers.get("retry-after"),
+        );
         if (response.ok) {
           try {
+            const payload = parseRevenueCsv(body.text);
+            assertRowCount(payload.length, this.maxRows, "Revenue CSV");
             return {
-              payload: parseRevenueCsv(body),
-              retrievedAt: this.now().toISOString(),
+              snapshot: {
+                payload,
+                retrievedAt: this.now().toISOString(),
+              },
+              byteLength: body.byteLength,
             };
           } catch (error) {
+            if (error instanceof UpstreamReliabilityError) throw error;
             lastError = new MopsfinError(
               "UPSTREAM_BAD_RESPONSE",
               `${config.exchange} ${config.sourceName}不是有效 RFC 4180 CSV。`,
               {
                 cause: error,
                 details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+                reason: "UPSTREAM_INVALID_CSV",
+                retryable: true,
+                action: "retry",
               },
             );
           }
         } else {
+          const transient = response.status === 429 || response.status >= 500;
           lastError = new MopsfinError(
             response.status === 429
               ? "UPSTREAM_RATE_LIMITED"
@@ -502,6 +585,17 @@ class OfficialRevenueCsvLoader {
             {
               status: response.status,
               details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+              reason:
+                response.status === 429
+                  ? "UPSTREAM_HTTP_429"
+                  : response.status >= 500
+                    ? "UPSTREAM_HTTP_5XX"
+                    : response.status === 404
+                      ? "UPSTREAM_HTTP_404"
+                      : "UPSTREAM_HTTP_4XX",
+              retryable: transient,
+              retryAfterMs: upstreamRetryAfterMs ?? undefined,
+              action: transient ? "retry" : "none",
             },
           );
           if (response.status !== 429 && response.status < 500) throw lastError;
@@ -516,15 +610,40 @@ class OfficialRevenueCsvLoader {
           ) {
             throw error;
           }
-        } else if (controller.signal.aborted) {
-          lastError = new MopsfinError(
-            "UPSTREAM_TIMEOUT",
-            `${config.exchange} ${config.sourceName}查詢逾時。`,
-            {
-              cause: error,
-              details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
-            },
-          );
+        } else if (error instanceof UpstreamReliabilityError) {
+          if (error.code === "BACKPRESSURE") {
+            throw new MopsfinError(
+              "UPSTREAM_RATE_LIMITED",
+              "服務目前有過多上游工作，請稍後再試。",
+              {
+                cause: error,
+                details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+                reason: "UPSTREAM_BACKPRESSURE",
+                retryable: true,
+                retryAfterMs: error.retryAfterMs,
+                action: "retry",
+              },
+            );
+          }
+          if (
+            error.code === "RESPONSE_TOO_LARGE" ||
+            error.code === "ROW_LIMIT_EXCEEDED"
+          ) {
+            throw new MopsfinError(
+              "UPSTREAM_BAD_RESPONSE",
+              `${config.exchange} ${config.sourceName}回應超過服務安全處理上限。`,
+              {
+                cause: error,
+                details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+                reason: "UPSTREAM_RESPONSE_LIMIT_EXCEEDED",
+                retryable: false,
+                action: "none",
+              },
+            );
+          }
+          lastError = this.timeoutError(config, error, scope);
+        } else if (scope?.signal.aborted) {
+          lastError = this.timeoutError(config, error, scope);
         } else {
           lastError = new MopsfinError(
             "UPSTREAM_BAD_RESPONSE",
@@ -532,13 +651,31 @@ class OfficialRevenueCsvLoader {
             {
               cause: error,
               details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+              reason: "UPSTREAM_NETWORK_ERROR",
+              retryable: true,
+              action: "retry",
             },
           );
         }
       } finally {
-        clearTimeout(timeout);
+        release?.();
+        scope?.cleanup();
       }
-      if (attempt + 1 < this.maxAttempts) await delay(this.retryDelayMs);
+      if (attempt + 1 < this.maxAttempts) {
+        recordUpstreamReliabilityEvent("retryScheduled");
+        try {
+          await delayWithinDeadline(
+            retryDelayMs({
+              attempt,
+              baseDelayMs: this.retryDelayMs,
+              retryAfterMs: lastError?.retryAfterMs ?? upstreamRetryAfterMs,
+            }),
+            deadline,
+          );
+        } catch (error) {
+          throw this.timeoutError(config, error);
+        }
+      }
     }
 
     throw (
@@ -549,12 +686,59 @@ class OfficialRevenueCsvLoader {
       )
     );
   }
+
+  private timeoutError(
+    config: RevenueCsvSourceConfig,
+    cause: unknown,
+    scope?: AttemptAbortScope,
+  ): MopsfinError {
+    const deadlineExceeded =
+      scope?.abortKind() === "deadline" ||
+      (cause instanceof UpstreamReliabilityError &&
+        cause.code === "DEADLINE_EXCEEDED");
+    return new MopsfinError(
+      "UPSTREAM_TIMEOUT",
+      deadlineExceeded
+        ? `${config.exchange} ${config.sourceName}超過本次工作的總時間上限。`
+        : `${config.exchange} ${config.sourceName}查詢逾時。`,
+      {
+        cause,
+        details: { sourceUrl: config.sourceUrl, dataMonth: config.dataMonth },
+        reason: deadlineExceeded
+          ? "UPSTREAM_DEADLINE_EXCEEDED"
+          : "UPSTREAM_ATTEMPT_TIMEOUT",
+        retryable: true,
+        action: "retry",
+      },
+    );
+  }
 }
 
 function sourceErrorLabel(error: unknown): string {
   if (error instanceof MopsfinError) return error.code;
   if (error instanceof RevenueCsvParseError) return error.name;
   return "UNKNOWN_ERROR";
+}
+
+function throwRevenueOperationError(error: unknown): never {
+  if (error instanceof UpstreamReliabilityError) {
+    const deadlineExceeded = error.code === "DEADLINE_EXCEEDED";
+    throw new MopsfinError(
+      "UPSTREAM_TIMEOUT",
+      deadlineExceeded
+        ? "月營收查詢超過本次工作的總時間上限。"
+        : "月營收查詢已取消。",
+      {
+        cause: error,
+        reason: deadlineExceeded
+          ? "UPSTREAM_DEADLINE_EXCEEDED"
+          : "UPSTREAM_OPERATION_ABORTED",
+        retryable: true,
+        action: "retry",
+      },
+    );
+  }
+  throw error;
 }
 
 function reconcileSameMonthSources(
@@ -573,26 +757,50 @@ function reconcileSameMonthSources(
 
   const openapiByCode = new Map(openapi.rows.map((row) => [row.code, row]));
   const archiveByCode = new Map(archive.rows.map((row) => [row.code, row]));
+  const numericConflicts: Array<{
+    companyCode: string;
+    conflictingFields: string[];
+  }> = [];
+  let overlappingRows = 0;
   for (const [code, openapiRow] of openapiByCode) {
     const archiveRow = archiveByCode.get(code);
     if (!archiveRow) continue;
+    overlappingRows += 1;
     const conflictingFields = NUMERIC_ROW_FIELDS.filter(
       (field) => openapiRow[field] !== archiveRow[field],
     );
     if (conflictingFields.length > 0) {
-      fail(
-        "UPSTREAM_BAD_RESPONSE",
-        "OpenAPI 與 archive 的同月同公司營收數值不一致。",
-        {
-          market: openapi.market,
-          dataMonth: openapi.dataMonth,
-          companyCode: code,
-          conflictingFields,
-          openapiUrl: openapi.source.sourceUrl,
-          archiveUrl: archive.source.sourceUrl,
-        },
-      );
+      numericConflicts.push({ companyCode: code, conflictingFields });
     }
+  }
+
+  const sameReportDate =
+    openapi.sourceReportDate === archive.sourceReportDate;
+  const maximumRevisionConflicts = Math.max(
+    5,
+    Math.ceil(overlappingRows * 0.02),
+  );
+  const systemicConflict =
+    numericConflicts.length > maximumRevisionConflicts;
+  if (numericConflicts.length > 0 && (sameReportDate || systemicConflict)) {
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      sameReportDate
+        ? "OpenAPI 與 archive 的同月、同出表日期公司營收數值不一致。"
+        : "OpenAPI 與 archive 的同月營收出現大範圍數值不一致。",
+      {
+        market: openapi.market,
+        dataMonth: openapi.dataMonth,
+        openapiReportDate: openapi.sourceReportDate,
+        archiveReportDate: archive.sourceReportDate,
+        overlappingRows,
+        conflictingCompanyCount: numericConflicts.length,
+        maximumRevisionConflicts,
+        conflicts: numericConflicts.slice(0, 20),
+        openapiUrl: openapi.source.sourceUrl,
+        archiveUrl: archive.source.sourceUrl,
+      },
+    );
   }
 
   const openapiCodes = [...openapiByCode.keys()].sort();
@@ -602,13 +810,27 @@ function reconcileSameMonthSources(
     openapiCodes.some((code, index) => archiveCodes[index] !== code);
   const selected =
     archive.sourceReportDate >= openapi.sourceReportDate ? archive : openapi;
+  const warnings: string[] = [];
+  if (numericConflicts.length > 0) {
+    const conflictExamples = numericConflicts
+      .slice(0, 10)
+      .map(
+        (conflict) =>
+          `${conflict.companyCode}[${conflict.conflictingFields.join(",")}]`,
+      )
+      .join("、");
+    warnings.push(
+      `${openapi.market} ${openapi.dataMonth} 的 OpenAPI（${openapi.sourceReportDate}）與 archive（${archive.sourceReportDate}）有 ${numericConflicts.length} 家重疊公司數值不同（例：${conflictExamples}）；視為不同出表日期間的官方修訂，並採用較新的 ${selected.sourceKind} 快照。`,
+    );
+  }
+  if (rowsetDiffers) {
+    warnings.push(
+      `${openapi.market} ${openapi.dataMonth} 的 OpenAPI 與 archive 公司列集合不同；重疊列已完成跨來源比對，並採用出表日期較新的 ${selected.sourceKind} 快照。`,
+    );
+  }
   return {
     selected,
-    warnings: rowsetDiffers
-      ? [
-          `${openapi.market} ${openapi.dataMonth} 的 OpenAPI 與 archive 公司列集合不同；數值重疊列已核對，並採用出表日期較新的 ${selected.sourceKind} 快照。`,
-        ]
-      : [],
+    warnings,
   };
 }
 
@@ -616,16 +838,25 @@ async function mapWithConcurrency<T, U>(
   values: T[],
   concurrency: number,
   mapper: (value: T, index: number) => Promise<U>,
+  deadline?: AbsoluteDeadline,
 ): Promise<U[]> {
   const output = new Array<U>(values.length);
   let nextIndex = 0;
+  let stopped = false;
   const workers = Array.from(
     { length: Math.min(concurrency, values.length) },
     async () => {
-      while (nextIndex < values.length) {
+      while (!stopped && nextIndex < values.length) {
+        deadline?.throwIfExpired();
         const index = nextIndex;
         nextIndex += 1;
-        output[index] = await mapper(values[index], index);
+        try {
+          output[index] = await mapper(values[index], index);
+        } catch (error) {
+          stopped = true;
+          deadline?.abort(error);
+          throw error;
+        }
       }
     },
   );
@@ -844,18 +1075,34 @@ function normalizeTrendCompanyCodes(companyCodes: unknown): string[] {
 export class MonthlyRevenueClient {
   private readonly loader: OfficialJsonLoader;
   private readonly archiveLoader: OfficialRevenueCsvLoader;
+  private readonly deadlineMs: number;
 
   constructor(
     fetchImpl: typeof fetch = fetch,
     private readonly now: () => Date = () => new Date(),
     private readonly companyMaster: CurrentCompanyMasterLike = companyMasterClient,
-    options: OfficialMarketClientOptions = {},
+    options: OfficialMarketClientOptions & RevenueReliabilityOptions = {},
   ) {
+    this.deadlineMs = options.deadlineMs ?? 50_000;
     this.loader = new OfficialJsonLoader(fetchImpl, now, options);
     this.archiveLoader = new OfficialRevenueCsvLoader(fetchImpl, now, options);
   }
 
   async getMonthlyRevenue(query: MonthlyRevenueQuery): Promise<MonthlyRevenueResult> {
+    const deadline = new AbsoluteDeadline(this.deadlineMs);
+    try {
+      return await this.getMonthlyRevenueWithinDeadline(query, deadline);
+    } catch (error) {
+      throwRevenueOperationError(error);
+    } finally {
+      deadline.dispose();
+    }
+  }
+
+  private async getMonthlyRevenueWithinDeadline(
+    query: MonthlyRevenueQuery,
+    deadline: AbsoluteDeadline,
+  ): Promise<MonthlyRevenueResult> {
     validateUniversePolicy(query.universePolicy);
     const isLatest = query.dataMonth === "latest";
     const explicitMonth = isLatest
@@ -878,13 +1125,16 @@ export class MonthlyRevenueClient {
 
     const [loaded, master] = await Promise.all([
       isLatest
-        ? this.loadLatestSources(markets)
-        : this.loadArchiveSources(markets, explicitMonth as string),
-      this.companyMaster.listCompanies({
-        market: query.market,
-        includeFinancial: true,
-        includeKy: true,
-      }),
+        ? this.loadLatestSources(markets, deadline)
+        : this.loadArchiveSources(markets, explicitMonth as string, deadline),
+      waitForPromiseWithinDeadline(
+        this.companyMaster.listCompanies({
+          market: query.market,
+          includeFinancial: true,
+          includeKy: true,
+        }),
+        deadline,
+      ),
     ]);
     const sourceResults = loaded.sourceResults;
 
@@ -1057,6 +1307,20 @@ export class MonthlyRevenueClient {
   async getMonthlyRevenueTrend(
     query: MonthlyRevenueTrendQuery,
   ): Promise<MonthlyRevenueTrendResult> {
+    const deadline = new AbsoluteDeadline(this.deadlineMs);
+    try {
+      return await this.getMonthlyRevenueTrendWithinDeadline(query, deadline);
+    } catch (error) {
+      throwRevenueOperationError(error);
+    } finally {
+      deadline.dispose();
+    }
+  }
+
+  private async getMonthlyRevenueTrendWithinDeadline(
+    query: MonthlyRevenueTrendQuery,
+    deadline: AbsoluteDeadline,
+  ): Promise<MonthlyRevenueTrendResult> {
     validateUniversePolicy(query.universePolicy);
     if (query.universePolicy !== "compatible") {
       fail(
@@ -1079,7 +1343,7 @@ export class MonthlyRevenueClient {
     let endMonth: string;
     let latest: LoadedRevenueSources | null = null;
     if (query.endMonth === "latest") {
-      latest = await this.loadLatestSources(markets);
+      latest = await this.loadLatestSources(markets, deadline);
       endMonth = latest.sourceResults[0].dataMonth;
     } else {
       endMonth = parseYearMonth(query.endMonth, "end_month");
@@ -1091,11 +1355,14 @@ export class MonthlyRevenueClient {
         requestedStartMonth: months[0],
       });
     }
-    const masterPromise = this.companyMaster.listCompanies({
-      market: query.market,
-      includeFinancial: true,
-      includeKy: true,
-    });
+    const masterPromise = waitForPromiseWithinDeadline(
+      this.companyMaster.listCompanies({
+        market: query.market,
+        includeFinancial: true,
+        includeKy: true,
+      }),
+      deadline,
+    );
 
     const historicalMonths = latest
       ? months.filter((month) => month !== endMonth)
@@ -1104,7 +1371,8 @@ export class MonthlyRevenueClient {
       mapWithConcurrency(
         historicalMonths,
         TREND_CONCURRENCY,
-        (month) => this.loadArchiveSources(markets, month),
+        (month) => this.loadArchiveSources(markets, month, deadline),
+        deadline,
       ),
       masterPromise,
     ]);
@@ -1272,29 +1540,37 @@ export class MonthlyRevenueClient {
   private async loadArchiveSource(
     market: CompanyMarket,
     dataMonth: string,
+    deadline: AbsoluteDeadline,
   ): Promise<ParsedRevenueSource> {
     const config = archiveConfig(market, dataMonth);
-    return normalizeMonthlyRevenueCsv(await this.archiveLoader.get(config), config);
+    return normalizeMonthlyRevenueCsv(
+      await this.archiveLoader.get(config, deadline),
+      config,
+    );
   }
 
   private async loadArchiveSources(
     markets: CompanyMarket[],
     dataMonth: string,
+    deadline: AbsoluteDeadline,
   ): Promise<LoadedRevenueSources> {
     const sourceResults = await Promise.all(
-      markets.map((market) => this.loadArchiveSource(market, dataMonth)),
+      markets.map((market) =>
+        this.loadArchiveSource(market, dataMonth, deadline),
+      ),
     );
     return { sourceResults, warnings: [] };
   }
 
   private async loadLatestSources(
     markets: CompanyMarket[],
+    deadline: AbsoluteDeadline,
   ): Promise<LoadedRevenueSources> {
     const perMarket = await Promise.all(
       markets.map(async (market) => {
         const config = OPENAPI_SOURCE_CONFIGS[market];
         const openapi = normalizeMonthlyRevenuePayload(
-          await this.loader.get(config),
+          await this.loader.get(config, deadline),
           config,
         );
         const candidateMonths = [
@@ -1309,8 +1585,15 @@ export class MonthlyRevenueClient {
         for (const month of candidateMonths) {
           let archive: ParsedRevenueSource;
           try {
-            archive = await this.loadArchiveSource(market, month);
+            archive = await this.loadArchiveSource(market, month, deadline);
           } catch (error) {
+            if (
+              deadline.signal.aborted ||
+              (error instanceof MopsfinError &&
+                error.reason === "UPSTREAM_DEADLINE_EXCEEDED")
+            ) {
+              throw error;
+            }
             if (month === openapi.dataMonth) {
               warnings.push(
                 `${market} ${month} archive 無法取得（${sourceErrorLabel(error)}），本次保留 OpenAPI fallback。`,

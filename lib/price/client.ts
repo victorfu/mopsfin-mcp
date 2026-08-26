@@ -6,6 +6,11 @@ import type {
   CompanyMasterResult,
   MasterCompany,
 } from "@/lib/company-master/types";
+import {
+  OfficialJsonLoader,
+  type JsonSnapshot,
+  type OfficialJsonLoaderOptions,
+} from "@/lib/market-data/client-utils";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 
 import type {
@@ -20,8 +25,6 @@ import type {
   StockOhlcResult,
 } from "./types";
 
-type FetchLike = typeof fetch;
-
 interface CompanyMasterLike {
   listCompanies(
     query: {
@@ -33,24 +36,18 @@ interface CompanyMasterLike {
   ): Promise<CompanyMasterResult>;
 }
 
-interface PriceClientOptions {
-  timeoutMs?: number;
-  retryDelayMs?: number;
-  maxAttempts?: number;
+interface PriceClientOptions
+  extends Omit<OfficialJsonLoaderOptions, "cacheTtlMs"> {
   currentTtlMs?: number;
   historicalTtlMs?: number;
   monthsPerPage?: number;
   concurrency?: number;
 }
 
-interface JsonSnapshot {
-  payload: unknown;
-  retrievedAt: string;
-}
-
 interface MonthResult {
   market: CompanyMarket;
   source: PriceSource;
+  snapshotIdentity?: "verified" | "unverified_empty";
   observedName?: string;
   bars: OhlcBar[];
 }
@@ -102,6 +99,19 @@ function fail(
   details?: Record<string, unknown>,
 ): never {
   throw new MopsfinError(code, message, { details });
+}
+
+function sourceSnapshotMismatch(
+  message: string,
+  details: Record<string, unknown>,
+): never {
+  throw new MopsfinError("UPSTREAM_BAD_RESPONSE", message, {
+    reason: "SOURCE_SNAPSHOT_MISMATCH",
+    category: "upstream",
+    retryable: false,
+    action: "none",
+    details,
+  });
 }
 
 function cursorInvalid(
@@ -561,32 +571,33 @@ function uniqueSources(results: MonthResult[]): PriceSource[] {
 }
 
 export class PriceClient {
-  private readonly timeoutMs: number;
-  private readonly retryDelayMs: number;
-  private readonly maxAttempts: number;
   private readonly currentTtlMs: number;
   private readonly historicalTtlMs: number;
   private readonly monthsPerPage: number;
   private readonly concurrency: number;
-  private readonly cache = new Map<
-    string,
-    { expiresAt: number; value: JsonSnapshot }
-  >();
-  private readonly pending = new Map<string, Promise<JsonSnapshot>>();
+  private readonly currentLoader: OfficialJsonLoader;
+  private readonly historicalLoader: OfficialJsonLoader;
 
   constructor(
-    private readonly fetchImpl: FetchLike = fetch,
+    fetchImpl: typeof fetch = fetch,
     private readonly now: () => Date = () => new Date(),
     private readonly companyMaster: CompanyMasterLike = companyMasterClient,
     options: PriceClientOptions = {},
   ) {
-    this.timeoutMs = options.timeoutMs ?? 20_000;
-    this.retryDelayMs = options.retryDelayMs ?? 250;
-    this.maxAttempts = options.maxAttempts ?? 3;
     this.currentTtlMs = options.currentTtlMs ?? 5 * 60 * 1000;
     this.historicalTtlMs = options.historicalTtlMs ?? 24 * 60 * 60 * 1000;
     this.monthsPerPage = options.monthsPerPage ?? 12;
     this.concurrency = options.concurrency ?? 2;
+    this.currentLoader = new OfficialJsonLoader(fetchImpl, now, {
+      ...options,
+      maxAttempts: options.maxAttempts ?? 3,
+      cacheTtlMs: this.currentTtlMs,
+    });
+    this.historicalLoader = new OfficialJsonLoader(fetchImpl, now, {
+      ...options,
+      maxAttempts: options.maxAttempts ?? 3,
+      cacheTtlMs: this.historicalTtlMs,
+    });
   }
 
   async getStockOhlc(query: StockOhlcQuery): Promise<StockOhlcResult> {
@@ -740,6 +751,14 @@ export class PriceClient {
     }
     if (!coverageComplete) {
       warnings.push("本頁尚未涵蓋完整 requested range；請使用 nextCursor 繼續查詢。");
+    }
+    const unverifiedEmptySnapshots = monthResults.filter(
+      (result) => result.snapshotIdentity === "unverified_empty",
+    );
+    if (unverifiedEmptySnapshots.length > 0) {
+      warnings.push(
+        `${unverifiedEmptySnapshots.length} 個官方 no-data response 未提供可核對的 title/date；已保留 attempted source URL 並視為空回應，但 source.dataMonth 省略，不能宣稱該空回應的 requested-month snapshot identity 已驗證。`,
+      );
     }
 
     return {
@@ -1012,7 +1031,7 @@ export class PriceClient {
       "價格為官方原始未還原權值日線，不含 adjusted close；不可直接視為含公司行動調整的報酬率。",
       query.date === "latest"
         ? "latest 代表最近完成交易日，不是盤中即時報價。"
-        : "歷史完整市場以四碼、首碼非 0 且非 -DR 的官方證券列辨識公司股票。",
+        : "歷史官方市場 snapshot 以四碼、首碼非 0 且非 -DR 的證券列辨識公司股票；不可據此推論歷史母體已被獨立驗證。",
     ];
     if (!dataQualityComplete) {
       warnings.push(
@@ -1123,7 +1142,22 @@ export class PriceClient {
         url,
         currentMonth ? this.currentTtlMs : this.historicalTtlMs,
       );
-      return this.parseTwseStockMonth(snapshot, url.toString(), month);
+      try {
+        return this.parseTwseStockMonth(
+          snapshot,
+          url.toString(),
+          month,
+          code,
+        );
+      } catch (error) {
+        if (
+          error instanceof MopsfinError &&
+          error.reason === "SOURCE_SNAPSHOT_MISMATCH"
+        ) {
+          this.invalidateJson(url);
+        }
+        throw error;
+      }
     }
 
     const [year, value] = month.split("-");
@@ -1137,13 +1171,29 @@ export class PriceClient {
       url,
       currentMonth ? this.currentTtlMs : this.historicalTtlMs,
     );
-    return this.parseTpexStockMonth(snapshot, url.toString(), month);
+    try {
+      return this.parseTpexStockMonth(
+        snapshot,
+        url.toString(),
+        month,
+        code,
+      );
+    } catch (error) {
+      if (
+        error instanceof MopsfinError &&
+        error.reason === "SOURCE_SNAPSHOT_MISMATCH"
+      ) {
+        this.invalidateJson(url);
+      }
+      throw error;
+    }
   }
 
   private parseTwseStockMonth(
     snapshot: JsonSnapshot,
     sourceUrl: string,
     dataMonth: string,
+    companyCode: string,
   ): MonthResult {
     const payload = snapshot.payload as Record<string, unknown>;
     const stat = String(payload?.stat ?? "");
@@ -1156,11 +1206,106 @@ export class PriceClient {
       undefined,
       dataMonth,
     );
+    const title = typeof payload.title === "string" ? payload.title : "";
+    const titleMatch = /^\s*(\d{2,3})年\s*(\d{1,2})月\s+(\S+)(?:\s+(.+?)\s+各日成交資訊)?\s*$/.exec(
+      title,
+    );
+    const reportedMonths: string[] = [];
+    if (title) {
+      if (!titleMatch) {
+        sourceSnapshotMismatch("TWSE 個股 OHLC 無法核對 requested month snapshot identity。", {
+          market: "listed",
+          companyCode,
+          requestedMonth: dataMonth,
+          sourceUrl,
+          identityField: "title",
+        });
+      }
+      const titleYear = Number(titleMatch[1]) + 1911;
+      const titleMonth = Number(titleMatch[2]);
+      if (titleMonth < 1 || titleMonth > 12) {
+        sourceSnapshotMismatch("TWSE 個股 OHLC title 月份無效。", {
+          market: "listed",
+          companyCode,
+          requestedMonth: dataMonth,
+          reportedYear: titleYear,
+          reportedMonthNumber: titleMonth,
+          sourceUrl,
+        });
+      }
+      reportedMonths.push(
+        `${String(titleYear).padStart(4, "0")}-${String(titleMonth).padStart(2, "0")}`,
+      );
+      if (titleMatch[3].toLowerCase() !== companyCode.toLowerCase()) {
+        sourceSnapshotMismatch("TWSE 個股 OHLC 回傳公司代號與 requested company 不符。", {
+          market: "listed",
+          companyCode,
+          reportedCompanyCode: titleMatch[3],
+          requestedMonth: dataMonth,
+          sourceUrl,
+        });
+      }
+    }
+    if (payload.date !== undefined && payload.date !== null) {
+      let reportedDate: string;
+      try {
+        reportedDate = parseCompactGregorianDate(payload.date);
+      } catch {
+        sourceSnapshotMismatch("TWSE 個股 OHLC date 無法核對 requested month。", {
+          market: "listed",
+          companyCode,
+          requestedMonth: dataMonth,
+          sourceUrl,
+          identityField: "date",
+        });
+      }
+      reportedMonths.push(monthOf(reportedDate));
+    }
+    if (reportedMonths.some((reportedMonth) => reportedMonth !== dataMonth)) {
+      sourceSnapshotMismatch("TWSE 個股 OHLC 回傳月份與 requested month 不符。", {
+        market: "listed",
+        companyCode,
+        requestedMonth: dataMonth,
+        reportedMonths: [...new Set(reportedMonths)],
+        sourceUrl,
+      });
+    }
     if (stat !== "OK") {
       if (/沒有符合條件/.test(stat)) {
-        return { market: "listed", source: defaultSource, bars: [] };
+        if (reportedMonths.length > 0) {
+          return {
+            market: "listed",
+            source: defaultSource,
+            snapshotIdentity: "verified",
+            bars: [],
+          };
+        }
+        return {
+          market: "listed",
+          source: this.priceSource(
+            "listed",
+            "臺灣證券交易所－個股日成交資訊",
+            sourceUrl,
+            snapshot.retrievedAt,
+            undefined,
+            undefined,
+            undefined,
+            "unverified_empty",
+          ),
+          snapshotIdentity: "unverified_empty",
+          bars: [],
+        };
       }
       fail("UPSTREAM_BAD_RESPONSE", `TWSE 個股 OHLC 回傳異常：${stat || "未知狀態"}`);
+    }
+    if (reportedMonths.length === 0) {
+      sourceSnapshotMismatch("TWSE 個股 OHLC 無法核對 requested month snapshot identity。", {
+        market: "listed",
+        companyCode,
+        requestedMonth: dataMonth,
+        sourceUrl,
+        identityFields: ["title", "date"],
+      });
     }
     const fields = Array.isArray(payload.fields) ? payload.fields : [];
     const data = Array.isArray(payload.data) ? payload.data : [];
@@ -1192,14 +1337,22 @@ export class PriceClient {
       turnover?.normalization ?? TWD_NORMALIZATION,
     );
     const source = { ...defaultSource, normalization };
-    const title = typeof payload.title === "string" ? payload.title : "";
-    const nameMatch = /^\s*\d+年\d+月\s+\S+\s+(.+?)\s+各日成交資訊/.exec(title);
     const bars = data.map((raw) => {
       if (!Array.isArray(raw)) {
         fail("UPSTREAM_BAD_RESPONSE", "TWSE 個股 OHLC 資料列格式錯誤。");
       }
+      const date = parseRocDate(raw[dateIndex]);
+      if (monthOf(date) !== dataMonth) {
+        sourceSnapshotMismatch("TWSE 個股 OHLC 資料列月份與 requested month 不符。", {
+          market: "listed",
+          companyCode,
+          requestedMonth: dataMonth,
+          rowDate: date,
+          sourceUrl,
+        });
+      }
       return normalizeBar(
-        parseRocDate(raw[dateIndex]),
+        date,
         "listed",
         {
           open: raw[openIndex],
@@ -1219,7 +1372,8 @@ export class PriceClient {
     return {
       market: "listed",
       source,
-      observedName: nameMatch?.[1]?.trim(),
+      snapshotIdentity: "verified",
+      observedName: titleMatch?.[4]?.trim(),
       bars,
     };
   }
@@ -1228,6 +1382,7 @@ export class PriceClient {
     snapshot: JsonSnapshot,
     sourceUrl: string,
     dataMonth: string,
+    companyCode: string,
   ): MonthResult {
     const payload = snapshot.payload as Record<string, unknown>;
     const defaultSource = this.priceSource(
@@ -1239,6 +1394,32 @@ export class PriceClient {
       sourceNormalization(LOT_NORMALIZATION, TWD_THOUSAND_NORMALIZATION),
       dataMonth,
     );
+    let reportedDate: string;
+    try {
+      reportedDate = parseCompactGregorianDate(payload?.date);
+    } catch {
+      sourceSnapshotMismatch("TPEx 個股 OHLC date 無法核對 requested month。", {
+        market: "otc",
+        companyCode,
+        requestedMonth: dataMonth,
+        sourceUrl,
+        identityField: "date",
+      });
+    }
+    const reportedCompanyCode = String(payload?.code ?? "").trim();
+    if (
+      monthOf(reportedDate) !== dataMonth ||
+      reportedCompanyCode.toLowerCase() !== companyCode.toLowerCase()
+    ) {
+      sourceSnapshotMismatch("TPEx 個股 OHLC snapshot identity 與 request 不符。", {
+        market: "otc",
+        companyCode,
+        reportedCompanyCode: reportedCompanyCode || null,
+        requestedMonth: dataMonth,
+        reportedMonth: monthOf(reportedDate),
+        sourceUrl,
+      });
+    }
     if (String(payload?.stat ?? "") !== "ok") {
       fail("UPSTREAM_BAD_RESPONSE", "TPEx 個股 OHLC 回傳狀態錯誤。", {
         stat: payload?.stat,
@@ -1282,8 +1463,18 @@ export class PriceClient {
       if (!Array.isArray(raw)) {
         fail("UPSTREAM_BAD_RESPONSE", "TPEx 個股 OHLC 資料列格式錯誤。");
       }
+      const date = parseRocDate(raw[dateIndex]);
+      if (monthOf(date) !== dataMonth) {
+        sourceSnapshotMismatch("TPEx 個股 OHLC 資料列月份與 requested month 不符。", {
+          market: "otc",
+          companyCode,
+          requestedMonth: dataMonth,
+          rowDate: date,
+          sourceUrl,
+        });
+      }
       return normalizeBar(
-        parseRocDate(raw[dateIndex]),
+        date,
         "otc",
         {
           open: raw[openIndex],
@@ -1303,6 +1494,7 @@ export class PriceClient {
     return {
       market: "otc",
       source,
+      snapshotIdentity: "verified",
       observedName: typeof payload.name === "string" ? payload.name.trim() : undefined,
       bars,
     };
@@ -1627,12 +1819,14 @@ export class PriceClient {
     dataDate?: string,
     normalization: PriceSource["normalization"] = sourceNormalization(),
     dataMonth?: string,
+    snapshotIdentity: NonNullable<PriceSource["snapshotIdentity"]> = "verified",
   ): PriceSource {
     return {
       market,
       sourceName,
       sourceUrl,
       retrievedAt,
+      snapshotIdentity,
       ...(dataDate ? { dataDate } : {}),
       ...(dataMonth ? { dataMonth } : {}),
       normalization,
@@ -1640,100 +1834,22 @@ export class PriceClient {
   }
 
   private async getJson(url: URL, ttlMs: number): Promise<JsonSnapshot> {
-    const key = url.toString();
-    const now = this.now().getTime();
-    const cached = this.cache.get(key);
-    if (cached && cached.expiresAt > now) return cached.value;
-    const existing = this.pending.get(key);
-    if (existing) return existing;
-
-    const pending = this.requestJson(url)
-      .then((value) => {
-        this.cache.set(key, { expiresAt: this.now().getTime() + ttlMs, value });
-        return value;
-      })
-      .finally(() => this.pending.delete(key));
-    this.pending.set(key, pending);
-    return pending;
+    const loader =
+      ttlMs === this.currentTtlMs
+        ? this.currentLoader
+        : this.historicalLoader;
+    return loader.get({
+      market: url.hostname.includes("tpex.org.tw") ? "otc" : "listed",
+      exchange: url.hostname.includes("tpex.org.tw") ? "TPEx" : "TWSE",
+      sourceName: "官方 OHLC／行情資料",
+      sourceUrl: url.toString(),
+    });
   }
 
-  private async requestJson(url: URL): Promise<JsonSnapshot> {
-    let lastError: MopsfinError | undefined;
-    for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
-      try {
-        const response = await this.fetchImpl(url, {
-          method: "GET",
-          cache: "no-store",
-          redirect: "error",
-          signal: controller.signal,
-          headers: {
-            Accept: "application/json",
-            Referer: `${url.origin}/`,
-            "User-Agent": "mopsfin-mcp/0.3.0 (+https://mopsfin.twse.com.tw/)",
-          },
-        });
-        const body = await response.text();
-        if (response.ok) {
-          try {
-            return {
-              payload: JSON.parse(body) as unknown,
-              retrievedAt: this.now().toISOString(),
-            };
-          } catch (error) {
-            lastError = new MopsfinError(
-              "UPSTREAM_BAD_RESPONSE",
-              `${url.hostname} OHLC 回應不是有效 JSON。`,
-              { cause: error, details: { preview: body.slice(0, 120) } },
-            );
-          }
-        } else {
-          lastError = new MopsfinError(
-            response.status === 429
-              ? "UPSTREAM_RATE_LIMITED"
-              : "UPSTREAM_BAD_RESPONSE",
-            `${url.hostname} OHLC 回傳 HTTP ${response.status}。`,
-            { status: response.status },
-          );
-          if (response.status !== 429 && response.status < 500) throw lastError;
-        }
-      } catch (error) {
-        if (error instanceof MopsfinError) {
-          lastError = error;
-          if (
-            error.status !== undefined &&
-            error.status < 500 &&
-            error.status !== 429
-          ) {
-            throw error;
-          }
-        } else if (error instanceof DOMException && error.name === "AbortError") {
-          lastError = new MopsfinError(
-            "UPSTREAM_TIMEOUT",
-            `${url.hostname} OHLC 查詢逾時。`,
-            { cause: error },
-          );
-        } else {
-          lastError = new MopsfinError(
-            "UPSTREAM_BAD_RESPONSE",
-            `${url.hostname} OHLC 網路查詢失敗。`,
-            { cause: error },
-          );
-        }
-      } finally {
-        clearTimeout(timeout);
-      }
-      if (attempt + 1 < this.maxAttempts) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, this.retryDelayMs * (attempt + 1)),
-        );
-      }
-    }
-    throw (
-      lastError ??
-      new MopsfinError("UPSTREAM_BAD_RESPONSE", `${url.hostname} OHLC 查詢失敗。`)
-    );
+  private invalidateJson(url: URL): void {
+    const key = url.toString();
+    this.currentLoader.invalidate(key);
+    this.historicalLoader.invalidate(key);
   }
 }
 

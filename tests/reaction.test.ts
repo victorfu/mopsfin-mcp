@@ -84,6 +84,11 @@ function master(companies: MasterCompany[], snapshotId = "reaction-fixture") {
       query: { market: "all", includeFinancial: true, includeKy: true },
       generatedAt: "2026-07-01T00:00:00.000Z",
       snapshotId,
+      coverageVerification: {
+        status: "heuristic",
+        method: "required_sources_schema_single_report_date_minimum_count",
+        officialDeclaredRowCountAvailable: false,
+      },
       coverageComplete: true,
       sources: [],
       counts: {

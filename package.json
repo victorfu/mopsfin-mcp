@@ -1,6 +1,6 @@
 {
   "name": "mopsfin-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "A read-only MCP server for TWSE/TPEx company universes, daily price and volume, valuation, monthly revenue, and Taiwan financial data from Mopsfin.",

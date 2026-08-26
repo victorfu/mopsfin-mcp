@@ -300,7 +300,13 @@ function inferQuality(
 
   return {
     status:
-      source === "partial" || selection === "partial" || values === "partial"
+      source === "partial" ||
+      universe === "compatible" ||
+      universe === "unverified" ||
+      selection === "partial" ||
+      selection === "unknown" ||
+      values === "partial" ||
+      values === "unknown"
         ? "partial"
         : "complete",
     source,
@@ -330,6 +336,7 @@ function inferSourceCutoffs(
     if (!isRecord(raw)) return [];
     const sourceUrl = readString(raw, "sourceUrl");
     if (!sourceUrl) return [];
+    const snapshotIdentity = readString(raw, "snapshotIdentity");
     const value =
       readString(raw, "dataDate") ??
       readString(raw, "dataMonth") ??
@@ -345,7 +352,9 @@ function inferSourceCutoffs(
     return [
       {
         sourceUrl,
-        resolved: value
+        resolved: snapshotIdentity === "unverified_empty"
+          ? { granularity: "none" as const, from: null, through: null }
+          : value
           ? { granularity, from: value, through: value }
           : { ...fallback },
         publishedAt:

@@ -6,7 +6,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 
 連線資訊：
 - 名稱：Mopsfin 台股財務
-- 版本：0.3.0
+- 版本：0.3.1
 - 說明：查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、benchmark reaction signals，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
@@ -30,7 +30,7 @@ const tools = [
   ["get_daily_market_valuation", "查詢官方 latest 或指定日估值與參考財報欄位"],
   ["get_monthly_revenue", "查詢官方 latest 或指定月份營收"],
   ["get_monthly_revenue_trend", "查詢 3–24 個月營收序列與透明衍生趨勢"],
-  ["list_companies", "列出全部、僅上市或僅上櫃的完整公司母體"],
+  ["list_companies", "列出目前上市／上櫃公司母體，並揭露 heuristic coverage"],
   ["list_catalog", "查看可用指標、報表、附註與期別"],
   ["get_company_metric", "查詢公司財務趨勢、比率與年增率"],
   ["get_company_metrics_batch", "批次取得多家公司 × 多項基本面指標"],
@@ -56,7 +56,7 @@ export default function Home() {
       </header>
 
       <section className="hero" id="top">
-        <p className="eyebrow">V0.3.0 · REMOTE MCP · TAIWAN FINANCIAL DATA</p>
+        <p className="eyebrow">V0.3.1 · REMOTE MCP · TAIWAN FINANCIAL DATA</p>
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
@@ -233,11 +233,12 @@ export default function Home() {
           <h2 id="notice-title">資料來源與注意事項</h2>
           <div className="noticeContent">
             <p>公司母體、原始日線價量、歷史估值、月營收與大盤指數直接讀取 MOPS／TWSE／TPEx 官方資料；財務查詢直接讀取公開資訊觀測站「財務比較 E 點通」。本服務不另建財務或市場資料庫。</p>
-            <p><code>list_companies</code> 可用 <code>market=all</code>、<code>listed</code> 或 <code>otc</code> 分別取得全部、僅上市或僅上櫃公司；TDR、ETF、ETN、權證與特別股不在公司母體內。</p>
+            <p><code>list_companies</code> 可用 <code>market=all</code>、<code>listed</code> 或 <code>otc</code> 合併或分別取得當次 TWSE／TPEx 公司名錄；TDR、ETF、ETN、權證與特別股不在公司母體內。官方來源沒有 declared row count，因此 <code>coverageComplete</code> 只代表 heuristic safety gate 通過，請一併讀取 <code>coverageVerification</code>、warnings 與 <code>meta.quality</code>，不可宣稱已證明完整 rowset。</p>
             <p>OHLC 價格為新台幣原始未還原權值日線，另提供官方成交股數、成交金額、成交筆數與漲跌；不是盤中即時價，也不提供 adjusted close。長區間個股查詢需依 <code>coverageComplete</code> 與 <code>nextCursor</code> 續查。</p>
             <p><code>get_daily_market_valuation</code> 可查單一歷史交易日，<code>get_monthly_revenue</code> 與 trend 可查 2013-01 起月份；空白或 N/A 保留為 null 並附資料狀態，不會改寫成 0。歷史月營收是目前修訂後 archive，不是 point-in-time vintage。</p>
             <p><code>get_stock_reaction_signals</code> 使用原始未還原權值個股價格與市場 price index，只是可重算的反應代理，不代表已證明市場錯價。</p>
             <p>成功結果固定提供 <code>meta.asOf</code>、<code>meta.quality</code> 與 <code>meta.page</code>；cursor 綁定原查詢及來源 snapshot，不儲存在伺服器。若來源在續頁間改變，須依錯誤 <code>action=restart_pagination</code> 從第一頁重啟。</p>
+            <p>每個請求都有整體 deadline，暫時性上游錯誤會在期限內依 <code>Retry-After</code> 或 backoff 有限重試；response、cache、併發與等待 queue 均設上限。行程內 telemetry 只彙總 method、tool name、延遲、狀態與錯誤碼，不記錄 tool arguments 或 request body，也不持久化。服務狀態頁不呼叫上游，官方資料契約另以每週一次的低頻 live checks 驗證。</p>
             <p>上市櫃公司通常一年申報 4 次；興櫃與公開發行公司可能僅申報半年與年度，部分公司只需申報年度。查不到某季不一定代表連線失敗。</p>
             <p>本服務不是臺灣證券交易所或證券櫃檯買賣中心的官方服務，僅供資訊查詢，不構成投資建議。重要決策前請回到官方市場名錄與原始申報資料查核。</p>
             <div className="sourceLinks">
@@ -263,7 +264,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>Mopsfin 台股 MCP · v0.3.0</span>
+        <span>Mopsfin 台股 MCP · v0.3.1</span>
         <span>公開 · 唯讀 · 無資料庫</span>
       </footer>
     </main>

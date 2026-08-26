@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { companyMasterClient } from "@/lib/company-master/client";
+import { companyMetricsBatchClient } from "@/lib/mopsfin/batch";
 import { mopsfinClient } from "@/lib/mopsfin/client";
 import { priceClient } from "@/lib/price/client";
+import { reactionClient } from "@/lib/reaction/client";
+import { monthlyRevenueClient } from "@/lib/revenue/client";
+import { valuationClient } from "@/lib/valuation/client";
 
 const liveDescribe =
   process.env.RUN_LIVE_MOPSFIN_TESTS === "1" ? describe : describe.skip;
@@ -78,7 +82,7 @@ liveDescribe("live Mopsfin contracts", () => {
     expect(result.bars.every((bar) => bar.close !== null)).toBe(true);
   }, 60_000);
 
-  it("lists complete official listed, OTC and combined company universes", async () => {
+  it("lists heuristic-gated official listed, OTC and combined company universes", async () => {
     const listed = await companyMasterClient.listCompanies(
       { market: "listed", includeFinancial: true, includeKy: true },
       true,
@@ -96,6 +100,9 @@ liveDescribe("live Mopsfin contracts", () => {
     expect(listed.coverageComplete).toBe(true);
     expect(otc.coverageComplete).toBe(true);
     expect(all.coverageComplete).toBe(true);
+    expect(listed.coverageVerification.status).toBe("heuristic");
+    expect(otc.coverageVerification.officialDeclaredRowCountAvailable).toBe(false);
+    expect(all.coverageVerification.status).toBe("heuristic");
     expect(listed.counts.returned).toBeGreaterThan(1_000);
     expect(otc.counts.returned).toBeGreaterThan(800);
     expect(all.counts.returned).toBe(
@@ -115,7 +122,7 @@ liveDescribe("live Mopsfin contracts", () => {
     );
   }, 60_000);
 
-  it("discovers the complete current catalog and company suggestions", async () => {
+  it("discovers the current catalog and company suggestions", async () => {
     const catalog = await mopsfinClient.getCatalog(true);
     const companies = await mopsfinClient.findCompanies("2330");
 
@@ -294,5 +301,90 @@ liveDescribe("live Mopsfin contracts", () => {
           series.points.length,
       ),
     ).toBe(true);
+  }, 60_000);
+
+  it("queries live latest valuation and monthly-revenue contracts", async () => {
+    const [valuation, revenue] = await Promise.all([
+      valuationClient.getDailyMarketValuation({
+        market: "all",
+        date: "latest",
+        companyCodes: ["2330", "3105"],
+        universePolicy: "compatible",
+      }),
+      monthlyRevenueClient.getMonthlyRevenue({
+        market: "all",
+        dataMonth: "latest",
+        companyCodes: ["2330", "3105"],
+        universePolicy: "compatible",
+      }),
+    ]);
+
+    expect(valuation.selectionComplete).toBe(true);
+    expect(valuation.rows.map((row) => row.code)).toEqual(["2330", "3105"]);
+    expect(valuation.sources.length).toBeGreaterThanOrEqual(2);
+    expect(valuation.sources.every((source) => source.dataDate === valuation.dataDate)).toBe(true);
+    expect(revenue.selectionComplete).toBe(true);
+    expect(revenue.rows.map((row) => row.code)).toEqual(["2330", "3105"]);
+    expect(revenue.dataMonth).toMatch(/^\d{4}-(0[1-9]|1[0-2])$/);
+    expect(revenue.sources.every((source) => source.dataMonth === revenue.dataMonth)).toBe(true);
+  }, 60_000);
+
+  it("queries a live historical revenue trend and reaction benchmark", async () => {
+    const [trend, reaction] = await Promise.all([
+      monthlyRevenueClient.getMonthlyRevenueTrend({
+        market: "all",
+        companyCodes: ["2330", "3105"],
+        endMonth: "2026-07",
+        lookbackMonths: 3,
+        universePolicy: "compatible",
+      }),
+      reactionClient.getStockReactionSignals({
+        companyCodes: ["2330"],
+        asOf: "latest",
+        horizons: [5],
+        pageSize: 1,
+      }),
+    ]);
+
+    expect(trend.startMonth).toBe("2026-05");
+    expect(trend.endMonth).toBe("2026-07");
+    expect(trend.companies).toHaveLength(2);
+    expect(trend.companies.every((company) => company.points.length === 3)).toBe(true);
+    expect(reaction.companies).toHaveLength(1);
+    expect(reaction.companies[0].returns).toContainEqual(
+      expect.objectContaining({ horizonSessions: 5 }),
+    );
+    expect(reaction.benchmarkSources.length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("runs the production batch identity path for eleven companies", async () => {
+    const catalog = await mopsfinClient.getCatalog();
+    const roe = catalog.metrics.find(
+      (metric) => metric.family === "data" && metric.name === "權益報酬率",
+    );
+    expect(roe).toBeDefined();
+    const companyCodes = [
+      "1101",
+      "1102",
+      "1216",
+      "1301",
+      "1303",
+      "1326",
+      "1402",
+      "2002",
+      "2105",
+      "2207",
+      "2303",
+    ];
+
+    const result = await companyMetricsBatchClient.getCompanyMetricsBatch({
+      companyCodes,
+      metricCodes: [roe?.code as string],
+      basis: "quarterly",
+    });
+
+    expect(result.query.companyCodes).toEqual(companyCodes);
+    expect(result.companies).toHaveLength(11);
+    expect(result.companies.map((company) => company.companyCode)).toEqual(companyCodes);
   }, 60_000);
 });

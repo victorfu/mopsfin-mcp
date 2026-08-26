@@ -4,6 +4,23 @@ import type {
   MasterCompany,
 } from "@/lib/company-master/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import {
+  AbsoluteDeadline,
+  assertJsonWithinLimits,
+  BoundedSemaphore,
+  BoundedTtlLru,
+  createSharedUpstreamFlight,
+  createAttemptAbortScope,
+  delayWithinDeadline,
+  globalUpstreamSemaphore,
+  parseRetryAfterMs,
+  readResponseTextWithLimit,
+  recordUpstreamReliabilityEvent,
+  retryDelayMs,
+  UpstreamReliabilityError,
+  type AttemptAbortScope,
+  type SharedUpstreamFlight,
+} from "@/lib/upstream/reliability";
 
 import type {
   CodeIdentity,
@@ -37,10 +54,6 @@ export function fail(
   details?: Record<string, unknown>,
 ): never {
   throw new MopsfinError(code, message, { details });
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatCalendarDate(year: number, month: number, day: number): string {
@@ -289,85 +302,179 @@ export function assertIsoDate(value: string): void {
   }
 }
 
+export interface OfficialJsonLoaderOptions extends OfficialMarketClientOptions {
+  deadlineMs?: number;
+  maxResponseBytes?: number;
+  maxJsonArrayLength?: number;
+  maxJsonNodes?: number;
+  cacheMaxEntries?: number;
+  cacheMaxBytes?: number;
+  semaphore?: BoundedSemaphore;
+}
+
 export class OfficialJsonLoader {
   private readonly timeoutMs: number;
   private readonly retryDelayMs: number;
   private readonly maxAttempts: number;
   private readonly cacheTtlMs: number;
-  private readonly cache = new Map<string, { expiresAt: number; value: JsonSnapshot }>();
-  private readonly pending = new Map<string, Promise<JsonSnapshot>>();
+  private readonly deadlineMs: number;
+  private readonly maxResponseBytes: number;
+  private readonly maxJsonArrayLength: number;
+  private readonly maxJsonNodes: number;
+  private readonly semaphore: BoundedSemaphore;
+  private readonly cache: BoundedTtlLru<string, JsonSnapshot>;
+  private readonly pending = new Map<string, SharedUpstreamFlight<JsonSnapshot>>();
 
   constructor(
     private readonly fetchImpl: FetchLike,
     private readonly now: () => Date,
-    options: OfficialMarketClientOptions = {},
+    options: OfficialJsonLoaderOptions = {},
   ) {
     this.timeoutMs = options.timeoutMs ?? 20_000;
     this.retryDelayMs = options.retryDelayMs ?? 250;
-    this.maxAttempts = options.maxAttempts ?? 2;
+    this.maxAttempts = Math.max(1, options.maxAttempts ?? 2);
     this.cacheTtlMs = options.cacheTtlMs ?? 5 * 60 * 1000;
+    this.deadlineMs = options.deadlineMs ?? 50_000;
+    this.maxResponseBytes = options.maxResponseBytes ?? 8 * 1024 * 1024;
+    this.maxJsonArrayLength = options.maxJsonArrayLength ?? 20_000;
+    this.maxJsonNodes = options.maxJsonNodes ?? 500_000;
+    this.semaphore = options.semaphore ?? globalUpstreamSemaphore;
+    this.cache = new BoundedTtlLru(
+      options.cacheMaxEntries ?? 128,
+      options.cacheMaxBytes ?? 32 * 1024 * 1024,
+    );
   }
 
-  async get(config: OfficialSourceConfig): Promise<JsonSnapshot> {
+  async get(
+    config: OfficialSourceConfig,
+    operationDeadline?: AbsoluteDeadline,
+  ): Promise<JsonSnapshot> {
+    const deadline = operationDeadline ?? new AbsoluteDeadline(this.deadlineMs);
+    const ownsDeadline = operationDeadline === undefined;
     const now = this.now().getTime();
-    const cached = this.cache.get(config.sourceUrl);
-    if (cached && cached.expiresAt > now) return cached.value;
-    const inFlight = this.pending.get(config.sourceUrl);
-    if (inFlight) return inFlight;
-
-    const request = this.requestJson(config)
-      .then((snapshot) => {
-        this.cache.set(config.sourceUrl, {
-          expiresAt: this.now().getTime() + this.cacheTtlMs,
-          value: snapshot,
-        });
-        return snapshot;
-      })
-      .finally(() => {
-        this.pending.delete(config.sourceUrl);
-      });
-    this.pending.set(config.sourceUrl, request);
-    return request;
+    try {
+      deadline.throwIfExpired();
+      const cached = this.cache.get(config.sourceUrl, now);
+      if (cached) return cached;
+      let flight = this.pending.get(config.sourceUrl);
+      if (!flight) {
+        flight = createSharedUpstreamFlight(
+          this.deadlineMs,
+          async (sharedDeadline) => {
+            const { snapshot, byteLength } = await this.requestJson(
+              config,
+              sharedDeadline,
+            );
+            this.cache.set(config.sourceUrl, snapshot, {
+              ttlMs: this.cacheTtlMs,
+              weight: byteLength,
+              nowMs: this.now().getTime(),
+            });
+            return snapshot;
+          },
+        );
+        this.pending.set(config.sourceUrl, flight);
+        const currentFlight = flight;
+        const clearFlight = () => {
+          if (this.pending.get(config.sourceUrl) === currentFlight) {
+            this.pending.delete(config.sourceUrl);
+          }
+        };
+        void flight.promise.then(clearFlight, clearFlight);
+      }
+      return await flight.wait(deadline);
+    } catch (error) {
+      if (error instanceof UpstreamReliabilityError) {
+        throw this.timeoutError(config, error);
+      }
+      throw error;
+    } finally {
+      if (ownsDeadline) deadline.dispose();
+    }
   }
 
-  private async requestJson(config: OfficialSourceConfig): Promise<JsonSnapshot> {
+  invalidate(sourceUrl: string): void {
+    this.cache.delete(sourceUrl);
+  }
+
+  private async requestJson(
+    config: OfficialSourceConfig,
+    deadline: AbsoluteDeadline,
+  ): Promise<{ snapshot: JsonSnapshot; byteLength: number }> {
     let lastError: MopsfinError | undefined;
 
     for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+      let scope: AttemptAbortScope | undefined;
+      let release: (() => void) | undefined;
+      let upstreamRetryAfterMs: number | null = null;
       try {
+        scope = createAttemptAbortScope(deadline, this.timeoutMs);
+        release = await this.semaphore.acquire(scope.signal);
         const response = await this.fetchImpl(config.sourceUrl, {
           method: "GET",
           cache: "no-store",
           redirect: "error",
-          signal: controller.signal,
+          signal: scope.signal,
           headers: {
             Accept: "application/json",
-            "User-Agent": "mopsfin-mcp/0.3.0 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": "mopsfin-mcp/0.3.1 (+https://mopsfin.twse.com.tw/)",
           },
         });
-        const body = await response.text();
+        const body = await readResponseTextWithLimit(
+          response,
+          this.maxResponseBytes,
+        );
+        upstreamRetryAfterMs = parseRetryAfterMs(
+          response.headers.get("retry-after"),
+        );
         if (response.ok) {
           try {
+            const payload = JSON.parse(body.text) as unknown;
+            assertJsonWithinLimits(payload, {
+              maximumArrayLength: this.maxJsonArrayLength,
+              maximumNodes: this.maxJsonNodes,
+            });
             return {
-              payload: JSON.parse(body) as unknown,
-              retrievedAt: this.now().toISOString(),
+              snapshot: {
+                payload,
+                retrievedAt: this.now().toISOString(),
+              },
+              byteLength: body.byteLength,
             };
           } catch (error) {
+            if (error instanceof UpstreamReliabilityError) throw error;
             lastError = new MopsfinError(
               "UPSTREAM_BAD_RESPONSE",
               `${config.exchange} ${config.sourceName}不是有效 JSON。`,
-              { cause: error, details: { sourceUrl: config.sourceUrl } },
+              {
+                cause: error,
+                details: { sourceUrl: config.sourceUrl },
+                reason: "UPSTREAM_INVALID_JSON",
+                retryable: true,
+                action: "retry",
+              },
             );
           }
         } else {
+          const transient = response.status === 429 || response.status >= 500;
           lastError = new MopsfinError(
             response.status === 429
               ? "UPSTREAM_RATE_LIMITED"
               : "UPSTREAM_BAD_RESPONSE",
             `${config.exchange} ${config.sourceName}回傳 HTTP ${response.status}。`,
-            { status: response.status, details: { sourceUrl: config.sourceUrl } },
+            {
+              status: response.status,
+              details: { sourceUrl: config.sourceUrl },
+              reason:
+                response.status === 429
+                  ? "UPSTREAM_HTTP_429"
+                  : response.status >= 500
+                    ? "UPSTREAM_HTTP_5XX"
+                    : "UPSTREAM_HTTP_4XX",
+              retryable: transient,
+              retryAfterMs: upstreamRetryAfterMs ?? undefined,
+              action: transient ? "retry" : "none",
+            },
           );
           if (response.status !== 429 && response.status < 500) throw lastError;
         }
@@ -380,24 +487,73 @@ export class OfficialJsonLoader {
           ) {
             throw error;
           }
-        } else if (controller.signal.aborted) {
-          lastError = new MopsfinError(
-            "UPSTREAM_TIMEOUT",
-            `${config.exchange} ${config.sourceName}查詢逾時。`,
-            { cause: error, details: { sourceUrl: config.sourceUrl } },
-          );
+        } else if (error instanceof UpstreamReliabilityError) {
+          if (error.code === "BACKPRESSURE") {
+            throw new MopsfinError(
+              "UPSTREAM_RATE_LIMITED",
+              "服務目前有過多上游工作，請稍後再試。",
+              {
+                cause: error,
+                details: { sourceUrl: config.sourceUrl },
+                reason: "UPSTREAM_BACKPRESSURE",
+                retryable: true,
+                retryAfterMs: error.retryAfterMs,
+                action: "retry",
+              },
+            );
+          }
+          if (
+            error.code === "RESPONSE_TOO_LARGE" ||
+            error.code === "ROW_LIMIT_EXCEEDED"
+          ) {
+            throw new MopsfinError(
+              "UPSTREAM_BAD_RESPONSE",
+              `${config.exchange} ${config.sourceName}回應超過服務安全處理上限。`,
+              {
+                cause: error,
+                details: { sourceUrl: config.sourceUrl },
+                reason: "UPSTREAM_RESPONSE_LIMIT_EXCEEDED",
+                retryable: false,
+                action: "none",
+              },
+            );
+          }
+          lastError = this.timeoutError(config, error, scope);
+        } else if (scope?.signal.aborted) {
+          lastError = this.timeoutError(config, error, scope);
         } else {
           lastError = new MopsfinError(
             "UPSTREAM_BAD_RESPONSE",
             `${config.exchange} ${config.sourceName}網路查詢失敗。`,
-            { cause: error, details: { sourceUrl: config.sourceUrl } },
+            {
+              cause: error,
+              details: { sourceUrl: config.sourceUrl },
+              reason: "UPSTREAM_NETWORK_ERROR",
+              retryable: true,
+              action: "retry",
+            },
           );
         }
       } finally {
-        clearTimeout(timeout);
+        release?.();
+        scope?.cleanup();
       }
 
-      if (attempt + 1 < this.maxAttempts) await delay(this.retryDelayMs);
+      if (attempt + 1 < this.maxAttempts) {
+        recordUpstreamReliabilityEvent("retryScheduled");
+        try {
+          await delayWithinDeadline(
+            retryDelayMs({
+              attempt,
+              baseDelayMs: this.retryDelayMs,
+              retryAfterMs: lastError?.retryAfterMs ?? upstreamRetryAfterMs,
+            }),
+            deadline,
+          );
+        } catch (error) {
+          throw this.timeoutError(config, error);
+        }
+      }
     }
 
     throw (
@@ -406,6 +562,32 @@ export class OfficialJsonLoader {
         "UPSTREAM_BAD_RESPONSE",
         `${config.exchange} ${config.sourceName}查詢失敗。`,
       )
+    );
+  }
+
+  private timeoutError(
+    config: OfficialSourceConfig,
+    cause: unknown,
+    scope?: AttemptAbortScope,
+  ): MopsfinError {
+    const deadlineExceeded =
+      scope?.abortKind() === "deadline" ||
+      (cause instanceof UpstreamReliabilityError &&
+        cause.code === "DEADLINE_EXCEEDED");
+    return new MopsfinError(
+      "UPSTREAM_TIMEOUT",
+      deadlineExceeded
+        ? `${config.exchange} ${config.sourceName}超過本次工作的總時間上限。`
+        : `${config.exchange} ${config.sourceName}查詢逾時。`,
+      {
+        cause,
+        details: { sourceUrl: config.sourceUrl },
+        reason: deadlineExceeded
+          ? "UPSTREAM_DEADLINE_EXCEEDED"
+          : "UPSTREAM_ATTEMPT_TIMEOUT",
+        retryable: true,
+        action: "retry",
+      },
     );
   }
 }

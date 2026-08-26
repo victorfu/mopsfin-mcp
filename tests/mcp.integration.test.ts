@@ -9,8 +9,15 @@ import {
 } from "@/lib/mopsfin/batch";
 import { registerMopsfinTools } from "@/lib/mcp/register-tools";
 import {
+  companyMetricsBatchInputSchema,
   companyMetricOutputSchema,
+  dailyMarketOhlcInputSchema,
+  dailyMarketValuationInputSchema,
+  listCompaniesInputSchema,
+  monthlyRevenueInputSchema,
+  monthlyRevenueTrendInputSchema,
   stockOhlcOutputSchema,
+  stockReactionSignalsInputSchema,
   stockReactionSignalsOutputSchema,
 } from "@/lib/mcp/schemas";
 import { buildResultMeta } from "@/lib/mcp/result-contract";
@@ -138,6 +145,11 @@ const companyMaster = {
   },
   generatedAt: "2026-08-25T00:00:00.000Z",
   snapshotId: "listed-2026-08-24+otc-2026-08-24",
+  coverageVerification: {
+    status: "heuristic" as const,
+    method: "required_sources_schema_single_report_date_minimum_count" as const,
+    officialDeclaredRowCountAvailable: false as const,
+  },
   coverageComplete: true as const,
   sources: [
     {
@@ -150,6 +162,7 @@ const companyMaster = {
       rawCount: 2,
       excludedTdrCount: 1,
       companyCount: 1,
+      minimumExpectedCount: 1,
     },
     {
       market: "otc" as const,
@@ -161,6 +174,7 @@ const companyMaster = {
       rawCount: 1,
       excludedTdrCount: 0,
       companyCount: 1,
+      minimumExpectedCount: 1,
     },
   ],
   counts: {
@@ -997,6 +1011,69 @@ afterEach(() => {
 });
 
 describe("MCP protocol integration", () => {
+  it("enforces every documented company and page-size boundary", () => {
+    const codes = (count: number) =>
+      Array.from({ length: count }, (_, index) => String(1000 + index));
+
+    expect(
+      companyMetricsBatchInputSchema.safeParse({
+        company_codes: codes(100),
+        metric_codes: Array.from({ length: 8 }, (_, index) => `M${index}`),
+        page_size: 20,
+      }).success,
+    ).toBe(true);
+    expect(
+      companyMetricsBatchInputSchema.safeParse({
+        company_codes: codes(101),
+        metric_codes: ["ROE"],
+      }).success,
+    ).toBe(false);
+    expect(
+      companyMetricsBatchInputSchema.safeParse({
+        company_codes: ["2330"],
+        metric_codes: ["ROE"],
+        page_size: 21,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      monthlyRevenueTrendInputSchema.safeParse({
+        company_codes: codes(100),
+        lookback_months: 24,
+        page_size: 20,
+      }).success,
+    ).toBe(true);
+    expect(
+      monthlyRevenueTrendInputSchema.safeParse({
+        company_codes: codes(101),
+        lookback_months: 25,
+      }).success,
+    ).toBe(false);
+
+    expect(
+      stockReactionSignalsInputSchema.safeParse({
+        company_codes: codes(50),
+        page_size: 10,
+      }).success,
+    ).toBe(true);
+    expect(
+      stockReactionSignalsInputSchema.safeParse({
+        company_codes: codes(51),
+        page_size: 11,
+      }).success,
+    ).toBe(false);
+
+    for (const schema of [
+      listCompaniesInputSchema,
+      dailyMarketOhlcInputSchema,
+      dailyMarketValuationInputSchema,
+      monthlyRevenueInputSchema,
+    ]) {
+      expect(schema.safeParse({ page_size: 500 }).success).toBe(true);
+      expect(schema.safeParse({ page_size: 501 }).success).toBe(false);
+    }
+  });
+
   it("enforces company-series identity as a discriminated output contract", () => {
     const baseSeries = {
       label: "2330 台積電",
@@ -1197,7 +1274,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.3.0" },
+      { name: "mopsfin-test", version: "0.3.1" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -1299,8 +1376,11 @@ describe("MCP protocol integration", () => {
       "必要來源失敗時工具會整體報錯",
     );
     expect(companyListOutput?.properties?.companies?.description).toContain(
-      "完整公司清單",
+      "符合條件的公司清單",
     );
+    expect(
+      companyListOutput?.properties?.coverageVerification?.description,
+    ).toContain("heuristic gate");
     const stockOhlcTool = listed.tools.find(
       (tool) => tool.name === "get_stock_ohlc",
     );
@@ -1505,6 +1585,21 @@ describe("MCP protocol integration", () => {
       }
       if (name === "list_companies") {
         const structured = result.structuredContent as {
+          meta: {
+            asOf: {
+              selector: string;
+              resolved: { granularity: string; from: string; through: string };
+            };
+            quality: {
+              status: string;
+              universe: string;
+              issues: Array<{ code: string; scope: string }>;
+            };
+          };
+          coverageVerification: {
+            status: string;
+            officialDeclaredRowCountAvailable: boolean;
+          };
           coverageComplete: boolean;
           counts: { listed: number; otc: number; returned: number };
           profileCoverage: {
@@ -1522,7 +1617,28 @@ describe("MCP protocol integration", () => {
             profileValueStatus: { paidInCapitalTwd: string };
           }>;
         };
+        expect(structured.coverageVerification).toEqual({
+          status: "heuristic",
+          method: "required_sources_schema_single_report_date_minimum_count",
+          officialDeclaredRowCountAvailable: false,
+        });
         expect(structured.coverageComplete).toBe(true);
+        expect(structured.meta.asOf).toMatchObject({
+          selector: "snapshot",
+          resolved: {
+            granularity: "date",
+            from: "2026-08-24",
+            through: "2026-08-24",
+          },
+        });
+        expect(structured.meta.quality.status).toBe("partial");
+        expect(structured.meta.quality.universe).toBe("unverified");
+        expect(structured.meta.quality.issues).toContainEqual(
+          expect.objectContaining({
+            code: "MASTER_ROWSET_HEURISTIC",
+            scope: "universe",
+          }),
+        );
         expect(structured.counts).toMatchObject({ listed: 1, otc: 1, returned: 2 });
         expect(structured.profileCoverage.incorporationDate).toEqual({
           reported: 2,

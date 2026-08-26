@@ -37,6 +37,13 @@ export interface CompanyMasterSource {
   rawCount: number;
   excludedTdrCount: number;
   companyCount: number;
+  minimumExpectedCount: number;
+}
+
+export interface CompanyMasterCoverageVerification {
+  status: "heuristic";
+  method: "required_sources_schema_single_report_date_minimum_count";
+  officialDeclaredRowCountAvailable: false;
 }
 
 export interface CompanyMarketSnapshot {
@@ -54,6 +61,12 @@ export interface CompanyMasterResult {
   query: CompanyMasterQuery;
   generatedAt: string;
   snapshotId: string;
+  coverageVerification: CompanyMasterCoverageVerification;
+  /**
+   * Backward-compatible success flag. This means all required sources passed
+   * schema, single-report-date, uniqueness, and minimum-count gates; the
+   * upstream feeds do not expose an official declared row count.
+   */
   coverageComplete: true;
   sources: CompanyMasterSource[];
   counts: {

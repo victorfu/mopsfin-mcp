@@ -86,6 +86,11 @@ function master(companies: MasterCompany[]) {
         query,
         generatedAt: "2026-08-26T00:00:00.000Z",
         snapshotId: "fixture",
+        coverageVerification: {
+          status: "heuristic",
+          method: "required_sources_schema_single_report_date_minimum_count",
+          officialDeclaredRowCountAvailable: false,
+        },
         coverageComplete: true,
         sources: [],
         counts: {

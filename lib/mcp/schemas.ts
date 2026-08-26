@@ -45,7 +45,11 @@ export const resultMetaSchema = z
       .describe("統一 as-of 與資料來源 cutoff"),
     quality: z
       .object({
-        status: z.enum(["complete", "partial"]).describe("本次可用結果的整體品質摘要"),
+        status: z
+          .enum(["complete", "partial"])
+          .describe(
+            "本次可用結果的整體品質摘要；必要來源為 partial、selection/value 為 partial/unknown，或 universe 為 compatible/unverified 時固定為 partial",
+          ),
         source: z.enum(["complete", "partial"]).describe("所有必要官方來源是否完整"),
         universe: z.enum(["verified", "compatible", "unverified", "not_applicable"]).describe("公司母體是否經 current master 核對"),
         selection: z.enum(["complete", "partial", "unknown", "not_applicable"]).describe("requested selection 是否全部取得"),
@@ -228,7 +232,7 @@ const yearMonthSchema = calendarMonthSchema
 const universePolicySchema = z
   .enum(["compatible", "strict_current_master"])
   .describe(
-    "compatible=保留四碼公司代號 fallback 並揭露 reconciliation；strict_current_master=只接受與目前完整公司母體吻合的 latest 資料",
+    "compatible=保留四碼公司代號 fallback 並揭露 reconciliation；strict_current_master=只接受與目前 heuristic-gated 公司母體精確吻合的 latest 資料，但不因此證明官方完整 rowset",
   );
 
 export const stockOhlcInputSchema = z
@@ -280,7 +284,7 @@ export const dailyMarketOhlcInputSchema = z
       .max(500)
       .optional()
       .describe(
-        "可選公司代號清單，最多 500 家；省略時回傳指定日期與市場的完整公司股票 OHLC",
+        "可選公司代號清單，最多 500 家；省略時回傳本次官方 snapshot 中通過辨識規則的公司股票 OHLC，rowset 驗證程度另見 universeCoverageVerified、reconciliation 與 meta.quality",
       ),
     universe_policy: universePolicySchema
       .default("compatible")
@@ -320,7 +324,9 @@ const optionalMarketCompanyCodesSchema = z
   .min(1)
   .max(500)
   .optional()
-  .describe("可選且不得重複的公司代號清單，1 至 500 家；省略時回傳指定市場的完整資料集");
+  .describe(
+    "可選且不得重複的公司代號清單，1 至 500 家；省略時回傳本次 accepted source snapshot 的全部 eligible rows，不能據此忽略 coverage、reconciliation 或來源完整性限制",
+  );
 
 function validateOptionalCompanyCodes(
   value: { company_codes?: string[] },
@@ -919,6 +925,12 @@ const companyMasterSourceSchema = z
       .number()
       .int()
       .describe("此來源排除 TDR 後、套用使用者篩選前的公司數"),
+    minimumExpectedCount: z
+      .number()
+      .int()
+      .describe(
+        "此來源用來偵測明顯截斷回應的最低筆數 heuristic；不是官方 declared row count，也不能證明完整 rowset",
+      ),
   })
   .strict();
 
@@ -940,15 +952,35 @@ export const listCompaniesOutputSchema = z
     generatedAt: z.string().describe("本服務組合並篩選回傳結果的 ISO 8601 時間"),
     snapshotId: z
       .string()
-      .describe("由市場別與各來源出表日期組成的可重現快照識別碼"),
+      .describe(
+        "由市場別與各來源出表日期組成的來源日期標籤，不是內容 hash；cursor 綁定的內容快照識別請使用 meta.asOf.snapshotId",
+      ),
+    coverageVerification: z
+      .object({
+        status: z
+          .literal("heuristic")
+          .describe("母體覆蓋驗證等級；目前只能標示為 heuristic"),
+        method: z
+          .literal("required_sources_schema_single_report_date_minimum_count")
+          .describe(
+            "已驗證必要來源、schema、單一出表日期、唯一代號與最低筆數門檻",
+          ),
+        officialDeclaredRowCountAvailable: z
+          .literal(false)
+          .describe("官方來源是否提供可核對的 declared row count；目前固定為 false"),
+      })
+      .strict()
+      .describe(
+        "公司母體 rowset 的驗證方式與限制；通過 heuristic gate 不等於已由官方總筆數證明完整",
+      ),
     coverageComplete: z
       .literal(true)
       .describe(
-        "true 表示要求的市場來源皆成功取得且通過日期與筆數完整性檢查；任一必要來源失敗時工具會整體報錯",
+        "向後相容成功旗標：true 僅表示必要來源、必要欄位、單一出表日期、唯一代號與最低筆數 heuristic gate 均通過；官方沒有 declared row count，不能據此宣稱完整 rowset；任一必要來源失敗時工具會整體報錯",
       ),
     sources: z
       .array(companyMasterSourceSchema)
-      .describe("本次完整使用的 TWSE／TPEx 官方來源與各自日期、筆數"),
+      .describe("本次使用的 TWSE／TPEx 官方來源、日期、實際筆數與最低筆數 heuristic"),
     counts: z
       .object({
         raw: z.number().int().describe("官方來源合計原始筆數，可能包含隨後排除的 TDR"),
@@ -965,12 +997,12 @@ export const listCompaniesOutputSchema = z
           .number()
           .int()
           .describe("因 include_ky=false 在前述篩選後實際排除的 KY 公司數"),
-        listed: z.number().int().describe("本頁回傳的上市公司數；未啟用分頁時即為完整結果"),
-        otc: z.number().int().describe("本頁回傳的上櫃公司數；未啟用分頁時即為完整結果"),
+        listed: z.number().int().describe("本頁回傳的上市公司數；未啟用分頁時即為本次 accepted snapshot 的全部結果"),
+        otc: z.number().int().describe("本頁回傳的上櫃公司數；未啟用分頁時即為本次 accepted snapshot 的全部結果"),
         returned: z.number().int().describe("本頁 companies 陣列公司總數；完整總數另見 meta.page.total"),
       })
       .strict()
-      .describe("原始、排除與最終回傳筆數，可用來確認掃描母體完整性"),
+      .describe("原始、排除與最終回傳筆數；可稽核本次結果，但不能取代官方 declared row count"),
     profileCoverage: z
       .record(
         z.enum([
@@ -992,7 +1024,7 @@ export const listCompaniesOutputSchema = z
     companies: z
       .array(masterCompanySchema)
       .describe(
-        "未啟用分頁時為符合條件的完整公司清單；啟用 page_size/cursor 時只含本頁公司，完整總數與續頁見 meta.page",
+        "未啟用分頁時為本次 heuristic-gated snapshot 中符合條件的公司清單；啟用 page_size/cursor 時只含本頁公司，總數與續頁見 meta.page",
       ),
     ...warningShape,
   })
@@ -1085,12 +1117,20 @@ const priceSourceSchema = z
     sourceName: z.string().describe("官方 OHLC 資料集或查詢頁名稱"),
     sourceUrl: z.string().url().describe("本次使用的固定 TWSE／TPEx 官方 URL"),
     retrievedAt: z.string().describe("本服務實際取得這份官方回應的 ISO 8601 時間"),
+    snapshotIdentity: z
+      .enum(["verified", "unverified_empty"])
+      .optional()
+      .describe(
+        "verified=回應本身可核對 requested date/month；unverified_empty=官方 no-data response 缺少 title/date，不能把空回應驗證綁定至 requested month；省略只供舊版相容",
+      ),
     dataDate: calendarDateSchema
       .optional()
       .describe("單日市場來源實際回傳並核對成功的資料日期"),
     dataMonth: calendarMonthSchema
       .optional()
-      .describe("個股歷史 OHLC 月請求實際涵蓋的 YYYY-MM；單日市場來源不適用"),
+      .describe(
+        "個股歷史 OHLC 回應已驗證綁定的 YYYY-MM；snapshotIdentity=unverified_empty 或單日市場來源時省略",
+      ),
     normalization: z
       .object({
         volumeShares: priceUnitNormalizationSchema.describe("成交量由來源單位轉為股的規則"),
@@ -1203,7 +1243,7 @@ export const dailyMarketOhlcOutputSchema = z
         z
           .object({
             market: z.enum(["listed", "otc"]).describe("此 reconciliation 代表的市場"),
-            masterCount: z.number().int().describe("目前完整公司 master 的預期公司數"),
+            masterCount: z.number().int().describe("目前 heuristic-gated 公司 master 的參考公司數；master 本身沒有官方 declared row count"),
             sourceRowCount: z.number().int().describe("官方行情正規化前可辨識的公司代號列數"),
             matchedCount: z.number().int().describe("官方行情與 master 代號吻合數"),
             marketOnlyCodes: z
@@ -1263,7 +1303,7 @@ const latestMarketQueryOutputSchema = z
 const marketReconciliationSchema = z
   .object({
     market: z.enum(["listed", "otc"]).describe("此核對結果代表的上市或上櫃市場"),
-    masterCount: z.number().int().describe("目前完整公司 master 的預期公司數"),
+    masterCount: z.number().int().describe("目前 heuristic-gated 公司 master 的參考公司數；master 本身沒有官方 declared row count"),
     sourceRowCount: z.number().int().describe("官方來源可辨識的公司代號列數"),
     matchedCount: z.number().int().describe("官方來源與 master 代號吻合數"),
     marketOnlyCodes: z
@@ -1325,7 +1365,7 @@ export const dailyMarketValuationOutputSchema = z
     universeCoverageVerified: z
       .boolean()
       .describe(
-        "官方估值公司集合是否與目前完整 master 完全吻合；compatible 可在 false 時成功並以 reconciliation 揭露差異",
+        "官方估值公司集合是否與目前 heuristic-gated master 完全吻合；compatible 可在 false 時成功並以 reconciliation 揭露差異，且不能因此證明官方完整 rowset",
       ),
     selectionComplete: z
       .boolean()

@@ -45,6 +45,67 @@ describe("MopsfinHttpClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves Retry-After metadata when an HTTP 429 is exhausted", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("rate limited", {
+        status: 429,
+        headers: { "Retry-After": "2" },
+      }),
+    );
+    const client = new MopsfinHttpClient(fetchMock as typeof fetch, {
+      maxAttempts: 1,
+    });
+
+    await expect(client.get("/")).rejects.toMatchObject({
+      code: "UPSTREAM_RATE_LIMITED",
+      reason: "UPSTREAM_HTTP_429",
+      retryable: true,
+      retryAfterMs: 2_000,
+      action: "retry",
+    });
+  });
+
+  it("returns structured retryable metadata for exhausted 5xx and network errors", async () => {
+    const serverClient = new MopsfinHttpClient(
+      vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 })) as typeof fetch,
+      { maxAttempts: 1 },
+    );
+    await expect(serverClient.get("/")).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "UPSTREAM_HTTP_5XX",
+      retryable: true,
+      action: "retry",
+    });
+
+    const networkClient = new MopsfinHttpClient(
+      vi.fn().mockRejectedValue(new TypeError("network")) as typeof fetch,
+      { maxAttempts: 1 },
+    );
+    await expect(networkClient.get("/")).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "UPSTREAM_NETWORK_ERROR",
+      retryable: true,
+      action: "retry",
+    });
+  });
+
+  it("rejects an oversized response without retrying it", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("12345"));
+    const client = new MopsfinHttpClient(fetchMock as typeof fetch, {
+      maxAttempts: 2,
+      maxResponseBytes: 4,
+      retryDelayMs: 0,
+    });
+
+    await expect(client.get("/")).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "UPSTREAM_RESPONSE_LIMIT_EXCEEDED",
+      retryable: false,
+      action: "none",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("aborts timed-out upstream requests and retries once", async () => {
     const fetchMock = vi.fn((_url: URL, init?: RequestInit) =>
       new Promise<Response>((_resolve, reject) => {

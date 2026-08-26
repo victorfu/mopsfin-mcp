@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { telemetrySnapshot } from "@/lib/observability/telemetry";
+import { getUpstreamReliabilitySnapshot } from "@/lib/upstream/reliability";
+
 export const runtime = "nodejs";
 
 export function GET() {
@@ -7,9 +10,16 @@ export function GET() {
     {
       status: "ok",
       service: "mopsfin-taiwan-equities",
-      version: "0.3.0",
+      version: "0.3.1",
       resultContractVersion: "mopsfin.result.v1",
       toolCount: 15,
+      readiness: {
+        status: "ready",
+        upstreamChecks: "not_run",
+        note: "深度官方來源契約由低頻 synthetic workflow 驗證；此端點不放大上游流量。",
+      },
+      telemetry: telemetrySnapshot(),
+      upstreamReliability: getUpstreamReliabilitySnapshot(),
       mcpEndpoint: "/api/mcp",
       sourceUrls: {
         mopsfin: "https://mopsfin.twse.com.tw/",

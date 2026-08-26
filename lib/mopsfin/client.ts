@@ -16,6 +16,15 @@ import { parseHtmlTables, paginateTables } from "./html";
 import { MopsfinHttpClient } from "./http";
 import { normalizeTrendJson } from "./normalize";
 import {
+  assertJsonWithinLimits,
+  BoundedSemaphore,
+  createSharedUpstreamFlight,
+  getCurrentDeadline,
+  UpstreamReliabilityError,
+  type AbsoluteDeadline,
+  type SharedUpstreamFlight,
+} from "@/lib/upstream/reliability";
+import {
   comparePeriods,
   latestPeriodCandidates,
   parsePeriod,
@@ -62,6 +71,25 @@ export interface TablePage {
   limit: number;
 }
 
+export interface ResolveCompaniesOptions {
+  maximumCompanyCount?: number;
+}
+
+export interface MopsfinClientOptions {
+  identityLookupConcurrency?: number;
+  identityLookupMaximumQueue?: number;
+  identityCacheTtlMs?: number;
+  identityCacheMaximumEntries?: number;
+  identityFlightDeadlineMs?: number;
+}
+
+const DEFAULT_IDENTITY_LOOKUP_CONCURRENCY = 4;
+const DEFAULT_IDENTITY_LOOKUP_MAXIMUM_QUEUE = 200;
+const DEFAULT_IDENTITY_CACHE_TTL_MS = 60_000;
+const DEFAULT_IDENTITY_CACHE_MAXIMUM_ENTRIES = 500;
+const DEFAULT_IDENTITY_FLIGHT_DEADLINE_MS = 50_000;
+const MAXIMUM_RESOLVABLE_COMPANIES = 100;
+
 const STATEMENT_NAMES: Record<StatementKind, RegExp> = {
   balance_sheet: /資產負債表/,
   income_statement: /綜合損益表/,
@@ -78,8 +106,25 @@ const NOTE_NAMES: Record<NoteKind, RegExp> = {
 
 function parseJson(body: string): unknown {
   try {
-    return JSON.parse(body) as unknown;
+    const payload = JSON.parse(body) as unknown;
+    assertJsonWithinLimits(payload, { maximumArrayLength: 20_000 });
+    return payload;
   } catch (error) {
+    if (
+      error instanceof UpstreamReliabilityError &&
+      error.code === "ROW_LIMIT_EXCEEDED"
+    ) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        "Mopsfin JSON 回應超過服務安全處理上限。",
+        {
+          cause: error,
+          reason: "UPSTREAM_RESPONSE_LIMIT_EXCEEDED",
+          retryable: false,
+          action: "none",
+        },
+      );
+    }
     throw new MopsfinError(
       "UPSTREAM_BAD_RESPONSE",
       "Mopsfin 回傳無效 JSON。",
@@ -93,11 +138,24 @@ function matchesReturnedPeriod(raw: string | undefined, expected: string): boole
   return raw.replace(/[Qq]/g, "") === expected.replace("Q", "");
 }
 
-function validateCompanyCodes(companyCodes: string[]): string[] {
-  if (companyCodes.length === 0 || companyCodes.length > 10) {
+function validateCompanyCodes(
+  companyCodes: string[],
+  maximumCompanyCount = 10,
+): string[] {
+  if (
+    !Number.isInteger(maximumCompanyCount) ||
+    maximumCompanyCount < 1 ||
+    maximumCompanyCount > MAXIMUM_RESOLVABLE_COMPANIES
+  ) {
     throw new MopsfinError(
       "INVALID_ARGUMENT",
-      "company_codes 必須包含 1 至 10 個公司代號。",
+      `maximum_company_count 必須是 1 至 ${MAXIMUM_RESOLVABLE_COMPANIES} 的整數。`,
+    );
+  }
+  if (companyCodes.length === 0 || companyCodes.length > maximumCompanyCount) {
+    throw new MopsfinError(
+      "INVALID_ARGUMENT",
+      `company_codes 必須包含 1 至 ${maximumCompanyCount} 個公司代號。`,
     );
   }
 
@@ -110,6 +168,37 @@ function validateCompanyCodes(companyCodes: string[]): string[] {
       );
     }
     return code;
+  });
+}
+
+function validateResolvedCompanies(
+  companyCodes: string[],
+  resolvedCompanies: readonly CompanySuggestion[],
+): CompanySuggestion[] {
+  if (resolvedCompanies.length !== companyCodes.length) {
+    throw new MopsfinError(
+      "INVALID_ARGUMENT",
+      "resolved company identities 必須與 company_codes 數量及順序完全一致。",
+    );
+  }
+
+  return resolvedCompanies.map((company, index) => {
+    const expectedCode = companyCodes[index];
+    if (
+      !company ||
+      typeof company.code !== "string" ||
+      typeof company.name !== "string" ||
+      typeof company.displayName !== "string" ||
+      canonicalIdentity(company.code) !== canonicalIdentity(expectedCode) ||
+      !company.name.trim() ||
+      !company.displayName.trim()
+    ) {
+      throw new MopsfinError(
+        "INVALID_ARGUMENT",
+        `resolved company identity 與 company_codes[${index}]（${expectedCode}）不一致。`,
+      );
+    }
+    return company;
   });
 }
 
@@ -444,13 +533,58 @@ function defaultPostFields(
 export class MopsfinClient {
   readonly http: MopsfinHttpClient;
   readonly catalog: CatalogService;
+  private readonly identityLookupConcurrency: number;
+  private readonly identityLookupSemaphore: BoundedSemaphore;
+  private readonly identityCacheTtlMs: number;
+  private readonly identityCacheMaximumEntries: number;
+  private readonly identityFlightDeadlineMs: number;
+  private readonly identityCache = new Map<
+    string,
+    { company: CompanySuggestion; expiresAt: number }
+  >();
+  private readonly identitySingleFlights = new Map<
+    string,
+    SharedUpstreamFlight<CompanySuggestion>
+  >();
 
   constructor(
     http = new MopsfinHttpClient(),
     private readonly now: () => Date = () => new Date(),
+    options: MopsfinClientOptions = {},
   ) {
     this.http = http;
     this.catalog = new CatalogService(http);
+    this.identityLookupConcurrency = this.positiveIntegerOption(
+      options.identityLookupConcurrency,
+      DEFAULT_IDENTITY_LOOKUP_CONCURRENCY,
+      "identityLookupConcurrency",
+    );
+    this.identityLookupSemaphore = new BoundedSemaphore(
+      this.identityLookupConcurrency,
+      this.positiveIntegerOption(
+        options.identityLookupMaximumQueue,
+        DEFAULT_IDENTITY_LOOKUP_MAXIMUM_QUEUE,
+        "identityLookupMaximumQueue",
+      ),
+    );
+    this.identityCacheMaximumEntries = this.positiveIntegerOption(
+      options.identityCacheMaximumEntries,
+      DEFAULT_IDENTITY_CACHE_MAXIMUM_ENTRIES,
+      "identityCacheMaximumEntries",
+    );
+    this.identityFlightDeadlineMs = this.positiveIntegerOption(
+      options.identityFlightDeadlineMs,
+      DEFAULT_IDENTITY_FLIGHT_DEADLINE_MS,
+      "identityFlightDeadlineMs",
+    );
+    this.identityCacheTtlMs =
+      options.identityCacheTtlMs ?? DEFAULT_IDENTITY_CACHE_TTL_MS;
+    if (
+      !Number.isFinite(this.identityCacheTtlMs) ||
+      this.identityCacheTtlMs < 0
+    ) {
+      throw new TypeError("identityCacheTtlMs 必須是大於或等於 0 的有限數字。");
+    }
   }
 
   async getCatalog(force = false): Promise<Catalog> {
@@ -495,39 +629,37 @@ export class MopsfinClient {
       .slice(0, limit);
   }
 
-  async resolveCompanies(companyCodes: string[]): Promise<CompanySuggestion[]> {
-    const codes = validateCompanyCodes(companyCodes);
-    return Promise.all(
-      codes.map(async (code) => {
-        const suggestions = await this.findCompanies(code, 20);
-        const exact = suggestions.find(
-          (suggestion) => suggestion.code.toLowerCase() === code.toLowerCase(),
-        );
-        if (!exact) {
-          throw new MopsfinError(
-            "NOT_FOUND",
-            `找不到公司代號 ${code}；請先使用 find_companies。`,
-          );
-        }
-        return exact;
-      }),
+  async resolveCompanies(
+    companyCodes: string[],
+    options: ResolveCompaniesOptions = {},
+  ): Promise<CompanySuggestion[]> {
+    const codes = validateCompanyCodes(
+      companyCodes,
+      options.maximumCompanyCount ?? 10,
     );
+    return Promise.all(codes.map((code) => this.resolveCompany(code)));
   }
 
-  async getCompanyMetric(options: {
-    metricCode: string;
-    companyCodes: string[];
-    basis: CompanyMetricBasis;
-    yoyQuarter?: number;
-    includeIndustryAverage: boolean;
-    includeCompanyAverage: boolean;
-    range: TrendRange;
-  }) {
+  async getCompanyMetric(
+    options: {
+      metricCode: string;
+      companyCodes: string[];
+      basis: CompanyMetricBasis;
+      yoyQuarter?: number;
+      includeIndustryAverage: boolean;
+      includeCompanyAverage: boolean;
+      range: TrendRange;
+    },
+    resolvedCompanies?: readonly CompanySuggestion[],
+  ) {
     validateCompanyMetricRequest(options);
     const companyCodes = validateCompanyCodes(options.companyCodes);
     validateUniqueCompanyCodes(companyCodes);
+    const suppliedCompanies = resolvedCompanies
+      ? validateResolvedCompanies(companyCodes, resolvedCompanies)
+      : undefined;
     const metric = await this.requireMetric(options.metricCode, "data");
-    const companies = await this.resolveCompanies(companyCodes);
+    const companies = suppliedCompanies ?? await this.resolveCompanies(companyCodes);
     const response = await this.http.post("/compare/data", {
       ...defaultPostFields(metric),
       companyId: companies.map((company) => company.displayName),
@@ -792,6 +924,154 @@ export class MopsfinClient {
         ),
       ),
     };
+  }
+
+  private positiveIntegerOption(
+    value: number | undefined,
+    fallback: number,
+    name: string,
+  ): number {
+    const resolved = value ?? fallback;
+    if (!Number.isInteger(resolved) || resolved < 1) {
+      throw new TypeError(`${name} 必須是正整數。`);
+    }
+    return resolved;
+  }
+
+  private cachedCompany(key: string): CompanySuggestion | undefined {
+    const cached = this.identityCache.get(key);
+    if (!cached) return undefined;
+    if (cached.expiresAt <= this.now().getTime()) {
+      this.identityCache.delete(key);
+      return undefined;
+    }
+    // Refresh insertion order so the bounded Map behaves as a small LRU.
+    this.identityCache.delete(key);
+    this.identityCache.set(key, cached);
+    return cached.company;
+  }
+
+  private cacheCompany(key: string, company: CompanySuggestion): void {
+    if (this.identityCacheTtlMs === 0) return;
+    const now = this.now().getTime();
+    for (const [cachedKey, cached] of this.identityCache) {
+      if (cached.expiresAt <= now) this.identityCache.delete(cachedKey);
+    }
+    this.identityCache.delete(key);
+    while (this.identityCache.size >= this.identityCacheMaximumEntries) {
+      const oldestKey = this.identityCache.keys().next().value as
+        | string
+        | undefined;
+      if (oldestKey === undefined) break;
+      this.identityCache.delete(oldestKey);
+    }
+    this.identityCache.set(key, {
+      company,
+      expiresAt: now + this.identityCacheTtlMs,
+    });
+  }
+
+  private async resolveCompany(code: string): Promise<CompanySuggestion> {
+    const key = canonicalIdentity(code);
+    const cached = this.cachedCompany(key);
+    if (cached) return cached;
+    const callerDeadline = getCurrentDeadline();
+
+    const existing = this.identitySingleFlights.get(key);
+    if (existing) {
+      return this.waitForIdentityLookup(existing, callerDeadline);
+    }
+
+    const lookup = createSharedUpstreamFlight(
+      this.identityFlightDeadlineMs,
+      () =>
+        this.withIdentityLookupSlot(async () => {
+          const suggestions = await this.findCompanies(code, 20);
+          const exact = suggestions.find(
+            (suggestion) => canonicalIdentity(suggestion.code) === key,
+          );
+          if (!exact) {
+            throw new MopsfinError(
+              "NOT_FOUND",
+              `找不到公司代號 ${code}；請先使用 find_companies。`,
+            );
+          }
+          this.cacheCompany(key, exact);
+          return exact;
+        }),
+    );
+    this.identitySingleFlights.set(key, lookup);
+    const clearSingleFlight = () => {
+      if (this.identitySingleFlights.get(key) === lookup) {
+        this.identitySingleFlights.delete(key);
+      }
+    };
+    void lookup.promise.then(clearSingleFlight, clearSingleFlight);
+    return this.waitForIdentityLookup(lookup, callerDeadline);
+  }
+
+  private async waitForIdentityLookup(
+    lookup: SharedUpstreamFlight<CompanySuggestion>,
+    deadline: AbsoluteDeadline | undefined,
+  ): Promise<CompanySuggestion> {
+    try {
+      return await lookup.wait(deadline);
+    } catch (error) {
+      if (error instanceof UpstreamReliabilityError) {
+        throw this.identityReliabilityError(error);
+      }
+      throw error;
+    }
+  }
+
+  private async withIdentityLookupSlot<T>(task: () => Promise<T>): Promise<T> {
+    const deadline = getCurrentDeadline();
+    let release: (() => void) | undefined;
+    try {
+      release = await this.identityLookupSemaphore.acquire(deadline?.signal);
+      return await task();
+    } catch (error) {
+      if (error instanceof UpstreamReliabilityError) {
+        throw this.identityReliabilityError(error);
+      }
+      throw error;
+    } finally {
+      release?.();
+    }
+  }
+
+  private identityReliabilityError(error: UpstreamReliabilityError): MopsfinError {
+    if (error.code === "BACKPRESSURE") {
+      return new MopsfinError(
+        "UPSTREAM_RATE_LIMITED",
+        "公司 identity 查詢佇列已滿，請稍後再試。",
+        {
+          cause: error,
+          reason: "IDENTITY_LOOKUP_BACKPRESSURE",
+          retryable: true,
+          retryAfterMs: error.retryAfterMs,
+          action: "retry",
+        },
+      );
+    }
+    const deadlineExceeded =
+      error.code === "DEADLINE_EXCEEDED" ||
+      (error.cause instanceof UpstreamReliabilityError &&
+        error.cause.code === "DEADLINE_EXCEEDED");
+    return new MopsfinError(
+      "UPSTREAM_TIMEOUT",
+      deadlineExceeded
+        ? "公司 identity 查詢超過本次工作的總時間上限。"
+        : "公司 identity 查詢已取消。",
+      {
+        cause: error,
+        reason: deadlineExceeded
+          ? "UPSTREAM_DEADLINE_EXCEEDED"
+          : "UPSTREAM_OPERATION_ABORTED",
+        retryable: true,
+        action: "retry",
+      },
+    );
   }
 
   private async getHtmlReport<TQuery extends Record<string, string>>(options: {

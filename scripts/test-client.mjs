@@ -8,7 +8,7 @@ const endpoint = new URL(
     process.env.MOPSFIN_MCP_URL ??
     "http://localhost:3000/api/mcp",
 );
-const client = new Client({ name: "mopsfin-smoke-test", version: "0.3.0" });
+const client = new Client({ name: "mopsfin-smoke-test", version: "0.3.1" });
 
 try {
   await client.connect(new StreamableHTTPClientTransport(endpoint));
@@ -40,8 +40,8 @@ try {
     if (!names.includes(name)) throw new Error(`Missing tool: ${name}`);
   }
   const server = client.getServerVersion();
-  if (server?.version !== "0.3.0") {
-    throw new Error(`Expected server version 0.3.0, received ${server?.version ?? "unknown"}`);
+  if (server?.version !== "0.3.1") {
+    throw new Error(`Expected server version 0.3.1, received ${server?.version ?? "unknown"}`);
   }
 
   const result = await client.callTool({

@@ -919,7 +919,7 @@ export class ValuationClient {
         fail(
           "INCOMPLETE_COVERAGE",
           query.universePolicy === "strict_current_master"
-            ? "最新估值資料未與目前完整公司母體完全吻合。"
+            ? "最新估值資料未與目前 heuristic-gated 公司母體完全吻合。"
             : "最新估值資料與目前公司母體吻合率低於 95%，疑似來源截斷。",
           { universePolicy: query.universePolicy, reconciliation },
         );

@@ -1,8 +1,25 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { CompanyMetricsBatchClient } from "@/lib/mopsfin/batch";
-import type { MopsfinClient } from "@/lib/mopsfin/client";
+import { MopsfinClient } from "@/lib/mopsfin/client";
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import { MopsfinHttpClient } from "@/lib/mopsfin/http";
+import { runWithRequestDeadline } from "@/lib/upstream/reliability";
+
+const catalogHtml = readFileSync(
+  fileURLToPath(new URL("./fixtures/catalog.html", import.meta.url)),
+  "utf8",
+);
+
+function response(body: string, contentType = "text/html") {
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": contentType },
+  });
+}
 
 function metricResult(metricCode: string, companyCodes: string[]) {
   return {
@@ -92,6 +109,279 @@ describe("CompanyMetricsBatchClient", () => {
       "MARGIN",
     ]);
     expect(result.coverage.selectionComplete).toBe(true);
+  });
+
+  it("serves a twenty-company page with a real client and resolves each identity only once", async () => {
+    const companyCodes = Array.from({ length: 20 }, (_, index) =>
+      String(1101 + index),
+    );
+    let activeSuggestions = 0;
+    let peakSuggestions = 0;
+    const fetchMock = vi.fn(
+      async (url: URL | RequestInfo, init?: RequestInit) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname === "/") return response(catalogHtml);
+        if (parsed.pathname === "/suggestCompany") {
+          activeSuggestions += 1;
+          peakSuggestions = Math.max(peakSuggestions, activeSuggestions);
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          activeSuggestions -= 1;
+          const code = parsed.searchParams.get("query") as string;
+          return response(
+            JSON.stringify({ suggestions: [`${code} C${code}`] }),
+            "application/json",
+          );
+        }
+        if (parsed.pathname === "/compare/data") {
+          const body = init?.body as URLSearchParams;
+          const companies = body.getAll("companyId");
+          expect(companies.length).toBeLessThanOrEqual(10);
+          return response(
+            JSON.stringify({
+              ylabel: "%",
+              xaxisList: ["2025Q4", "2026Q1"],
+              graphData: companies.map((company, index) => ({
+                label: company,
+                data: [
+                  [0, 10 + index],
+                  [1, 12 + index],
+                ],
+              })),
+              showNameList: companies,
+              checkedNameList: companies,
+              displayCompanyId: companies,
+            }),
+            "application/json",
+          );
+        }
+        throw new Error(`unexpected ${parsed.pathname}`);
+      },
+    );
+    const mopsfin = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, {
+        retryDelayMs: 0,
+        maxAttempts: 1,
+      }),
+      () => new Date("2026-08-26T00:00:00.000Z"),
+      { identityLookupConcurrency: 3, identityCacheTtlMs: 0 },
+    );
+    const client = new CompanyMetricsBatchClient(
+      mopsfin,
+      () => new Date("2026-08-26T00:00:00.000Z"),
+    );
+
+    const result = await client.getCompanyMetricsBatch({
+      companyCodes,
+      metricCodes: ["ROE", "GrossMargin"],
+      basis: "quarterly",
+    });
+
+    const paths = fetchMock.mock.calls.map(([url]) =>
+      new URL(String(url)).pathname,
+    );
+    expect(paths.filter((path) => path === "/suggestCompany")).toHaveLength(20);
+    expect(paths.filter((path) => path === "/compare/data")).toHaveLength(4);
+    expect(paths.filter((path) => path === "/")).toHaveLength(1);
+    expect(peakSuggestions).toBeLessThanOrEqual(3);
+    expect(result.companies.map((company) => company.companyCode)).toEqual(
+      companyCodes,
+    );
+    expect(result.coverage.selectionComplete).toBe(true);
+    expect(result.warnings.join(" ")).toContain("comparison work units=4/24");
+    expect(result.warnings.join(" ")).toContain("identity logical lookup 上限=20");
+  });
+
+  it("single-flights identity lookups, bounds concurrency, expires TTL entries, and retries failures", async () => {
+    let nowMs = Date.parse("2026-08-26T00:00:00.000Z");
+    let activeSuggestions = 0;
+    let peakSuggestions = 0;
+    let failFirst9999 = true;
+    const callsByCode = new Map<string, number>();
+    const fetchMock = vi.fn(async (url: URL | RequestInfo) => {
+      const parsed = new URL(String(url));
+      expect(parsed.pathname).toBe("/suggestCompany");
+      const code = parsed.searchParams.get("query") as string;
+      callsByCode.set(code, (callsByCode.get(code) ?? 0) + 1);
+      activeSuggestions += 1;
+      peakSuggestions = Math.max(peakSuggestions, activeSuggestions);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      activeSuggestions -= 1;
+      if (code === "9999" && failFirst9999) {
+        failFirst9999 = false;
+        return response(JSON.stringify({ suggestions: [] }), "application/json");
+      }
+      return response(
+        JSON.stringify({ suggestions: [`${code} C${code}`] }),
+        "application/json",
+      );
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, {
+        retryDelayMs: 0,
+        maxAttempts: 1,
+      }),
+      () => new Date(nowMs),
+      {
+        identityLookupConcurrency: 2,
+        identityCacheTtlMs: 100,
+        identityCacheMaximumEntries: 8,
+      },
+    );
+
+    await Promise.all([
+      client.resolveCompanies(["2330"]),
+      client.resolveCompanies(["2330"]),
+    ]);
+    await client.resolveCompanies(["2330"]);
+    expect(callsByCode.get("2330")).toBe(1);
+
+    nowMs += 101;
+    await client.resolveCompanies(["2330"]);
+    expect(callsByCode.get("2330")).toBe(2);
+
+    await client.resolveCompanies(["1101", "1102", "1103", "1104", "1105"]);
+    expect(peakSuggestions).toBeLessThanOrEqual(2);
+
+    await expect(client.resolveCompanies(["9999"])).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    await expect(client.resolveCompanies(["9999"])).resolves.toEqual([
+      { code: "9999", name: "C9999", displayName: "9999 C9999" },
+    ]);
+    expect(callsByCode.get("9999")).toBe(2);
+  });
+
+  it("keeps in-flight deduplication but not completed identity cache entries when TTL is zero", async () => {
+    let suggestionCalls = 0;
+    const fetchMock = vi.fn(async (url: URL | RequestInfo) => {
+      const parsed = new URL(String(url));
+      expect(parsed.pathname).toBe("/suggestCompany");
+      suggestionCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      const code = parsed.searchParams.get("query") as string;
+      return response(
+        JSON.stringify({ suggestions: [`${code} C${code}`] }),
+        "application/json",
+      );
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, {
+        retryDelayMs: 0,
+        maxAttempts: 1,
+      }),
+      () => new Date("2026-08-26T00:00:00.000Z"),
+      { identityCacheTtlMs: 0 },
+    );
+
+    const [first, concurrent] = await Promise.all([
+      client.resolveCompanies(["2330", "2330"]),
+      client.resolveCompanies(["2330"]),
+    ]);
+    expect(first).toEqual([
+      { code: "2330", name: "C2330", displayName: "2330 C2330" },
+      { code: "2330", name: "C2330", displayName: "2330 C2330" },
+    ]);
+    expect(concurrent).toEqual([first[0]]);
+    expect(suggestionCalls).toBe(1);
+
+    await client.resolveCompanies(["2330"]);
+    expect(suggestionCalls).toBe(2);
+
+    await expect(
+      client.resolveCompanies(
+        Array.from({ length: 11 }, (_, index) => String(1101 + index)),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_ARGUMENT" });
+    expect(suggestionCalls).toBe(2);
+  });
+
+  it("bounds and deadline-cancels the identity lookup wait queue", async () => {
+    let releaseFirst: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(async (url: URL | RequestInfo) => {
+      const parsed = new URL(String(url));
+      const code = parsed.searchParams.get("query") as string;
+      if (code !== "1101") {
+        return response(
+          JSON.stringify({ suggestions: [`${code} C${code}`] }),
+          "application/json",
+        );
+      }
+      return new Promise<Response>((resolve) => {
+        releaseFirst = resolve;
+      });
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, {
+        retryDelayMs: 0,
+        maxAttempts: 1,
+      }),
+      () => new Date("2026-08-26T00:00:00.000Z"),
+      {
+        identityLookupConcurrency: 1,
+        identityLookupMaximumQueue: 1,
+        identityCacheTtlMs: 0,
+      },
+    );
+
+    const first = client.resolveCompanies(["1101"]);
+    await vi.waitFor(() => expect(releaseFirst).toBeTypeOf("function"));
+    const queued = runWithRequestDeadline(20, () =>
+      client.resolveCompanies(["1102"]),
+    );
+
+    await expect(client.resolveCompanies(["1103"])).rejects.toMatchObject({
+      code: "UPSTREAM_RATE_LIMITED",
+      reason: "IDENTITY_LOOKUP_BACKPRESSURE",
+      retryable: true,
+      action: "retry",
+    });
+    await expect(queued).rejects.toMatchObject({
+      code: "UPSTREAM_TIMEOUT",
+      reason: "UPSTREAM_DEADLINE_EXCEEDED",
+      retryable: true,
+    });
+
+    releaseFirst?.(
+      response(
+        JSON.stringify({ suggestions: ["1101 C1101"] }),
+        "application/json",
+      ),
+    );
+    await expect(first).resolves.toEqual([
+      { code: "1101", name: "C1101", displayName: "1101 C1101" },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an over-budget comparison plan before catalog or identity work", async () => {
+    const mock = {
+      getCatalog: vi.fn(),
+      resolveCompanies: vi.fn(),
+      getCompanyMetric: vi.fn(),
+    } as unknown as MopsfinClient;
+    const client = new CompanyMetricsBatchClient(mock);
+
+    await expect(
+      client.getCompanyMetricsBatch({
+        companyCodes: Array.from({ length: 31 }, (_, index) =>
+          String(1000 + index),
+        ),
+        metricCodes: Array.from({ length: 8 }, (_, index) => `M${index}`),
+        basis: "quarterly",
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      reason: "WORK_BUDGET_EXCEEDED",
+      details: {
+        workUnits: 32,
+        comparisonWorkUnits: 32,
+        identityLookupUpperBound: 31,
+        maximum: 24,
+      },
+    });
+    expect(mock.getCatalog).not.toHaveBeenCalled();
+    expect(mock.resolveCompanies).not.toHaveBeenCalled();
+    expect(mock.getCompanyMetric).not.toHaveBeenCalled();
   });
 
   it("rejects period windows over twelve quarters before upstream work", async () => {

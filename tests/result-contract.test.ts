@@ -128,7 +128,43 @@ describe("mopsfin.result.v1", () => {
       "2026-08-26T00:00:00.000Z",
     );
 
-    expect(meta.quality.universe).toBe("not_applicable");
+    expect(meta.quality).toMatchObject({
+      status: "partial",
+      universe: "not_applicable",
+      values: "unknown",
+    });
+  });
+
+  it("marks unverified universes partial and does not invent a cutoff for unverified empty sources", () => {
+    const meta = buildResultMeta(
+      {
+        coverage: {
+          requestedStart: "2026-01-01",
+          requestedEnd: "2026-01-31",
+          coveredThrough: "2026-01-31",
+        },
+        sources: [
+          {
+            sourceUrl: "https://example.test/no-data?month=2026-01",
+            retrievedAt: "2026-08-26T00:00:00.000Z",
+            snapshotIdentity: "unverified_empty",
+          },
+        ],
+      },
+      { universe: "unverified", source: "partial" },
+      "2026-08-26T00:00:00.000Z",
+    );
+
+    expect(meta.quality).toMatchObject({
+      status: "partial",
+      source: "partial",
+      universe: "unverified",
+    });
+    expect(meta.asOf.sourceCutoffs[0].resolved).toEqual({
+      granularity: "none",
+      from: null,
+      through: null,
+    });
   });
 });
 
@@ -187,6 +223,56 @@ describe("stateless company cursor", () => {
         maximumPageSize: 2,
       }),
     ).toThrowError(/快照已變更/);
+
+    for (const attempt of [
+      () =>
+        paginateByCompany({
+          tool: "different-tool",
+          query: { market: "all" },
+          snapshotId: "snapshot-a",
+          items: ["1101", "2330", "3105"],
+          cursor,
+          maximumPageSize: 2,
+        }),
+      () =>
+        paginateByCompany({
+          tool: "example",
+          query: { market: "all" },
+          snapshotId: "snapshot-a",
+          items: ["1101", "2330", "3105"],
+          pageSize: 1,
+          cursor,
+          maximumPageSize: 2,
+        }),
+      () =>
+        paginateByCompany({
+          tool: "example",
+          query: { market: "all" },
+          snapshotId: "snapshot-a",
+          items: ["1101", "2330", "3105"],
+          cursor: `${cursor}tampered`,
+          maximumPageSize: 2,
+        }),
+    ]) {
+      expect(attempt).toThrowError(
+        expect.objectContaining({
+          code: "INVALID_ARGUMENT",
+          reason: "CURSOR_INVALID",
+          action: "restart_pagination",
+        }),
+      );
+    }
+
+    expect(() =>
+      paginateByCompany({
+        tool: "example",
+        query: {},
+        snapshotId: "snapshot-a",
+        items: ["1101"],
+        pageSize: 3,
+        maximumPageSize: 2,
+      }),
+    ).toThrowError(/page_size 必須介於 1 與 2/);
   });
 
   it("preserves legacy full return when pagination is omitted", () => {

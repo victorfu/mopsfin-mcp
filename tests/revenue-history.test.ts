@@ -129,6 +129,11 @@ function master(companies: MasterCompany[]) {
       query: { market: "all", includeFinancial: true, includeKy: true },
       generatedAt: "2026-08-26T00:00:00.000Z",
       snapshotId: "fixture",
+      coverageVerification: {
+        status: "heuristic",
+        method: "required_sources_schema_single_report_date_minimum_count",
+        officialDeclaredRowCountAvailable: false,
+      },
       coverageComplete: true,
       sources: [],
       counts: {
@@ -199,6 +204,40 @@ describe("MOPS monthly revenue CSV", () => {
     expect(() => parseRevenueCsv(`${headers.join(",")}\r\n1,"未結束`)).toThrow(
       "CSV 引號欄位未結束",
     );
+  });
+
+  it("accepts both official legacy and prefixed 14-column archive headers", () => {
+    const record = archiveRecord("2026-07");
+    const legacyCsv = csvFromRecords([record]);
+    const prefixedHeaders = headers.map(
+      (header) => openapiHeaderByCsvHeader[header] ?? header,
+    );
+    const prefixedCsv = legacyCsv.replace(
+      headers.join(","),
+      prefixedHeaders.join(","),
+    );
+
+    expect(parseRevenueCsv(legacyCsv)[0]).toHaveProperty("當月營收", "120");
+    expect(parseRevenueCsv(prefixedCsv)[0]).toHaveProperty(
+      "營業收入-當月營收",
+      "120",
+    );
+    expect(
+      normalizeMonthlyRevenueCsv(
+        {
+          payload: parseRevenueCsv(prefixedCsv),
+          retrievedAt: now().toISOString(),
+        },
+        {
+          market: "listed",
+          exchange: "TWSE",
+          sourceName: "fixture",
+          sourceUrl:
+            "https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_115_7.csv",
+          dataMonth: "2026-07",
+        },
+      ).rows[0].currentMonthRevenueTwd,
+    ).toBe(120_000);
   });
 
   it("normalizes ROC fields, thousand TWD, official sentinel and quoted notes", () => {
@@ -372,7 +411,36 @@ describe("MonthlyRevenueClient history", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
-  it("prefers a newer same-month archive, warns on rowset differences, and fails numeric conflicts", async () => {
+  it("rejects an archive above the configured row cap without retrying", async () => {
+    const fetchMock = vi.fn(async () =>
+      response(listedArchiveFixture, 200, "text/csv"),
+    );
+    const client = new MonthlyRevenueClient(
+      fetchMock as typeof fetch,
+      now,
+      master([
+        company("1101", "台泥", "listed", "01"),
+        company("2330", "台積電", "listed"),
+      ]),
+      { maxAttempts: 2, maxCsvRows: 1, retryDelayMs: 0 },
+    );
+
+    await expect(
+      client.getMonthlyRevenue({
+        market: "listed",
+        dataMonth: "2026-07",
+        universePolicy: "compatible",
+      }),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "UPSTREAM_RESPONSE_LIMIT_EXCEEDED",
+      retryable: false,
+      action: "none",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers a newer same-month archive, reports revisions, and rejects same-vintage conflicts", async () => {
     const extra = { ...twseFixture[0], 公司代號: "9999", 公司名稱: "新申報" };
     const archive = csvFromRecords(
       [...twseFixture, extra].map((record) => ({
@@ -429,9 +497,35 @@ describe("MonthlyRevenueClient history", () => {
       }
       return response("not found", 404, "text/plain");
     });
+    const revised = await new MonthlyRevenueClient(
+      conflictFetch as typeof fetch,
+      now,
+      master([company("1101", "台泥", "listed"), company("2330", "台積電", "listed")]),
+      { retryDelayMs: 0 },
+    ).getMonthlyRevenue({
+      market: "listed",
+      dataMonth: "latest",
+      companyCodes: ["2330"],
+      universePolicy: "compatible",
+    });
+    expect(revised.rows[0].currentMonthRevenueTwd).toBe(3_000_001_000);
+    expect(revised.warnings.join(" ")).toContain("官方修訂");
+
+    const sameVintageConflict = conflictingArchive.replaceAll(
+      "115/08/26",
+      "115/08/17",
+    );
+    const sameVintageFetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = String(input);
+      if (url.includes("openapi.twse.com.tw")) return response(twseFixture);
+      if (url.endsWith("t21sc03_115_7.csv")) {
+        return response(sameVintageConflict, 200, "text/csv");
+      }
+      return response("not found", 404, "text/plain");
+    });
     await expect(
       new MonthlyRevenueClient(
-        conflictFetch as typeof fetch,
+        sameVintageFetch as typeof fetch,
         now,
         master([company("1101", "台泥", "listed"), company("2330", "台積電", "listed")]),
         { retryDelayMs: 0 },
@@ -441,6 +535,49 @@ describe("MonthlyRevenueClient history", () => {
         universePolicy: "compatible",
       }),
     ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+
+    const systemicOpenapi = Array.from({ length: 6 }, (_, index) => ({
+      ...twseFixture[1],
+      公司代號: String(1200 + index),
+      公司名稱: `公司${index}`,
+    }));
+    const systemicArchive = csvFromRecords(
+      systemicOpenapi.map((record, index) => ({
+        ...record,
+        出表日期: "115/08/26",
+        "營業收入-當月營收": String(4_000_000 + index),
+      })),
+    );
+    const systemicFetch = vi.fn(async (input: URL | RequestInfo) => {
+      const url = String(input);
+      if (url.includes("openapi.twse.com.tw")) return response(systemicOpenapi);
+      if (url.endsWith("t21sc03_115_7.csv")) {
+        return response(systemicArchive, 200, "text/csv");
+      }
+      return response("not found", 404, "text/plain");
+    });
+    await expect(
+      new MonthlyRevenueClient(
+        systemicFetch as typeof fetch,
+        now,
+        master(
+          systemicOpenapi.map((record) =>
+            company(record.公司代號, record.公司名稱, "listed"),
+          ),
+        ),
+        { retryDelayMs: 0 },
+      ).getMonthlyRevenue({
+        market: "listed",
+        dataMonth: "latest",
+        universePolicy: "compatible",
+      }),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      details: {
+        conflictingCompanyCount: 6,
+        maximumRevisionConflicts: 5,
+      },
+    });
   });
 
   it("selects the newest common valid month when market OpenAPI months differ", async () => {

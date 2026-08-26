@@ -39,7 +39,7 @@ describe("README example prompts", () => {
     expect(readme).not.toContain("列出最近完成交易日全部上市櫃公司的 OHLC");
   });
 
-  it("documents the v0.3.0 fifteen-tool contract and official sources", () => {
+  it("documents the v0.3.1 fifteen-tool contract and official sources", () => {
     const tools = [
       "find_companies",
       "get_stock_ohlc",
@@ -57,7 +57,7 @@ describe("README example prompts", () => {
       "get_industry_data",
       "get_financial_institution_metric",
     ];
-    expect(readme).toContain("目前版本 `0.3.0`");
+    expect(readme).toContain("目前版本 `0.3.1`");
     expect(readme).toContain("十五個工具");
     for (const tool of tools) expect(readme).toContain(`\`${tool}\``);
     expect(readme).toContain("meta.contractVersion=mopsfin.result.v1");
@@ -87,6 +87,13 @@ describe("README example prompts", () => {
     expect(readme).toContain("STATELESS_PAGE_VALUES_NOT_PINNED");
     expect(readme).toContain("comparability=needs_review");
     expect(readme).toContain("declared row count");
+    expect(readme).toContain("coverageVerification.status");
+    expect(readme).toContain("MASTER_ROWSET_HEURISTIC");
+    expect(readme).toContain("absolute deadline");
+    expect(readme).toContain("Retry-After");
+    expect(readme).toContain("不記錄 tool arguments");
+    expect(readme).toContain("每週一次");
+    expect(readme).not.toContain("請勿把 live tests 設為定時 CI");
     expect(readme).not.toContain("v1 都只支援 latest");
     expect(readme).not.toContain("第一版只提供官方最新");
     expect(readme).not.toContain("不提供盤中即時報價、成交量、成交金額");

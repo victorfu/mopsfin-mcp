@@ -39,4 +39,16 @@ describe("Mopsfin HTML table normalization", () => {
       nextOffset: null,
     });
   });
+
+  it("rejects span amplification before expanding the table", () => {
+    expect(() =>
+      parseHtmlTables("<table><tr><td colspan='1001'>x</td></tr></table>"),
+    ).toThrowError(/colspan 超出安全範圍/);
+  });
+
+  it("rejects oversized HTML before parsing", () => {
+    expect(() => parseHtmlTables("x".repeat(8_000_001))).toThrowError(
+      /回應大小超出安全上限/,
+    );
+  });
 });

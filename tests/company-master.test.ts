@@ -36,6 +36,17 @@ const testOptions = {
 };
 
 describe("CompanyMasterClient", () => {
+  it("requires positive integer minimum-count heuristics", () => {
+    expect(
+      () =>
+        new CompanyMasterClient(
+          fixtureFetch() as typeof fetch,
+          () => new Date("2026-08-25T00:00:00.000Z"),
+          { minimumCompanyCounts: { listed: 0 } },
+        ),
+    ).toThrow(/minimumCompanyCounts\.listed/);
+  });
+
   it.each([
     ["listed", 4, 4, 0, ["1101", "2330", "2881", "6415"]],
     ["otc", 4, 0, 4, ["1591", "3105", "5864", "6488"]],
@@ -63,10 +74,21 @@ describe("CompanyMasterClient", () => {
       });
 
       expect(result.coverageComplete).toBe(true);
+      expect(result.coverageVerification).toEqual({
+        status: "heuristic",
+        method: "required_sources_schema_single_report_date_minimum_count",
+        officialDeclaredRowCountAvailable: false,
+      });
       expect(result.snapshotId).toContain("2026-08-24");
       expect(result.counts).toMatchObject({ returned, listed, otc });
       expect(result.companies.map((company) => company.code)).toEqual(codes);
       expect(result.sources).toHaveLength(market === "all" ? 2 : 1);
+      expect(
+        result.sources.every((source) => source.minimumExpectedCount === 1),
+      ).toBe(true);
+      expect(result.warnings.join(" ")).toContain(
+        "無法證明完整 rowset",
+      );
       expect(result.profileCoverage.incorporationDate.reported).toBeGreaterThanOrEqual(0);
       expect(fetchMock).toHaveBeenCalledTimes(market === "all" ? 2 : 1);
     },

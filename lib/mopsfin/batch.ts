@@ -188,7 +188,7 @@ function mergeMetricResults(
     chunkResults.flatMap((result) =>
       (result?.series ?? [])
         .filter((series) => series.seriesType === "company")
-        .map((series) => [series.companyCode, series] as const),
+        .map((series) => [series.companyCode.toLowerCase(), series] as const),
     ),
   );
   const byCompany = new Map<string, CompanyMetricsBatchMetric>();
@@ -196,7 +196,7 @@ function mergeMetricResults(
   const missingCompanyCodes: string[] = [];
   const noValidDataCompanyCodes: string[] = [];
   for (const companyCode of companyCodes) {
-    const series = seriesByCode.get(companyCode);
+    const series = seriesByCode.get(companyCode.toLowerCase());
     const companyPeriods = periodsByCompany.get(companyCode) ?? periods;
     const pointByPeriod = new Map(series?.points.map((point) => [point.period, point]));
     const points = companyPeriods.map(
@@ -248,6 +248,20 @@ export class CompanyMetricsBatchClient {
 
   async getCompanyMetricsBatch(query: CompanyMetricsBatchQuery): Promise<CompanyMetricsBatchResult> {
     const { companyCodes, metricCodes } = validateQuery(query);
+    const companyChunks = chunks(companyCodes, 10);
+    const workUnits = companyChunks.length * metricCodes.length;
+    if (workUnits > 24) {
+      throw new MopsfinError("INVALID_ARGUMENT", "批次指標工作量超過每頁 24 units。", {
+        reason: "WORK_BUDGET_EXCEEDED",
+        details: {
+          workUnits,
+          comparisonWorkUnits: workUnits,
+          identityLookupUpperBound: companyCodes.length,
+          maximum: 24,
+          maximumComparisonWorkUnits: 24,
+        },
+      });
+    }
     const catalog = await this.client.getCatalog();
     const metrics = metricCodes.map((code) => {
       const metric = catalog.metrics.find((candidate) => candidate.code === code && candidate.family === "data");
@@ -256,33 +270,49 @@ export class CompanyMetricsBatchClient {
       }
       return metric;
     });
-    const identities = await this.client.resolveCompanies(companyCodes);
-    const identityByCode = new Map(identities.map((company) => [company.code, company]));
-    const companyChunks = chunks(companyCodes, 10);
-    const jobs = metrics.flatMap((metric) =>
-      companyChunks.map((companyChunk) => ({ metric, companyChunk })),
+    const identities = await this.client.resolveCompanies(companyCodes, {
+      maximumCompanyCount: 100,
+    });
+    const identityByCode = new Map(
+      identities.map((company) => [company.code.toLowerCase(), company]),
     );
-    if (jobs.length > 24) {
-      throw new MopsfinError("INVALID_ARGUMENT", "批次指標工作量超過每頁 24 units。", {
-        reason: "WORK_BUDGET_EXCEEDED",
-        details: { workUnits: jobs.length, maximum: 24 },
-      });
-    }
-    const results = await mapWithConcurrency(jobs, 3, async ({ metric, companyChunk }) => {
+    const identityChunks = companyChunks.map((companyChunk) =>
+      companyChunk.map((companyCode) => {
+        const identity = identityByCode.get(companyCode.toLowerCase());
+        if (!identity) {
+          throw new MopsfinError(
+            "UPSTREAM_BAD_RESPONSE",
+            `公司 identity 解析結果缺少 ${companyCode}。`,
+          );
+        }
+        return identity;
+      }),
+    );
+    const jobs = metrics.flatMap((metric) =>
+      companyChunks.map((companyChunk, chunkIndex) => ({
+        metric,
+        companyChunk,
+        identities: identityChunks[chunkIndex],
+      })),
+    );
+    const results = await mapWithConcurrency(jobs, 3, async ({ metric, companyChunk, identities }) => {
       try {
-        return await this.client.getCompanyMetric({
-          metricCode: metric.code,
-          companyCodes: companyChunk,
-          basis: query.basis,
-          yoyQuarter: query.yoyQuarter,
-          includeIndustryAverage: false,
-          includeCompanyAverage: false,
-          range: {
-            history: "recent_12",
-            startPeriod: query.startPeriod,
-            endPeriod: query.endPeriod,
+        return await this.client.getCompanyMetric(
+          {
+            metricCode: metric.code,
+            companyCodes: companyChunk,
+            basis: query.basis,
+            yoyQuarter: query.yoyQuarter,
+            includeIndustryAverage: false,
+            includeCompanyAverage: false,
+            range: {
+              history: "recent_12",
+              startPeriod: query.startPeriod,
+              endPeriod: query.endPeriod,
+            },
           },
-        });
+          identities,
+        );
       } catch (error) {
         if (error instanceof MopsfinError && error.code === "NO_DATA") return null;
         throw error;
@@ -301,7 +331,7 @@ export class CompanyMetricsBatchClient {
       ),
     );
     const companies = companyCodes.map((companyCode) => {
-      const identity = identityByCode.get(companyCode) as CompanySuggestion;
+      const identity = identityByCode.get(companyCode.toLowerCase()) as CompanySuggestion;
       return {
         companyCode,
         companyName: identity.name,
@@ -387,6 +417,7 @@ export class CompanyMetricsBatchClient {
       sources,
       warnings: [
         "批次工具不包含產業平均或所選公司平均；每頁每家公司都包含全部 requested metrics。",
+        `本頁 comparison work units=${workUnits}/24；identity logical lookup 上限=${companyCodes.length}（cache hit 可減少，HTTP retry 另計），且每個代號的解析結果會跨全部 requested metrics 重用。`,
         ...(missingCompanyCodes.length > 0
           ? [`部分公司至少一項指標未回傳 series：${missingCompanyCodes.join("、")}。`]
           : []),
