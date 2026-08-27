@@ -2,6 +2,8 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { catalystClient } from "@/lib/catalyst/client";
+import type { CompanyCatalystEventsResult } from "@/lib/catalyst/types";
 import { companyMasterClient } from "@/lib/company-master/client";
 import {
   companyMetricsBatchClient,
@@ -39,6 +41,141 @@ const source = {
   retrievedAt: "2026-08-24T00:00:00.000Z",
   upstreamRoute: "/compare/data",
   freshnessNote: "原站每日更新一次，資料可能較最新申報落後約一日。",
+};
+
+const catalystEvents: CompanyCatalystEventsResult = {
+  query: {
+    companyCodes: ["2330"],
+    startDate: "2026-01-01",
+    endDate: "2026-01-31",
+    eventTypes: ["material_information", "investor_conference"],
+    offset: 0,
+    limit: 50,
+  },
+  generatedAt: "2026-08-24T00:00:00.000Z",
+  timezone: "Asia/Taipei",
+  scope: "official_disclosure_events",
+  isConsensus: false,
+  events: [
+    {
+      eventId: "fixture-material-event",
+      eventType: "material_information",
+      companyCode: "2330",
+      companyName: "台積電",
+      market: "listed",
+      title: "公告本公司董事會決議",
+      description: "官方重大訊息說明",
+      clause: "第31款",
+      publishedAt: "2026-01-15T13:30:00+08:00",
+      factDate: "2026-01-15",
+      scheduledAt: null,
+      effectiveAt: null,
+      timezone: "Asia/Taipei",
+      status: "announced",
+      statusBasis: "announcement_publication",
+      dateConfidence: "confirmed",
+      dateBasis: "publication",
+      datePrecision: "minute",
+      isConsensus: false,
+      sourceKey: "mops_material_information_history",
+      sourceUrl: "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
+      sourceReportDate: null,
+      sourceRecordKey: "fixture-record",
+      eventDetails: null,
+    },
+  ],
+  sources: [
+    {
+      eventType: "material_information",
+      market: null,
+      exchange: "MOPS",
+      sourceKey: "mops_material_information_history",
+      sourceName: "公開資訊觀測站－歷史重大訊息",
+      sourceUrl: "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
+      retrievedAt: "2026-08-24T00:00:00.000Z",
+      scope: "selected_company_historical_months",
+      queryStart: "2026-01-01",
+      queryEnd: "2026-01-31",
+      sourceReportDate: null,
+      rawRowCount: 1,
+      acceptedEventCount: 1,
+      snapshotIdentity: "fixture-source-snapshot",
+    },
+  ],
+  coverage: {
+    sourceComplete: true,
+    failureIsolation: "per_company_event_type_calendar_month",
+    currentSnapshots: [],
+    families: [
+      {
+        eventType: "material_information",
+        scope: "current_and_selected_company_history",
+        status: "complete",
+        requestedStart: "2026-01-01",
+        requestedEnd: "2026-01-31",
+        failedCompanyCodes: [],
+      },
+      {
+        eventType: "investor_conference",
+        scope: "selected_company_history",
+        status: "complete",
+        requestedStart: "2026-01-01",
+        requestedEnd: "2026-01-31",
+        failedCompanyCodes: [],
+      },
+    ],
+  },
+  familyCoverage: [
+    ...(["material_information", "investor_conference"] as const).map(
+      (eventType) => ({
+        companyCode: "2330",
+        eventType,
+        status: "complete" as const,
+        queryStart: "2026-01-01",
+        queryEnd: "2026-01-31",
+        requestCount: 1,
+        completedRequestCount: 1,
+        verifiedEmptyRequestCount: eventType === "investor_conference" ? 1 : 0,
+        nonemptyRequestCount: eventType === "material_information" ? 1 : 0,
+        eventCount: eventType === "material_information" ? 1 : 0,
+        snapshotIdentity: `fixture-${eventType}`,
+        failures: [],
+      }),
+    ),
+  ],
+  companies: [
+    { companyCode: "2330", status: "complete", eventCount: 1, failures: [] },
+  ],
+  failures: [],
+  counts: {
+    requestedCompanies: 1,
+    requestedEventTypes: 2,
+    totalEvents: 1,
+    returnedEvents: 1,
+    completeCompanies: 1,
+    partialCompanies: 0,
+    failedCompanies: 0,
+  },
+  workBudget: {
+    companyCount: 1,
+    distinctCalendarMonths: 1,
+    eventTypeCount: 2,
+    historicalLogicalUnits: 2,
+    historicalUpstreamRequests: 3,
+    currentSnapshotRequests: 0,
+    plannedUpstreamRequests: 3,
+    upstreamRequestLimit: 40,
+  },
+  pagination: {
+    offset: 0,
+    limit: 50,
+    totalRows: 1,
+    returnedRows: 1,
+    hasMore: false,
+    nextOffset: null,
+  },
+  fingerprint: "fixture-catalyst-fingerprint",
+  warnings: ["官方揭露事件不是分析師 consensus。"],
 };
 
 const catalog: Catalog = {
@@ -1536,7 +1673,10 @@ describe("MCP protocol integration", () => {
     ).toBe(true);
   });
 
-  it("initializes, lists sixteen tools and calls each tool with structured output", async () => {
+  it("initializes, lists seventeen tools and calls each tool with structured output", async () => {
+    const catalystSpy = vi
+      .spyOn(catalystClient, "getCompanyCatalystEvents")
+      .mockResolvedValue(catalystEvents);
     const companyMasterSpy = vi
       .spyOn(companyMasterClient, "listCompanies")
       .mockResolvedValue(companyMaster);
@@ -1637,7 +1777,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.5.1" },
+      { name: "mopsfin-test", version: "0.6.0" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -1672,6 +1812,7 @@ describe("MCP protocol integration", () => {
       "get_stock_ohlc",
       "get_daily_market_ohlc",
       "get_stock_reaction_signals",
+      "get_company_catalyst_events",
       "screen_taiwan_stock_candidates",
       "get_daily_market_valuation",
       "get_monthly_revenue",
@@ -1807,6 +1948,22 @@ describe("MCP protocol integration", () => {
     expect(reactionTool?.inputSchema.properties?.horizons).toHaveProperty(
       "description",
     );
+    const catalystTool = listed.tools.find(
+      (tool) => tool.name === "get_company_catalyst_events",
+    );
+    expect(catalystTool?.description).toContain("重大訊息");
+    expect(catalystTool?.description).toContain("法人說明會");
+    expect(catalystTool?.description).toContain("publishedAt");
+    expect(catalystTool?.description).toContain("consensus");
+    expect(catalystTool?.description).toContain("不是 point-in-time snapshot");
+    expect(catalystTool?.inputSchema.properties?.company_codes).toMatchObject({
+      minItems: 1,
+      maxItems: 20,
+    });
+    expect(catalystTool?.inputSchema.properties?.limit).toMatchObject({
+      default: 50,
+      maximum: 100,
+    });
     const screenTool = listed.tools.find(
       (tool) => tool.name === "screen_taiwan_stock_candidates",
     );
@@ -1900,6 +2057,14 @@ describe("MCP protocol integration", () => {
           as_of: "latest",
           horizons: [5],
           page_size: 1,
+        },
+      ],
+      [
+        "get_company_catalyst_events",
+        {
+          company_codes: ["2330"],
+          start_date: "2026-01-01",
+          end_date: "2026-01-31",
         },
       ],
       [
@@ -2212,6 +2377,47 @@ describe("MCP protocol integration", () => {
           excessReturnPercentagePoints: 2,
         });
       }
+      if (name === "get_company_catalyst_events") {
+        const structured = result.structuredContent as {
+          meta: {
+            asOf: { selector: string; snapshotId: string | null };
+            quality: { source: string; selection: string; values: string };
+            page: { mode: string; unit: string; total: number | null };
+          };
+          isConsensus: boolean;
+          events: Array<{
+            eventType: string;
+            publishedAt: string | null;
+            factDate: string | null;
+            scheduledAt: string | null;
+            effectiveAt: string | null;
+          }>;
+          coverage: { failureIsolation: string };
+        };
+        expect(structured.meta).toMatchObject({
+          asOf: {
+            selector: "range",
+            snapshotId: "fixture-catalyst-fingerprint",
+          },
+          quality: {
+            source: "complete",
+            selection: "complete",
+            values: "complete",
+          },
+          page: { mode: "offset", unit: "row", total: 1 },
+        });
+        expect(structured.isConsensus).toBe(false);
+        expect(structured.events[0]).toMatchObject({
+          eventType: "material_information",
+          publishedAt: "2026-01-15T13:30:00+08:00",
+          factDate: "2026-01-15",
+          scheduledAt: null,
+          effectiveAt: null,
+        });
+        expect(structured.coverage.failureIsolation).toBe(
+          "per_company_event_type_calendar_month",
+        );
+      }
       if (name === "screen_taiwan_stock_candidates") {
         const structured = result.structuredContent as {
           meta: {
@@ -2400,6 +2606,176 @@ describe("MCP protocol integration", () => {
         ]);
       }
     }
+
+    const isolatedFailure = {
+      failureId: "fixture-catalyst-failure",
+      companyCode: "2330",
+      eventType: "investor_conference" as const,
+      market: "listed" as const,
+      queryMonth: "2026-01",
+      code: "UPSTREAM_TIMEOUT",
+      reason: "UPSTREAM_DEADLINE_EXCEEDED",
+      message: "fixture isolated conference failure",
+      retryable: true,
+      retryAfterMs: null,
+      action: "retry" as const,
+    };
+    catalystSpy.mockResolvedValueOnce({
+      ...catalystEvents,
+      coverage: {
+        ...catalystEvents.coverage,
+        sourceComplete: false,
+        families: catalystEvents.coverage.families.map((family) =>
+          family.eventType === "investor_conference"
+            ? {
+                ...family,
+                status: "partial" as const,
+                failedCompanyCodes: ["2330"],
+              }
+            : family,
+        ),
+      },
+      familyCoverage: catalystEvents.familyCoverage.map((family) =>
+        family.eventType === "investor_conference"
+          ? {
+              ...family,
+              status: "partial" as const,
+              completedRequestCount: 0,
+              verifiedEmptyRequestCount: 0,
+              failures: [isolatedFailure],
+            }
+          : family,
+      ),
+      companies: [
+        {
+          companyCode: "2330",
+          status: "partial" as const,
+          eventCount: 1,
+          failures: [isolatedFailure],
+        },
+      ],
+      failures: [isolatedFailure],
+      counts: {
+        ...catalystEvents.counts,
+        completeCompanies: 0,
+        partialCompanies: 1,
+      },
+      fingerprint: "fixture-partial-catalyst-fingerprint",
+    });
+    const partialCatalystResult = await client.callTool({
+      name: "get_company_catalyst_events",
+      arguments: {
+        company_codes: ["2330"],
+        start_date: "2026-01-01",
+        end_date: "2026-01-31",
+      },
+    });
+    expect(partialCatalystResult.isError).not.toBe(true);
+    expect(partialCatalystResult.structuredContent).toMatchObject({
+      meta: {
+        quality: {
+          status: "partial",
+          source: "partial",
+          selection: "partial",
+          values: "partial",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              code: "CATALYST_COMPANY_FAMILY_FAILED",
+              refs: expect.objectContaining({ companyCodes: ["2330"] }),
+            }),
+          ]),
+        },
+      },
+      companies: [
+        expect.objectContaining({ companyCode: "2330", status: "partial" }),
+      ],
+      failures: [
+        expect.objectContaining({
+          companyCode: "2330",
+          eventType: "investor_conference",
+          queryMonth: "2026-01",
+        }),
+      ],
+    });
+
+    companyMasterSpy.mockResolvedValueOnce({
+      ...companyMaster,
+      companies: [],
+    });
+    catalystSpy.mockResolvedValueOnce({
+      ...catalystEvents,
+      query: {
+        ...catalystEvents.query,
+        companyCodes: ["9999"],
+      },
+      events: [],
+      sources: catalystEvents.sources.map((item) => ({
+        ...item,
+        rawRowCount: 0,
+        acceptedEventCount: 0,
+      })),
+      familyCoverage: catalystEvents.familyCoverage.map((family) => ({
+        ...family,
+        companyCode: "9999",
+        verifiedEmptyRequestCount: 1,
+        nonemptyRequestCount: 0,
+        eventCount: 0,
+      })),
+      companies: [
+        {
+          companyCode: "9999",
+          status: "complete" as const,
+          eventCount: 0,
+          failures: [],
+        },
+      ],
+      counts: {
+        ...catalystEvents.counts,
+        totalEvents: 0,
+        returnedEvents: 0,
+      },
+      pagination: {
+        ...catalystEvents.pagination,
+        totalRows: 0,
+        returnedRows: 0,
+      },
+      fingerprint: "fixture-unverified-identity-catalyst-fingerprint",
+    });
+    const unverifiedIdentityResult = await client.callTool({
+      name: "get_company_catalyst_events",
+      arguments: {
+        company_codes: ["9999"],
+        start_date: "2026-01-01",
+        end_date: "2026-01-31",
+      },
+    });
+    expect(unverifiedIdentityResult.isError).not.toBe(true);
+    expect(unverifiedIdentityResult.structuredContent).toMatchObject({
+      meta: {
+        quality: {
+          status: "partial",
+          source: "complete",
+          selection: "partial",
+          values: "complete",
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              code: "CATALYST_MARKET_HINT_PARTIAL",
+            }),
+            expect.objectContaining({
+              code: "CATALYST_COMPANY_IDENTITY_UNVERIFIED",
+              refs: expect.objectContaining({ companyCodes: ["9999"] }),
+            }),
+          ]),
+        },
+      },
+      companies: [
+        expect.objectContaining({
+          companyCode: "9999",
+          status: "complete",
+          eventCount: 0,
+        }),
+      ],
+    });
 
     reactionSpy.mockResolvedValueOnce(stockUnavailableReactionSignals());
     const unavailableReactionPage = await client.callTool({

@@ -473,6 +473,154 @@ export const monthlyRevenueTrendInputSchema = z
     }
   });
 
+const catalystEventTypeSchema = z.enum([
+  "material_information",
+  "investor_conference",
+]);
+
+const catalystSourceKeySchema = z.enum([
+  "twse_material_information_current",
+  "tpex_material_information_current",
+  "mops_material_information_history",
+  "mops_investor_conference_history",
+]);
+
+const catalystCurrentSourceKeySchema = z.enum([
+  "twse_material_information_current",
+  "tpex_material_information_current",
+]);
+
+function strictCalendarDateEpoch(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const epoch = Date.UTC(year, month - 1, day);
+  const parsed = new Date(epoch);
+  return parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+    ? epoch
+    : null;
+}
+
+export const companyCatalystEventsInputSchema = z
+  .object({
+    company_codes: z
+      .array(
+        z
+          .string()
+          .regex(/^\d{4}$/)
+          .describe("要查詢官方事件的四碼台股公司代號"),
+      )
+      .min(1)
+      .max(20)
+      .describe(
+        "要查詢的 1 至 20 家公司；逐公司向官方 MOPS 歷史頁查詢，單一公司失敗不得抹除其他公司的成功結果",
+      ),
+    start_date: calendarDateSchema.describe(
+      "事件查詢起始日（含），採 Asia/Taipei 日曆日期",
+    ),
+    end_date: calendarDateSchema.describe(
+      "事件查詢結束日（含），不得早於 start_date，且含首尾最多 366 日；可涵蓋官方已公告的未來排定事件",
+    ),
+    event_types: z
+      .array(
+        catalystEventTypeSchema.describe(
+          "material_information=重大訊息；investor_conference=法人說明會",
+        ),
+      )
+      .min(1)
+      .max(2)
+      .default(["material_information", "investor_conference"])
+      .describe(
+        "要取得的官方事件 family；本版本不提供分析師 consensus、預估修正、目標價或事件情緒分數",
+      ),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .default(0)
+      .describe(
+        "組裝並依事件時間穩定排序後的零起算事件位移；續頁必須沿用完全相同的公司、日期與 event_types",
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(50)
+      .describe("本頁最多回傳事件數，預設 50、上限 100"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.company_codes).size !== value.company_codes.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["company_codes"],
+        message: "company_codes 不得包含重複代號",
+      });
+    }
+    if (new Set(value.event_types).size !== value.event_types.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["event_types"],
+        message: "event_types 不得包含重複 family",
+      });
+    }
+    const start = strictCalendarDateEpoch(value.start_date);
+    const end = strictCalendarDateEpoch(value.end_date);
+    if (start === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["start_date"],
+        message: "start_date 必須是真實存在的日曆日期",
+      });
+    }
+    if (end === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["end_date"],
+        message: "end_date 必須是真實存在的日曆日期",
+      });
+    }
+    if (start === null || end === null) return;
+    if (end < start) {
+      context.addIssue({
+        code: "custom",
+        path: ["end_date"],
+        message: "end_date 不得早於 start_date",
+      });
+    } else if ((end - start) / 86_400_000 + 1 > 366) {
+      context.addIssue({
+        code: "custom",
+        path: ["end_date"],
+        message: "事件查詢範圍含首尾最多 366 日",
+      });
+    }
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    const calendarMonthCount =
+      (endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12 +
+      endDate.getUTCMonth() -
+      startDate.getUTCMonth() +
+      1;
+    const unitsPerCompanyMonth =
+      (value.event_types.includes("material_information") ? 1 : 0) +
+      (value.event_types.includes("investor_conference") ? 2 : 0);
+    const minimumHistoricalWorkUnits =
+      value.company_codes.length * calendarMonthCount * unitsPerCompanyMonth;
+    if (minimumHistoricalWorkUnits > 40) {
+      context.addIssue({
+        code: "custom",
+        path: ["company_codes"],
+        message:
+          `歷史 catalyst 查詢至少需要 ${minimumHistoricalWorkUnits} 個工作單位，超過 40；重大訊息每 company×month 一單位，法說會因雙市場查詢為兩單位`,
+      });
+    }
+  });
+
 export const stockReactionSignalsInputSchema = z
   .object({
     company_codes: z
@@ -1825,6 +1973,349 @@ export const monthlyRevenueTrendOutputSchema = z
       )
       .describe("按公司組織的月營收趨勢；本頁每家公司均包含完整月份視窗"),
     sources: z.array(revenueSourceSchema).describe("本次各月份與市場實際使用的官方月營收來源"),
+    ...warningShape,
+  })
+  .strict();
+
+const catalystEventSchema = z
+  .object({
+    eventId: z
+      .string()
+      .describe("由官方事件 identity 組成的穩定識別碼，可用於同次與後續查詢去重"),
+    eventType: catalystEventTypeSchema.describe("官方事件 family"),
+    companyCode: z.string().describe("事件所屬四碼公司股票代號"),
+    companyName: z.string().describe("事件來源列所載公司名稱"),
+    market: z.enum(["listed", "otc"]).describe("事件公司所屬上市或上櫃市場"),
+    title: z.string().describe("官方重大訊息主旨或法說會摘要標題，不做正負面改寫"),
+    description: z
+      .string()
+      .nullable()
+      .describe("官方事件說明；來源未提供或尚未載入明細時為 null"),
+    clause: z
+      .string()
+      .nullable()
+      .describe("重大訊息符合條款原文；法說會或來源未提供時為 null"),
+    publishedAt: z
+      .string()
+      .nullable()
+      .describe("官方公告發布時間；來源只提供事件日期而沒有發布時間時為 null"),
+    factDate: calendarDateSchema
+      .nullable()
+      .describe("重大訊息所載事實發生日；不適用或官方未提供時為 null"),
+    scheduledAt: z
+      .string()
+      .nullable()
+      .describe("官方已公告的法說會等排定時間；不是推估日期，不適用時為 null"),
+    effectiveAt: z
+      .string()
+      .nullable()
+      .describe("事件法律或交易生效時間；本來源未提供時為 null，不以公告日代填"),
+    timezone: z
+      .literal("Asia/Taipei")
+      .describe("此事件官方日期時間的正規化時區"),
+    status: z
+      .enum(["announced", "revised", "cancelled", "scheduled"])
+      .describe("只依官方公告文字辨識的事件狀態，不代表投資判斷"),
+    statusBasis: z
+      .enum(["announcement_publication", "title_prefix", "official_schedule"])
+      .describe("status 的官方欄位或保守文字辨識依據"),
+    dateConfidence: z
+      .literal("confirmed")
+      .describe("事件時間直接來自官方公告；不把法定時程或歷史慣例推成確定日期"),
+    dateBasis: z
+      .enum(["publication", "scheduled_event"])
+      .describe("事件主日期是公告發布或官方排定事件，兩者不可混用"),
+    datePrecision: z
+      .enum(["day", "minute", "second"])
+      .describe("官方來源能支持的事件時間精度"),
+    isConsensus: z
+      .literal(false)
+      .describe("固定為 false；單筆官方公司事件不是分析師共識"),
+    sourceKey: catalystSourceKeySchema.describe(
+      "此事件實際使用的固定官方資料集或歷史查詢識別碼",
+    ),
+    sourceUrl: z
+      .string()
+      .url()
+      .describe("此事件實際取自的官方 TWSE／TPEx／MOPS URL"),
+    sourceReportDate: calendarDateSchema
+      .nullable()
+      .describe("官方來源出表日；歷史 HTML 沒有獨立出表日時為 null"),
+    sourceRecordKey: z
+      .string()
+      .describe("由官方查詢列 key 組成的穩定原始紀錄識別碼"),
+    eventDetails: z
+      .object({
+        location: z.string().nullable().describe("官方法說會地點；不適用或未提供時為 null"),
+        presentationZhFileName: z.string().nullable().describe("官方中文簡報檔名；未提供時為 null"),
+        presentationEnFileName: z.string().nullable().describe("官方英文簡報檔名；未提供時為 null"),
+        companyIrUrl: z.string().nullable().describe("公司 IR 網址原文；未提供時為 null"),
+        videoUrl: z.string().nullable().describe("官方列出的影音網址；未提供時為 null"),
+        note: z.string().nullable().describe("官方法說會備註；未提供時為 null"),
+      })
+      .strict()
+      .nullable()
+      .describe("法說會專屬官方欄位；重大訊息為 null"),
+  })
+  .strict();
+
+const catalystSourceSchema = z
+  .object({
+    eventType: catalystEventTypeSchema.describe("此來源負責的事件 family"),
+    market: z
+      .enum(["listed", "otc"])
+      .nullable()
+      .describe("current snapshot 的上市或上櫃市場；跨市場歷史 MOPS 摘要為 null"),
+    exchange: z
+      .enum(["TWSE", "TPEx", "MOPS"])
+      .describe("發布 current snapshot 的市場機構，或跨市場歷史 MOPS"),
+    sourceKey: catalystSourceKeySchema.describe(
+      "官方資料集或歷史查詢 route 的固定識別碼",
+    ),
+    sourceName: z.string().describe("官方資料集或 MOPS 查詢頁名稱"),
+    sourceUrl: z.string().url().describe("本次實際查詢的官方來源 URL"),
+    retrievedAt: z
+      .string()
+      .nullable()
+      .describe("本服務取得此官方回應的 ISO 8601 時間；沒有單一共同時間時為 null"),
+    scope: z
+      .enum(["current_official_snapshot", "selected_company_historical_months"])
+      .describe("當期官方快照或依 selected company×calendar month 查詢的歷史結果"),
+    queryStart: calendarDateSchema.describe("此來源實際查詢範圍起始日（含）"),
+    queryEnd: calendarDateSchema.describe("此來源實際查詢範圍終止日（含）"),
+    sourceReportDate: calendarDateSchema
+      .nullable()
+      .describe("官方來源出表日；歷史頁未另提供時為 null"),
+    rawRowCount: z.number().int().nonnegative().describe("官方回應解析前的資料列數"),
+    acceptedEventCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe("完成 identity、日期與去重檢查後接受的事件數"),
+    snapshotIdentity: z
+      .string()
+      .describe("由通過 identity 核對的非空／合法空回應組成的來源快照 fingerprint"),
+  })
+  .strict();
+
+const catalystFailureSchema = z
+  .object({
+    failureId: z.string().describe("穩定的逐 company×family×month failure 識別碼"),
+    companyCode: z.string().describe("此 failure 隔離影響的公司代號"),
+    eventType: catalystEventTypeSchema.describe("此 failure 影響的事件 family"),
+    market: z
+      .enum(["listed", "otc"])
+      .nullable()
+      .describe("已解析的公司市場；identity 無法確認時為 null"),
+    queryMonth: calendarMonthSchema.describe(
+      "此 failure 影響的歷史日曆月份；current snapshot failure 則為擷取當下的台北年月",
+    ),
+    code: z.string().describe("穩定的錯誤代號"),
+    reason: z.string().nullable().describe("更精確的 failure reason；未提供時為 null"),
+    message: z.string().describe("此公司與事件 family 的失敗原因"),
+    retryable: z.boolean().describe("是否適合稍後以相同條件重試"),
+    retryAfterMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe("建議至少等待的毫秒數；未提供時為 null"),
+    action: z
+      .enum(["fix_input", "change_query", "retry", "restart_pagination", "none"])
+      .describe("呼叫端針對此隔離 failure 建議採取的下一步"),
+  })
+  .strict();
+
+const catalystFamilyCoverageSchema = z
+  .object({
+    companyCode: z.string().describe("此覆蓋列對應的 requested 公司代號"),
+    eventType: catalystEventTypeSchema.describe("此覆蓋列對應的事件 family"),
+    status: z
+      .enum(["complete", "partial", "failed"])
+      .describe("此公司在 requested 日期對此 family 歷史月份的完成狀態"),
+    queryStart: calendarDateSchema.describe("此公司 family 查詢起始日（含）"),
+    queryEnd: calendarDateSchema.describe("此公司 family 查詢終止日（含）"),
+    requestCount: z.number().int().nonnegative().describe("此公司 family 的歷史月份／市場查詢工作單位數"),
+    completedRequestCount: z.number().int().nonnegative().describe("成功且 identity 可驗證的歷史月份／市場工作單位數"),
+    verifiedEmptyRequestCount: z.number().int().nonnegative().describe("已驗證合法無歷史事件的工作單位數"),
+    nonemptyRequestCount: z.number().int().nonnegative().describe("通過 identity 核對且有歷史事件的工作單位數"),
+    eventCount: z.number().int().nonnegative().describe("此公司 family 的歷史 accepted event 數；current 補強另見 coverage.currentSnapshots"),
+    snapshotIdentity: z.string().describe("此 company×family 歷史月份查詢範圍的快照 fingerprint"),
+    failures: z.array(catalystFailureSchema).describe("此 company×family 的逐歷史月份／市場隔離 failures"),
+  })
+  .strict();
+
+const catalystAggregateFamilyCoverageSchema = z
+  .object({
+    eventType: catalystEventTypeSchema.describe("此彙總覆蓋列對應的事件 family"),
+    scope: z
+      .enum(["current_and_selected_company_history", "selected_company_history"])
+      .describe("此 family 是否結合 current snapshot 與 selected-company history"),
+    status: z.enum(["complete", "partial", "failed"]).describe("此 family 對全部 requested 公司的完成狀態"),
+    requestedStart: calendarDateSchema.describe("requested 起始日（含）"),
+    requestedEnd: calendarDateSchema.describe("requested 終止日（含）"),
+    failedCompanyCodes: z.array(z.string()).describe("此 family 至少一個月份失敗的公司代號"),
+  })
+  .strict();
+
+const catalystCompanyResultSchema = z
+  .object({
+    companyCode: z.string().describe("requested 公司代號"),
+    status: z.enum(["complete", "partial", "failed"]).describe("此公司所有 requested families 的完成狀態"),
+    eventCount: z.number().int().nonnegative().describe("此公司在分頁前的 accepted event 數"),
+    failures: z.array(catalystFailureSchema).describe("此公司被隔離的 family×month failures"),
+  })
+  .strict();
+
+const catalystCurrentSnapshotCoverageSchema = z
+  .object({
+    sourceKey: catalystCurrentSourceKeySchema.describe(
+      "current 重大訊息官方市場來源",
+    ),
+    eventType: z
+      .literal("material_information")
+      .describe("current snapshot 固定補強重大訊息 family"),
+    market: z.enum(["listed", "otc"]).describe("current snapshot 市場"),
+    status: z
+      .enum(["complete", "not_applicable", "failed"])
+      .describe(
+        "complete=快照可綁定 requested range；not_applicable=成功取得但出表日／事件不在範圍；failed=來源失敗",
+      ),
+    affectedCompanyCodes: z
+      .array(z.string())
+      .describe("此共享市場快照實際用來補強的 requested 公司代號"),
+    sourceReportDate: calendarDateSchema
+      .nullable()
+      .describe("官方 current snapshot 出表日；無可綁定出表日時為 null"),
+    eventCount: z
+      .number()
+      .int()
+      .nonnegative()
+      .describe("此 current snapshot 在 requested range 接受的 selected-company 事件數"),
+    snapshotIdentity: z
+      .string()
+      .describe("current source、適用性、affected companies 與事件的 fingerprint"),
+    failures: z
+      .array(catalystFailureSchema)
+      .describe("此 current 市場快照按 affected company 隔離的 failures"),
+  })
+  .strict();
+
+export const companyCatalystEventsOutputSchema = z
+  .object({
+    ...successResultShape,
+    query: z
+      .object({
+        companyCodes: z.array(z.string()).describe("正規化後完整 requested 公司代號"),
+        startDate: calendarDateSchema.describe("實際查詢起始日（含）"),
+        endDate: calendarDateSchema.describe("實際查詢終止日（含）"),
+        eventTypes: z.array(catalystEventTypeSchema).describe("實際查詢的官方事件 families"),
+        offset: z.number().int().nonnegative().describe("正規化後的事件分頁位移"),
+        limit: z.number().int().positive().describe("正規化後的事件分頁上限"),
+      })
+      .strict()
+      .describe("本頁與續頁必須保持一致的事件查詢範圍"),
+    generatedAt: z.string().describe("本服務完成事件組裝的 ISO 8601 時間"),
+    timezone: z.literal("Asia/Taipei").describe("官方日期與時間正規化使用的時區"),
+    scope: z
+      .literal("official_disclosure_events")
+      .describe("只回官方公告與公司揭露事件，不含媒體傳聞或研究判斷"),
+    isConsensus: z
+      .literal(false)
+      .describe("固定為 false；公司公告／指引不能冒充分析師 consensus"),
+    events: z
+      .array(catalystEventSchema)
+      .describe("穩定排序後的本頁官方事件；沒有事件不代表負面訊號"),
+    failures: z
+      .array(catalystFailureSchema)
+      .describe("逐公司、逐 family 隔離的查詢失敗；不得當成合法空事件"),
+    coverage: z
+      .object({
+        sourceComplete: z.boolean().describe("所有 requested 官方來源是否均成功且可核對查詢 identity"),
+        failureIsolation: z
+          .literal("per_company_event_type_calendar_month")
+          .describe("所有失敗均按 company×eventType×calendar month 隔離"),
+        families: z
+          .array(catalystAggregateFamilyCoverageSchema)
+          .describe("逐 family 的 current／historical scope 與失敗公司彙總"),
+        currentSnapshots: z
+          .array(catalystCurrentSnapshotCoverageSchema)
+          .describe(
+            "近期重大訊息共享市場快照的成功、不適用或失敗覆蓋；不混入逐公司歷史月份計數",
+          ),
+      })
+      .strict()
+      .describe("來源完整性、failure isolation 與 family 查詢範圍"),
+    familyCoverage: z
+      .array(catalystFamilyCoverageSchema)
+      .describe("逐 company×family 的歷史月份請求、合法空回應、事件與 failure 覆蓋"),
+    companies: z
+      .array(catalystCompanyResultSchema)
+      .describe(
+        "逐 requested 代號彙總來源狀態；complete 且 eventCount=0 只證明該代號範圍查無事件，公司 identity 是否已驗證仍須檢查 meta.quality.selection 與 issues",
+      ),
+    counts: z
+      .object({
+        requestedCompanies: z.number().int().nonnegative().describe("requested 公司數"),
+        requestedEventTypes: z.number().int().nonnegative().describe("requested event family 數"),
+        totalEvents: z.number().int().nonnegative().describe("分頁前 accepted event 總數"),
+        returnedEvents: z.number().int().nonnegative().describe("本頁回傳事件數"),
+        completeCompanies: z.number().int().nonnegative().describe("所有 requested families 完成的公司數"),
+        partialCompanies: z.number().int().nonnegative().describe("部分 requested family 或月份失敗的公司數"),
+        failedCompanies: z.number().int().nonnegative().describe("所有 requested families 均失敗的公司數"),
+      })
+      .strict()
+      .describe("requested、事件與逐公司完成狀態計數"),
+    workBudget: z
+      .object({
+        companyCount: z.number().int().nonnegative().describe("requested 公司數"),
+        distinctCalendarMonths: z.number().int().nonnegative().describe("requested range 涵蓋的日曆月份數"),
+        eventTypeCount: z.number().int().nonnegative().describe("requested event family 數"),
+        historicalLogicalUnits: z.number().int().nonnegative().describe("company×family×calendar month 邏輯工作單位"),
+        historicalUpstreamRequests: z
+          .number()
+          .int()
+          .nonnegative()
+          .describe(
+            "執行前按 company×family×month／market 計算的歷史查詢工作單位；retry attempt 不重複計數",
+          ),
+        currentSnapshotRequests: z
+          .number()
+          .int()
+          .nonnegative()
+          .describe(
+            "執行前按市場計算的 current snapshot 查詢工作單位；retry attempt 不重複計數",
+          ),
+        plannedUpstreamRequests: z
+          .number()
+          .int()
+          .nonnegative()
+          .describe(
+            "上述歷史與 current 查詢工作單位總和；不是包含 retry 或 master hint 的 HTTP attempt 計數",
+          ),
+        upstreamRequestLimit: z
+          .literal(40)
+          .describe("單次 tool call 固定 catalyst 查詢工作單位上限"),
+      })
+      .strict()
+      .describe("避免公司、月份與 family 乘積造成無界工作量的透明 budget"),
+    pagination: z
+      .object({
+        offset: z.number().int().nonnegative().describe("本頁事件的零起算位移"),
+        limit: z.number().int().positive().describe("本頁事件數上限"),
+        returnedRows: z.number().int().nonnegative().describe("本頁實際事件數"),
+        totalRows: z.number().int().nonnegative().describe("本次重新組裝後的完整事件數"),
+        hasMore: z.boolean().describe("本次重新組裝結果是否還有下一頁"),
+        nextOffset: z.number().int().nonnegative().nullable().describe("下一頁 offset；無下一頁時為 null"),
+      })
+      .strict()
+      .describe(
+        "事件 offset 分頁；每頁會重新查詢官方來源，並非 point-in-time 快照，續頁前應檢查 meta.asOf.snapshotId 是否改變",
+      ),
+    sources: z.array(catalystSourceSchema).describe("本次成功且通過 identity 核對的官方事件來源"),
+    fingerprint: z
+      .string()
+      .describe("完整分頁前事件、來源與 failure coverage 的 deterministic fingerprint；續頁不同表示來源已變動"),
     ...warningShape,
   })
   .strict();

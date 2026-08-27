@@ -24,6 +24,8 @@ function metric(
 
 describe("LLM-facing official guidance", () => {
   it("routes the new market tools and preserves completeness semantics", () => {
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("v0.6.0");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("共提供 17 個工具");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_daily_market_valuation");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_monthly_revenue");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("成交量正規化為股");
@@ -31,6 +33,37 @@ describe("LLM-facing official guidance", () => {
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("valueStatus");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("filingCoverage");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("INCOMPLETE_COVERAGE");
+  });
+
+  it("explains official catalyst scope without upgrading disclosures into signals", () => {
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_company_catalyst_events");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("material_information");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("investor_conference");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "per_company_event_type_calendar_month",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("計畫查詢工作單位上限為 40");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "歷史法說固定查上市／上櫃兩市場",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("coverage.currentSnapshots");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "publishedAt、factDate、scheduledAt、effectiveAt",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("isConsensus 固定 false");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "不納入 screen_taiwan_stock_candidates 四柱分數",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "不是 pinned point-in-time snapshot",
+    );
+    expect(MOPSFIN_OFFICIAL_GUIDANCE.valueBasis).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          dataType: "官方重大訊息與法人說明會",
+        }),
+      ]),
+    );
   });
 
   it("provides formulas and applicability for company and financial metrics", () => {

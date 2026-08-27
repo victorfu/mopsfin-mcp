@@ -6,8 +6,8 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 
 連線資訊：
 - 名稱：Mopsfin 台股財務
-- 版本：0.5.1
-- 說明：篩選台股研究候選，並查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、公司行動實際結果與 benchmark reaction signals，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
+- 版本：0.6.0
+- 說明：篩選台股研究候選，並查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、公司行動實際結果、benchmark reaction signals、重大訊息與法說會，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
 - 驗證方式：不需要登入、API Key、Token 或 OAuth
@@ -18,7 +18,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 2. 如果你能操作目前應用程式的設定介面，請帶我完成新增，並在任何會改變帳號設定的步驟前讓我確認。
 3. 如果你不能直接操作設定，請不要聲稱已完成；請按照目前平台的最新介面名稱，一次只告訴我一個清楚步驟，等我完成後再繼續。
 4. URL 必須完整使用 /api/mcp，請勿改成網站首頁、/mcp 或其他路徑；若出現 OAuth 進階欄位，請保持空白。
-5. 連線後確認可以看到 16 個唯讀工具，包含 screen_taiwan_stock_candidates、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
+5. 連線後確認可以看到 17 個唯讀工具，包含 screen_taiwan_stock_candidates、get_company_catalyst_events、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
 6. 最後在新對話啟用此連接器，並測試：「請先找出 2330 對應的公司，再查詢最近 12 季營業收入；標示期別、單位、來源與資料擷取時間。」
 7. 若我的方案或工作區政策不允許新增自訂 MCP，請明確告訴我限制及需要聯絡的管理員角色。`;
 
@@ -27,6 +27,7 @@ const tools = [
   ["get_stock_ohlc", "查詢單一台股跨期原始日線價量"],
   ["get_daily_market_ohlc", "查詢單日上市、上櫃或全部市場價量"],
   ["get_stock_reaction_signals", "比較個股原始／price-index-compatible 報酬、量能與市場價格指數"],
+  ["get_company_catalyst_events", "查詢官方重大訊息與法說會事件"],
   ["get_daily_market_valuation", "查詢官方 latest 或指定日估值與參考財報欄位"],
   ["get_monthly_revenue", "查詢官方 latest 或指定月份營收"],
   ["get_monthly_revenue_trend", "查詢 3–24 個月營收序列與透明衍生趨勢"],
@@ -57,11 +58,11 @@ export default function Home() {
       </header>
 
       <section className="hero" id="top">
-        <p className="eyebrow">V0.5.1 · REMOTE MCP · TAIWAN EQUITY RESEARCH</p>
+        <p className="eyebrow">V0.6.0 · REMOTE MCP · TAIWAN EQUITY RESEARCH</p>
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
-          上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢與市場反應代理，並用透明四柱規則產生待深入研究的台股候選，再查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
+          上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、市場反應代理、重大訊息與法說會，並用透明四柱規則產生待深入研究的台股候選，再查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
         </p>
 
         <div className="endpointCard">
@@ -76,7 +77,7 @@ export default function Home() {
           <li><span aria-hidden="true">●</span> 服務已上線</li>
           <li>Streamable HTTP</li>
           <li>免登入、免 API Key</li>
-          <li>16 個唯讀工具</li>
+          <li>17 個唯讀工具</li>
         </ul>
       </section>
 
@@ -120,7 +121,7 @@ export default function Home() {
             </li>
             <li>
               <span className="stepNumber">4</span>
-              <div><strong>檢查並開始使用</strong><p>建立後確認辨識出 16 個工具。開啟新對話，從工具選單加入這個 MCP 連線。</p></div>
+              <div><strong>檢查並開始使用</strong><p>建立後確認辨識出 17 個工具。開啟新對話，從工具選單加入這個 MCP 連線。</p></div>
             </li>
           </ol>
 
@@ -239,6 +240,7 @@ export default function Home() {
             <p><code>get_daily_market_valuation</code> 可查單一歷史交易日，<code>get_monthly_revenue</code> 與 trend 可查 2013-01 起月份；空白或 N/A 保留為 null 並附資料狀態，不會改寫成 0。歷史月營收是目前修訂後 archive，不是 point-in-time vintage。</p>
             <p><code>get_stock_reaction_signals</code> 保留原始未還原權值報酬，另以 TWSE／TPEx 除權息、減資與面額變更實際結果建立 price-index-compatible 報酬。現金股利的價格效果會保留以配合 price index；它不是 adjusted close 或 total return。coverage、調整因子、前收盤或 marker 證據不足時回 unknown，跨股數變動的 volume 不直接比較。</p>
             <p><code>screen_taiwan_stock_candidates</code> 固定使用 <code>balanced_non_financial_v2</code>／<code>taiwan_stock_screen.v2</code>，是 latest-only、有工作量上限的非金融研究分流：以月營收領先粗篩，再對有限名單評估 <code>companyQuality</code>、<code>fundamentalImprovement</code>、<code>reasonableValuation</code> 與 <code>marketUnderreactionProxy</code>，最多回傳 5 個候選。market pillar 只接受可比的公司行動調整證據。deep stage 會在 24-unit 預算內隔離 identity／metric errors；受影響代號以 <code>dependencyStatus</code> 與 <code>notReactionScored</code> 標示 unknown，不會被誤判為 fail 或 0 分。其餘 deepSelected 公司繼續，但不從 deepSelected 之外自動遞補。不同資料來源的 as-of 可能不同；結果不是完整全市場深篩、point-in-time 回測、錯價證明或投資建議。</p>
+            <p><code>get_company_catalyst_events</code> 依 selected company 與日期範圍即時查 MOPS 歷史重大訊息、法說會日曆，並用 TWSE／TPEx 每日重大訊息補強近期資料。<code>publishedAt</code>、<code>factDate</code>、<code>scheduledAt</code> 與 <code>effectiveAt</code> 分開；官方無事件、查詢失敗與 parser/security block 也分開。它不提供分析師 consensus、預估修正、情緒分數或投資建議，且不會改變四柱 screening 分數。</p>
             <p>成功結果固定提供 <code>meta.asOf</code>、<code>meta.quality</code> 與 <code>meta.page</code>；reaction cursor v2 會把公司行動 range contracts/summaries 與 requested-company 權息 detail fingerprint 納入來源 snapshot，但不儲存在伺服器。若來源在續頁間改變，須依錯誤 <code>action=restart_pagination</code> 從第一頁重啟。</p>
             <p>每個請求都有整體 deadline，暫時性上游錯誤會在期限內依 <code>Retry-After</code> 或 backoff 有限重試；response、cache、併發與等待 queue 均設上限。行程內 telemetry 只彙總 method、tool name、延遲、狀態與錯誤碼，不記錄 tool arguments 或 request body，也不持久化。服務狀態頁不呼叫上游，官方資料契約另以每週一次的低頻 live checks 驗證。</p>
             <p>上市櫃公司通常一年申報 4 次；興櫃與公開發行公司可能僅申報半年與年度，部分公司只需申報年度。查不到某季不一定代表連線失敗。</p>
@@ -272,7 +274,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>Mopsfin 台股 MCP · v0.5.1</span>
+        <span>Mopsfin 台股 MCP · v0.6.0</span>
         <span>公開 · 唯讀 · 無資料庫</span>
       </footer>
     </main>

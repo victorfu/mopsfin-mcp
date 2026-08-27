@@ -10,9 +10,9 @@ export function GET() {
     {
       status: "ok",
       service: "mopsfin-taiwan-equities",
-      version: "0.5.1",
+      version: "0.6.0",
       resultContractVersion: "mopsfin.result.v1",
-      toolCount: 16,
+      toolCount: 17,
       readiness: {
         status: "ready",
         upstreamChecks: "not_run",
@@ -62,6 +62,14 @@ export function GET() {
           "https://www.tpex.org.tw/www/zh-tw/bulletin/revivt",
         tpexParValueChange:
           "https://www.tpex.org.tw/www/zh-tw/bulletin/pvChgRslt",
+        twseMaterialInformation:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap04_L",
+        tpexMaterialInformation:
+          "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O",
+        mopsMaterialInformationHistory:
+          "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
+        mopsInvestorConferenceHistory:
+          "https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1",
       },
       checkedAt: new Date().toISOString(),
       note: "此端點只確認應用程式可回應，不會為健康檢查呼叫 Mopsfin、TWSE 或 TPEx 財務／行情來源。",

@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - corporate-actions
+          - catalysts
           - all
   schedule:
     - cron: "23 20 * * 0"
@@ -35,6 +36,9 @@ jobs:
       - name: Run the focused corporate-action contracts
         if: github.event_name == 'schedule' || inputs.suite == 'corporate-actions'
         run: npm run test:live:corporate-actions
+      - name: Run the focused catalyst contracts
+        if: github.event_name == 'schedule' || inputs.suite == 'catalysts'
+        run: npm run test:live:catalysts
       - name: Run all live contracts
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
         run: npm run test:live

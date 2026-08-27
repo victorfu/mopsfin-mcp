@@ -20,6 +20,7 @@ const verifiedExamplePrompts = [
   "查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。",
   "比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始與 price-index-compatible 報酬、公司行動證據及量能訊號。",
   "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。",
+  "查台積電與聯發科 2026-07-01 至 2026-08-24 的官方重大訊息與法說會；分開 publishedAt、factDate、scheduledAt、effectiveAt，並標示 failures 與 verified empty，不要當成 consensus 或正負面分數。",
   "列出全部上市公司代號，不要包含上櫃公司。",
   "列出全部上市與上櫃公司，排除金融業與 KY 公司。",
   "比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。",
@@ -40,7 +41,7 @@ describe("README example prompts", () => {
     expect(readme).not.toContain("列出最近完成交易日全部上市櫃公司的 OHLC");
   });
 
-  it("documents the v0.5.1 sixteen-tool contract and official sources", () => {
+  it("documents the v0.6.0 seventeen-tool contract and official sources", () => {
     const tools = [
       "find_companies",
       "get_stock_ohlc",
@@ -49,6 +50,7 @@ describe("README example prompts", () => {
       "get_daily_market_valuation",
       "get_monthly_revenue",
       "get_monthly_revenue_trend",
+      "get_company_catalyst_events",
       "screen_taiwan_stock_candidates",
       "list_companies",
       "list_catalog",
@@ -59,8 +61,8 @@ describe("README example prompts", () => {
       "get_industry_data",
       "get_financial_institution_metric",
     ];
-    expect(readme).toContain("目前版本 `0.5.1`");
-    expect(readme).toContain("十六個工具");
+    expect(readme).toContain("目前版本 `0.6.0`");
+    expect(readme).toContain("十七個工具");
     for (const tool of tools) expect(readme).toContain(`\`${tool}\``);
     expect(readme).toContain("meta.contractVersion=mopsfin.result.v1");
     expect(readme).toContain("meta.asOf");
@@ -109,7 +111,9 @@ describe("README example prompts", () => {
     expect(readme).toContain("每週一次");
     expect(readme).toContain("npm run test:live:corporate-actions");
     expect(readme).toContain("完整 live suite");
-    expect(readme).toContain("`suite` 可選 `corporate-actions` 或 `all`");
+    expect(readme).toContain(
+      "`suite` 可選 `corporate-actions`、`catalysts` 或 `all`",
+    );
     expect(readme).toContain("六組 range-family");
     expect(readme).toContain("TWSE `TWT49UDetail`");
     expect(readme).toContain("`verified_empty`");
@@ -129,7 +133,25 @@ describe("README example prompts", () => {
     expect(readme).toContain("latest-only");
     expect(readme).toContain("最多 5 家");
     expect(readme).toContain("不是 point-in-time／無存活者偏誤回測");
-    expect(readme).toContain("目前沒有分析師預期修正、新聞、法人流向、持股、放空");
+    expect(readme).toContain("screen 本身目前沒有分析師預期修正、新聞、法人流向、持股或放空");
+    expect(readme).toContain("material_information");
+    expect(readme).toContain("investor_conference");
+    expect(readme).toContain("per_company_event_type_calendar_month");
+    expect(readme).toContain("計畫查詢工作單位上限為 40");
+    expect(readme).toContain("歷史法說每個 company×month 會分上市與上櫃兩單位");
+    expect(readme).toContain("coverage.currentSnapshots");
+    expect(readme).toContain("publishedAt");
+    expect(readme).toContain("factDate");
+    expect(readme).toContain("scheduledAt");
+    expect(readme).toContain("effectiveAt");
+    expect(readme).toContain("isConsensus");
+    expect(readme).toContain("CATALYST_OFFSET_PAGE_NOT_PINNED");
+    expect(readme).toContain("npm run test:live:catalysts");
+    expect(readme).toContain("`corporate-actions`、`catalysts` 或 `all`");
+    expect(readme).toContain("https://openapi.twse.com.tw/v1/opendata/t187ap04_L");
+    expect(readme).toContain("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O");
+    expect(readme).toContain("https://mopsov.twse.com.tw/mops/web/ajax_t05st01");
+    expect(readme).toContain("https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1");
     expect(readme).toContain("failureIsolationComplete=false");
     expect(readme).toContain("company×metric");
     expect(readme).toContain("company_metrics_unavailable");

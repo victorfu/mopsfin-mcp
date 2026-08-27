@@ -13,8 +13,8 @@ describe("health route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toMatchObject({
       status: "ok",
-      version: "0.5.1",
-      toolCount: 16,
+      version: "0.6.0",
+      toolCount: 17,
       readiness: {
         status: "ready",
         upstreamChecks: "not_run",
@@ -51,6 +51,14 @@ describe("health route", () => {
           "https://www.tpex.org.tw/www/zh-tw/bulletin/revivt",
         tpexParValueChange:
           "https://www.tpex.org.tw/www/zh-tw/bulletin/pvChgRslt",
+        twseMaterialInformation:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap04_L",
+        tpexMaterialInformation:
+          "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O",
+        mopsMaterialInformationHistory:
+          "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
+        mopsInvestorConferenceHistory:
+          "https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1",
       },
     });
     expect(fetchSpy).not.toHaveBeenCalled();

@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
+import { catalystClient } from "@/lib/catalyst/client";
 import { companyMasterClient } from "@/lib/company-master/client";
 import { MOPSFIN_SOURCE_URL } from "@/lib/mopsfin/constants";
 import { companyMetricsBatchClient } from "@/lib/mopsfin/batch";
@@ -24,6 +25,8 @@ import {
 import { fingerprint, paginateByCompany } from "./cursor";
 
 import {
+  companyCatalystEventsInputSchema,
+  companyCatalystEventsOutputSchema,
   companyMetricInputSchema,
   companyMetricOutputSchema,
   companyMetricsBatchInputSchema,
@@ -476,6 +479,217 @@ export function registerMopsfinTools(server: McpServer): void {
                   ]
                 : []),
             ],
+          },
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_company_catalyst_events",
+    {
+      title: "查詢公司官方催化事件",
+      description:
+        "查詢 1–20 家台股公司在明確 YYYY-MM-DD 起訖範圍內的官方重大訊息與法人說明會事件；含首尾最多 366 日，且公司×月份×event family 加上 recent snapshot 的 catalyst 查詢工作單位合計上限為 40，retry attempt 不重複計數。工具只以目前上市櫃 master 驗證 current identity、縮小近期重大訊息 snapshot 市場；歷史法說固定查上市與上櫃兩個 TYPEK，以免 current market hint 漏掉轉板前事件，不能把目前 master 冒充歷史母體。若代號不在目前 master 且範圍內也沒有官方事件列，meta.quality.selection=partial，不能宣稱該公司 identity 已驗證。重大訊息使用 MOPS 歷史查詢並在近期範圍以 TWSE／TPEx current OpenAPI 補強，法說會使用 MOPS 歷史日曆；只回官方已發布或已排定證據。publishedAt、factDate、scheduledAt、effectiveAt 分開，confirmed 不等於正面催化；沒有公司財測、分析師 EPS／營收 consensus、預估修正、目標價、情緒或 impact score，也不做買賣建議。合法無事件只在官方空結果可驗證時成立；上游、security block 或 parser failure 會按 company×eventType×month 隔離至 failures，不能當成空值。offset 分頁每頁重新查詢並組裝來源，不是 point-in-time snapshot；續頁必須沿用相同 query，並檢查 fingerprint 與 meta.asOf.snapshotId 是否改變。",
+      inputSchema: companyCatalystEventsInputSchema,
+      outputSchema: companyCatalystEventsOutputSchema,
+      annotations,
+    },
+    async ({
+      company_codes,
+      start_date,
+      end_date,
+      event_types,
+      offset,
+      limit,
+    }) => {
+      try {
+        let marketHintWarning: string | null = null;
+        let marketHintIssueCode:
+          | "CATALYST_MARKET_HINT_PARTIAL"
+          | "CATALYST_MARKET_HINT_UNAVAILABLE"
+          | null = null;
+        let marketHintMissingCodes: string[] = [];
+        let companyMarkets:
+          | Array<{ companyCode: string; market: "listed" | "otc" }>
+          | undefined;
+        try {
+          const master = await companyMasterClient.listCompanies({
+            market: "all",
+            includeFinancial: true,
+            includeKy: true,
+          });
+          const requestedCodes = new Set(company_codes);
+          companyMarkets = master.companies
+            .filter((company) => requestedCodes.has(company.code))
+            .map((company) => ({
+              companyCode: company.code,
+              market: company.market,
+            }));
+          const matchedCodes = new Set(
+            companyMarkets.map((company) => company.companyCode),
+          );
+          marketHintMissingCodes = company_codes.filter(
+            (code) => !matchedCodes.has(code),
+          );
+          if (marketHintMissingCodes.length > 0) {
+            marketHintIssueCode = "CATALYST_MARKET_HINT_PARTIAL";
+            marketHintWarning = `目前公司 master 找不到 ${marketHintMissingCodes.join(", ")}；近期重大訊息補強會對未匹配代號安全探測兩市場，且目前 master 不會被冒充為歷史 identity。歷史法說無論 hint 都固定查兩市場。`;
+          }
+        } catch (marketHintError) {
+          const normalized = asMopsfinError(marketHintError);
+          marketHintIssueCode = "CATALYST_MARKET_HINT_UNAVAILABLE";
+          marketHintMissingCodes = [...company_codes];
+          marketHintWarning = `目前公司 master identity／近期重大訊息市場提示不可用（${normalized.code}）；current snapshot 會安全探測兩市場。歷史法說無論 hint 都固定查兩市場。`;
+        }
+        const data = await catalystClient.getCompanyCatalystEvents({
+          companyCodes: company_codes,
+          startDate: start_date,
+          endDate: end_date,
+          eventTypes: event_types,
+          offset,
+          limit,
+          ...(companyMarkets && companyMarkets.length > 0
+            ? { companyMarkets }
+            : {}),
+        });
+        const outputData = marketHintWarning
+          ? { ...data, warnings: [...data.warnings, marketHintWarning] }
+          : data;
+        const affectedCompanyCodes = [
+          ...new Set(data.failures.map((item) => item.companyCode)),
+        ];
+        const officiallyIdentifiedCodes = new Set(
+          data.companies
+            .filter((company) => company.eventCount > 0)
+            .map((company) => company.companyCode),
+        );
+        const unverifiedIdentityCodes = marketHintMissingCodes.filter(
+          (code) => !officiallyIdentifiedCodes.has(code),
+        );
+        const sourceUrls = [
+          ...new Set(data.sources.map((item) => item.sourceUrl)),
+        ];
+        const issues: NonNullable<ResultMetaHints["issues"]> = [
+          ...(data.failures.length > 0
+            ? [
+                {
+                  code: "CATALYST_COMPANY_FAMILY_FAILED",
+                  severity: "warning" as const,
+                  scope: "source" as const,
+                  message:
+                    "部分 company×eventType×month 官方查詢失敗；其他成功事件仍保留，失敗不可解讀為無事件。",
+                  refs: {
+                    companyCodes: affectedCompanyCodes,
+                    fields: ["failures", "familyCoverage", "companies"],
+                    periods: [...new Set(data.failures.map((item) => item.queryMonth))],
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+          ...(data.pagination.hasMore || data.pagination.offset > 0
+            ? [
+                {
+                  code: "CATALYST_OFFSET_PAGE_NOT_PINNED",
+                  severity: "info" as const,
+                  scope: "page" as const,
+                  message:
+                    "offset 續頁會重新查詢官方來源；不是跨頁 point-in-time snapshot，fingerprint 改變時應由 offset=0 重查。",
+                  refs: {
+                    companyCodes: data.query.companyCodes,
+                    fields: ["pagination", "fingerprint"],
+                    periods: [data.query.startDate, data.query.endDate],
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+          {
+            code: "OFFICIAL_DISCLOSURE_NOT_CONSENSUS",
+            severity: "info" as const,
+            scope: "value" as const,
+            message:
+              "官方公告與公司排定事件不是分析師 consensus，也不代表正面、負面或市場尚未反應。",
+            refs: {
+              companyCodes: data.query.companyCodes,
+              fields: ["isConsensus", "events", "warnings"],
+              periods: [data.query.startDate, data.query.endDate],
+              sourceUrls,
+            },
+          },
+          ...(marketHintWarning && marketHintIssueCode
+            ? [
+                {
+                  code: marketHintIssueCode,
+                  severity: "info" as const,
+                  scope: "universe" as const,
+                  message: marketHintWarning,
+                  refs: {
+                    companyCodes: data.query.companyCodes,
+                    fields: ["workBudget", "sources[].market"],
+                    periods: [data.query.startDate, data.query.endDate],
+                    sourceUrls: [],
+                  },
+                },
+              ]
+            : []),
+          ...(unverifiedIdentityCodes.length > 0
+            ? [
+                {
+                  code: "CATALYST_COMPANY_IDENTITY_UNVERIFIED",
+                  severity: "warning" as const,
+                  scope: "selection" as const,
+                  message:
+                    "部分代號不在目前公司 master，且 requested 範圍沒有可確認公司名稱／市場的官方事件列；合法空事件回應不能另外證明公司 identity。",
+                  refs: {
+                    companyCodes: unverifiedIdentityCodes,
+                    fields: ["companies", "events", "meta.quality.selection"],
+                    periods: [data.query.startDate, data.query.endDate],
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+        ];
+        return success(
+          `官方事件查詢完成：${data.counts.requestedCompanies} 家公司、${data.counts.totalEvents} 筆事件，本頁回傳 ${data.counts.returnedEvents} 筆；${data.failures.length} 個月份查詢 failure 已隔離。`,
+          outputData,
+          {
+            selector: "range",
+            resolved: {
+              granularity: "date",
+              from: data.query.startDate,
+              through: data.query.endDate,
+            },
+            page: {
+              mode: "offset",
+              unit: "row",
+              limit: data.pagination.limit,
+              returned: data.pagination.returnedRows,
+              total: data.pagination.totalRows,
+              next:
+                data.pagination.nextOffset === null
+                  ? null
+                  : {
+                      kind: "offset",
+                      offset: data.pagination.nextOffset,
+                    },
+            },
+            snapshotId: data.fingerprint,
+            source: data.coverage.sourceComplete ? "complete" : "partial",
+            universe: "not_applicable",
+            selection:
+              data.companies.length === data.query.companyCodes.length &&
+              data.failures.length === 0 &&
+              unverifiedIdentityCodes.length === 0
+                ? "complete"
+                : "partial",
+            values: data.failures.length === 0 ? "complete" : "partial",
+            freshness: "unknown",
+            issues,
           },
         );
       } catch (error) {
