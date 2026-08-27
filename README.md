@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.5.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十六個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收、大盤指數與公司行動實際結果直接取自 MOPS、TWSE 與 TPEx 官方資料。
+目前版本 `0.5.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十六個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收、大盤指數與公司行動實際結果直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -109,7 +109,7 @@ MCP descriptions 必須與實際行為同步，不能只更新程式邏輯或 RE
 - `meta.quality` 分開揭露 source、universe、selection、values、freshness 與具體 `issues`；`universe=compatible | unverified` 或 selection/value 尚為 `unknown` 時 overall `status=partial`，而 `status=complete` 仍不代表每個數值都非 null。
 - `meta.page` 統一表示 `none`、`offset` 或 `cursor` 分頁，以及下一頁 token。`list_companies`、單日全市場 OHLC、估值與月營收在省略 `page_size`／`cursor` 時維持完整回傳，提供 `page_size` 後才啟用 stateless cursor；批次指標與 reaction signals 則預設分頁。
 
-HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `coverage.nextCursor` 續頁，reaction signals 以 `pagination.nextCursor` 續頁。cursor 不需要資料庫，也不保存伺服器端 session；`meta.asOf.snapshotId` 表示該工具可驗證的 snapshot scope。先取得整個 accepted rowset 再切頁的工具可綁內容快照，但這不額外證明官方 rowset 完整；`get_company_metrics_batch` 只綁 query／catalog，reaction cursor v2 綁 query／目前 master／benchmark，以及 full-market 公司行動 range summary 與整個 requested company scope 的 TWSE 權息 detail fingerprint。各頁財務值或個股 OHLC 仍於該頁即時取得，因此會以 `STATELESS_PAGE_VALUES_NOT_PINNED` 明示不具跨頁 point-in-time 保證。若錯誤 `reason` 是 `CURSOR_INVALID` 或 `SNAPSHOT_CHANGED`，依 `action=restart_pagination` 從第一頁重啟。
+HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `coverage.nextCursor` 續頁，reaction signals 以 `pagination.nextCursor` 續頁。cursor 不需要資料庫，也不保存伺服器端 session；`meta.asOf.snapshotId` 表示該工具可驗證的 snapshot scope。先取得整個 accepted rowset 再切頁的工具可綁內容快照，但這不額外證明官方 rowset 完整；`get_company_metrics_batch` 只綁 query／catalog，reaction cursor v2 綁 query／目前 master／benchmark，以及 full-market 公司行動 range contracts/summaries 與整個 requested company scope 的 TWSE 權息 detail fingerprint。各頁財務值或個股 OHLC 仍於該頁即時取得，因此會以 `STATELESS_PAGE_VALUES_NOT_PINNED` 明示不具跨頁 point-in-time 保證。若錯誤 `reason` 是 `CURSOR_INVALID` 或 `SNAPSHOT_CHANGED`，依 `action=restart_pagination` 從第一頁重啟。
 
 工具 handler 失敗時仍會回傳 `structuredContent`，固定含 `ok=false`、原有 `error.code`，以及 `reason`、`category`、`retryable`、`retryAfterMs`、`action` 與已清理的 `details`。只有上游逾時／限流等可重試錯誤應依指示重試；Zod input 驗證失敗仍使用 MCP protocol `InvalidParams`。
 
@@ -119,13 +119,13 @@ HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `
 
 `get_daily_market_ohlc` 的 `market=all | listed | otc` 與公司母體一致。`date=latest` 代表最近完成交易日，不是盤中即時價；也可指定 `YYYY-MM-DD`，但假日或未來日期不會退回前一日。指定日期的上市市場最早為 `2004-02-11`、上櫃與全部市場最早為 `2007-04-23`。`company_codes` 最多 500 家；省略時回本次官方 snapshot 中通過公司股票辨識規則的全部 eligible rows，仍須依 `universeCoverageVerified`、`reconciliation` 與 `meta.quality` 判讀 rowset，指定代號有缺漏時則讀取 `selectionComplete` 與 `missingCompanyCodes`。
 
-兩個工具都固定回 `currency=TWD`、`timezone=Asia/Taipei`、`interval=1d`、`priceBasis=raw_unadjusted`，並正規化官方成交股數、成交金額、成交筆數與漲跌。TPEx 歷史個股的「張／仟元」會乘以 1,000 統一為 shares／TWD；每個月、每個實際探測市場的 source 都分開保留 URL、原始單位、multiplier 與 `snapshotIdentity`。只有回應本身可核對月份時才保留 `dataMonth` 並讓 `meta.asOf.sourceCutoffs` 逐月追溯；官方 no-data response 若缺 title/date，會回 `snapshotIdentity=unverified_empty`、省略 `dataMonth`、將該 source cutoff 設為 none，並以 `meta.quality.source=partial` 與 `SOURCE_SNAPSHOT_IDENTITY_UNVERIFIED` 明示。官方 `--`／無成交會正規化為 `null` OHLC 與 `status=no_trade`，官方零成交量值仍保留 0；`qualityStatus`、`missingFields` 與 `dataQualityComplete` 用來區分完整、部分缺欄及官方無成交。週末、休市與停牌日期不會補合成 bar，且不提供盤中報價、adjusted close 或 corporate actions。
+兩個工具都固定回 `currency=TWD`、`timezone=Asia/Taipei`、`interval=1d`、`priceBasis=raw_unadjusted`，並正規化官方成交股數、成交金額、成交筆數與漲跌。TPEx 歷史個股的「張／仟元」會乘以 1,000 統一為 shares／TWD；每個月、每個實際探測市場的 source 都分開保留 URL、原始單位、multiplier 與 `snapshotIdentity`。只有回應本身可核對月份時才保留 `dataMonth` 並讓 `meta.asOf.sourceCutoffs` 逐月追溯；官方 no-data response 若缺 title/date，會回 `snapshotIdentity=unverified_empty`、省略 `dataMonth`、將該 source cutoff 設為 none，並以 `meta.quality.source=partial` 與 `SOURCE_SNAPSHOT_IDENTITY_UNVERIFIED` 明示。官方 `--`／無成交會正規化為 `null` OHLC 與 `status=no_trade`，官方零成交量值仍保留 0；`qualityStatus`、`missingFields` 與 `dataQualityComplete` 用來區分完整、部分缺欄及官方無成交。週末、休市與停牌日期不會補合成 bar。這兩個 OHLC tools 不提供盤中報價或 adjusted close，也不內嵌公司行動資料或公司行動調整價；需要公司行動證據與 price-index-compatible 報酬時應使用 `get_stock_reaction_signals`。
 
 `get_daily_market_ohlc` 的 `universe_policy=compatible` 維持 current-master 加四碼代號 fallback 行為，但各市場與目前 master 的 `matchRatio` 仍須至少 95%，以拒絕疑似截斷來源，並以 `classificationPolicy` 與 `reconciliation` 如實揭露差異；`strict_current_master` 只允許 `date=latest`，目前公司母體與行情不完全吻合時回 `INCOMPLETE_COVERAGE`。歷史日期固定採 `historical_code_rule`，不可將目前公司母體套用為歷史母體或據此宣稱無存續偏誤。
 
 ### Benchmark 與市場反應代理
 
-`get_stock_reaction_signals` 接受 1–50 個目前上市櫃四碼代號、`as_of=latest | YYYY-MM-DD`，以及不重複的 5／20／60／120 交易日 `horizons` 子集合。benchmark 歷史自 `1999-01-05` 起；每頁最多 10 家、最多 48 個「一個官方市場月份 request」工作單位，受限時必須沿 `pagination.nextCursor` 續查。stateless reaction cursor 已升為 v2；`pagination.snapshotId` 在正常續頁保持相同，綁定 query、目前 master、benchmark、公司行動 range summary，以及整個 requested company scope 的 TWSE 權息 detail evidence，來源改變時要求從第一頁重啟。尚未查詢公司的個股 OHLC 仍不在此快照內。
+`get_stock_reaction_signals` 接受 1–50 個目前上市櫃四碼代號、`as_of=latest | YYYY-MM-DD`，以及不重複的 5／20／60／120 交易日 `horizons` 子集合。benchmark 歷史自 `1999-01-05` 起；每頁最多 10 家、最多 48 個「一個官方市場月份 request」工作單位，受限時必須沿 `pagination.nextCursor` 續查。stateless reaction cursor 已升為 v2；`pagination.snapshotId` 在正常續頁保持相同，綁定 query、目前 master、benchmark、公司行動 range contracts/summaries，以及整個 requested company scope 的 TWSE 權息 detail evidence，來源改變時要求從第一頁重啟。尚未查詢公司的個股 OHLC 仍不在此快照內。
 
 工具保留 `raw_unadjusted` 原始收盤報酬供稽核，另依 TWSE／TPEx 公司行動「實際結果」建立 `price_index_compatible_corporate_action_adjusted` 報酬，再與 TAIEX 或櫃買官方 `price_index` 比較。現金股利造成的價格效果會保留，以配合 price index 口徑；股票股利／除權、減資及面額變更的機械跳動則依官方前收盤與參考價調整。這個序列不是 adjusted close，也不是 total-return index／股息再投資報酬，不能當成總股東報酬。
 
@@ -234,13 +234,19 @@ npm run build
 
 一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、latest 候選篩選四柱與 funnel、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
 
-Live contract tests 預設從一般測試跳過，只有明確設定時才會查詢原站：
+Live contract tests 預設從一般測試跳過，只有明確設定時才會查詢原站。只執行低流量的公司行動 focused canary：
+
+```bash
+npm run test:live:corporate-actions
+```
+
+完整 live suite 則使用：
 
 ```bash
 npm run test:live
 ```
 
-GitHub Actions 另以每週一次、單一 concurrency group 的低頻 live contract workflow 稽核官方 schema／snapshot identity；也可用 `workflow_dispatch` 手動執行。請勿提高排程頻率或加入高基數掃描，以免對官方來源造成不必要流量。
+既有 GitHub Actions 以每週一次、單一 concurrency group 的低頻 live contract workflow 稽核官方 schema／snapshot identity。v0.5.1 在這個既有 workflow 擴充公司行動 focused canary：覆蓋 TWSE／TPEx 各自除權息、減資與面額變更六組 range-family 來源的空與非空回應、必要欄位與 range identity schema drift，並另外驗證選定事件的 TWSE `TWT49UDetail`。只有 range identity 可核對的空回應才是 `verified_empty`；缺少可核對 identity 的空回應仍是 `unverified_empty`，不能解釋為「已證明沒有事件」。這些 canary 直接讀取官方來源，不使用資料庫、不寫入 persistence，也不改變 MCP runtime result contract。`workflow_dispatch` 的 `suite` 可選 `corporate-actions` 或 `all`；每週排程固定執行 focused canary。請勿提高排程頻率或加入高基數掃描，以免對官方來源造成不必要流量。
 
 ## 部署到 Vercel
 

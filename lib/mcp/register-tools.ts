@@ -446,7 +446,7 @@ export function registerMopsfinTools(server: McpServer): void {
                 code: "STATELESS_PAGE_VALUES_NOT_PINNED",
                 severity: "info",
                 scope: "page",
-                message: "無狀態 v2 cursor 固定 query、目前 master、benchmark、full-market 公司行動 range summary 與整個 requested-company TWSE 權息 detail evidence；各頁個股 OHLC 仍於該頁即時取得，不保證跨頁 point-in-time 一致。",
+                message: "無狀態 v2 cursor 固定 query、目前 master、benchmark、full-market 公司行動 range contracts/summaries 與整個 requested-company TWSE 權息 detail evidence；各頁個股 OHLC 仍於該頁即時取得，不保證跨頁 point-in-time 一致。",
                 refs: {
                   companyCodes: data.companies.map((company) => company.companyCode),
                   fields: ["companies", "stockSources", "corporateActionSources"],

@@ -10,7 +10,7 @@ export function GET() {
     {
       status: "ok",
       service: "mopsfin-taiwan-equities",
-      version: "0.5.0",
+      version: "0.5.1",
       resultContractVersion: "mopsfin.result.v1",
       toolCount: 16,
       readiness: {
@@ -50,6 +50,8 @@ export function GET() {
           "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingIndex",
         twseExRightDividend:
           "https://www.twse.com.tw/rwd/zh/exRight/TWT49U",
+        twseExRightDividendDetail:
+          "https://www.twse.com.tw/rwd/zh/exRight/TWT49UDetail",
         twseCapitalReduction:
           "https://www.twse.com.tw/rwd/zh/reducation/TWTAUU",
         twseParValueChange:

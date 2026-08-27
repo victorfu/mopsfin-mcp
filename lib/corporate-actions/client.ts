@@ -18,11 +18,13 @@ import type {
   CorporateActionAdjustmentReason,
   CorporateActionCoverage,
   CorporateActionCoverageGap,
+  CorporateActionDetailContractProbe,
   CorporateActionEvent,
   CorporateActionFamily,
   CorporateActionHistory,
   CorporateActionHistoryOptions,
   CorporateActionKind,
+  CorporateActionRangeContractProbe,
   CorporateActionSource,
 } from "./types";
 
@@ -105,6 +107,10 @@ const SOURCE_NAMES: Record<
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const COMPANY_CODE = /^[1-9]\d{3}$/;
 const OFFICIAL_SECURITY_CODE = /^[0-9A-Z]{4,10}$/i;
+const TWSE_UNVERIFIED_EMPTY_STATUSES = new Set([
+  "很抱歉，沒有符合條件的資料!",
+  "很抱歉，沒有符合條件的資料！",
+]);
 
 function parseIsoDate(value: string, field: string): Date {
   if (typeof value !== "string" || !ISO_DATE.test(value)) {
@@ -185,6 +191,16 @@ function validateMarket(market: CompanyMarket): void {
   }
 }
 
+function validateFamily(family: CorporateActionFamily): void {
+  if (!FAMILY_ORDER.includes(family)) {
+    fail(
+      "INVALID_ARGUMENT",
+      "family 必須是 ex_right_dividend、capital_reduction 或 par_value_change。",
+      { family },
+    );
+  }
+}
+
 function validateRange(startDate: string, endDate: string): void {
   parseIsoDate(startDate, "startDate");
   parseIsoDate(endDate, "endDate");
@@ -238,8 +254,12 @@ function payloadObject(snapshot: JsonSnapshot, sourceName: string): Record<strin
   return snapshot.payload as Record<string, unknown>;
 }
 
+function upstreamStatus(payload: Record<string, unknown>): string {
+  return typeof payload.stat === "string" ? payload.stat.trim() : "";
+}
+
 function assertOk(payload: Record<string, unknown>, sourceName: string): void {
-  const status = typeof payload.stat === "string" ? payload.stat.trim() : "";
+  const status = upstreamStatus(payload);
   if (status.toLowerCase() !== "ok") {
     fail("UPSTREAM_BAD_RESPONSE", `${sourceName}回傳非成功狀態。`, {
       upstreamStatus: status || null,
@@ -1034,6 +1054,136 @@ function sourceConfig(
   };
 }
 
+function contractRangeRequest(
+  market: CompanyMarket,
+  family: CorporateActionFamily,
+  startDate: string,
+  endDate: string,
+): RangeRequest {
+  validateMarket(market);
+  validateFamily(family);
+  validateRange(startDate, endDate);
+  const supportedFrom = SUPPORTED_FROM[market][family];
+  if (startDate < supportedFrom) {
+    fail(
+      "INVALID_ARGUMENT",
+      `contract probe 的 startDate 不得早於 ${market} ${family} 官方支援起日 ${supportedFrom}。`,
+      { market, family, startDate, supportedFrom },
+    );
+  }
+  return {
+    market,
+    family,
+    supportedFrom,
+    queryStart: startDate,
+    queryEnd: endDate,
+    config: sourceConfig(market, family, startDate, endDate),
+  };
+}
+
+function assertUnverifiedEmptyPayloadHasNoRows(
+  payload: Record<string, unknown>,
+  request: RangeRequest,
+): void {
+  const assertEmptyRows = (
+    rawRows: unknown,
+    rawDeclaredCount: unknown,
+    location: string,
+  ): void => {
+    if (rawRows !== undefined && !Array.isArray(rawRows)) {
+      fail(
+        "UPSTREAM_BAD_RESPONSE",
+        "TWSE 無資料狀態同時帶有格式錯誤的資料列容器。",
+        { family: request.family, location },
+      );
+    }
+    const actualCount = Array.isArray(rawRows) ? rawRows.length : 0;
+    if (actualCount > 0) {
+      fail(
+        "UPSTREAM_BAD_RESPONSE",
+        "TWSE 無資料狀態同時帶有非空資料列。",
+        { family: request.family, location, actualCount },
+      );
+    }
+    declaredRowCount(
+      rawDeclaredCount,
+      actualCount,
+      request.config.sourceName,
+    );
+  };
+
+  assertEmptyRows(
+    payload.data,
+    payload.totalCount ?? payload.total,
+    "payload.data",
+  );
+  if (payload.tables === undefined) return;
+  if (!Array.isArray(payload.tables)) {
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "TWSE 無資料狀態同時帶有格式錯誤的 tables。",
+      { family: request.family },
+    );
+  }
+  payload.tables.forEach((rawTable, index) => {
+    if (!rawTable || typeof rawTable !== "object" || Array.isArray(rawTable)) {
+      fail(
+        "UPSTREAM_BAD_RESPONSE",
+        "TWSE 無資料狀態的 table 格式錯誤。",
+        { family: request.family, tableIndex: index },
+      );
+    }
+    const table = rawTable as Record<string, unknown>;
+    assertEmptyRows(
+      table.data,
+      table.totalCount ?? table.total,
+      `payload.tables[${index}].data`,
+    );
+  });
+}
+
+function normalizeRangeContract(
+  snapshot: JsonSnapshot,
+  request: RangeRequest,
+): CorporateActionRangeContractProbe {
+  const payload = payloadObject(snapshot, request.config.sourceName);
+  const status = upstreamStatus(payload);
+  if (
+    request.market === "listed" &&
+    TWSE_UNVERIFIED_EMPTY_STATUSES.has(status)
+  ) {
+    assertUnverifiedEmptyPayloadHasNoRows(payload, request);
+    return {
+      status: "unverified_empty",
+      market: request.market,
+      family: request.family,
+      queryStart: request.queryStart,
+      queryEnd: request.queryEnd,
+      responseRangeVerified: false,
+      upstreamStatus: status,
+      events: [],
+      source: null,
+    };
+  }
+
+  const range =
+    request.market === "listed"
+      ? normalizeTwseRange(snapshot, request)
+      : normalizeTpexRange(snapshot, request);
+  return {
+    status:
+      range.source.rawRowCount === 0 ? "verified_empty" : "nonempty",
+    market: request.market,
+    family: request.family,
+    queryStart: request.queryStart,
+    queryEnd: request.queryEnd,
+    responseRangeVerified: true,
+    upstreamStatus: status,
+    events: range.events,
+    source: range.source,
+  };
+}
+
 function requestsAndCoverage(
   market: CompanyMarket,
   startDate: string,
@@ -1136,18 +1286,27 @@ function historyFingerprint(
   startDate: string,
   endDate: string,
   coverage: CorporateActionCoverage,
+  contracts: CorporateActionRangeContractProbe[],
   ranges: NormalizedRange[],
   fullMarketEvents: CorporateActionEvent[],
   filteredCompanyCodes: string[] | null,
   selectedDetailEvidence: SelectedDetailFingerprintEvidence[],
 ): string {
   const content = {
-    version: 2,
+    version: 3,
     market,
     startDate,
     endDate,
     filteredCompanyCodes,
     gaps: coverage.gaps,
+    rangeContracts: contracts.map((contract) => ({
+      family: contract.family,
+      status: contract.status,
+      queryStart: contract.queryStart,
+      queryEnd: contract.queryEnd,
+      responseRangeVerified: contract.responseRangeVerified,
+      upstreamStatus: contract.upstreamStatus,
+    })),
     sources: ranges.map(({ source }) => ({
       family: source.family,
       sourceUrl: source.sourceUrl,
@@ -1286,6 +1445,9 @@ function gapWarning(gap: CorporateActionCoverageGap): string {
       : gap.family === "capital_reduction"
         ? "減資"
         : "面額變更";
+  if (gap.reason === "unverified_empty_response") {
+    return `${gap.market} ${family}官方來源於 ${gap.queryStart} 至 ${gap.queryEnd} 回傳無資料狀態，但未回顯查詢範圍；不得視為已驗證無事件。`;
+  }
   return `${gap.market} ${family}官方歷史自 ${gap.supportedFrom} 起提供；${gap.requestedStart} 至 ${gap.uncoveredThrough} 無法覆蓋。`;
 }
 
@@ -1306,6 +1468,69 @@ export class CorporateActionClient {
     this.deadlineMs = options.deadlineMs ?? 50_000;
   }
 
+  /** Runs the production parser against exactly one official range endpoint. */
+  async probeRangeContract(
+    market: CompanyMarket,
+    family: CorporateActionFamily,
+    startDate: string,
+    endDate: string,
+  ): Promise<CorporateActionRangeContractProbe> {
+    const request = contractRangeRequest(market, family, startDate, endDate);
+    const deadline = new AbsoluteDeadline(this.deadlineMs);
+    try {
+      return await this.loadRangeContract(request, deadline);
+    } finally {
+      deadline.dispose();
+    }
+  }
+
+  /** Runs the production detail parser for one normalized TWSE combined event. */
+  async probeTwseCombinedDetailContract(
+    event: CorporateActionEvent,
+  ): Promise<CorporateActionDetailContractProbe> {
+    if (
+      !event ||
+      event.market !== "listed" ||
+      event.sourceFamily !== "ex_right_dividend" ||
+      event.kind !== "rights_and_dividend" ||
+      !COMPANY_CODE.test(event.companyCode)
+    ) {
+      fail(
+        "INVALID_ARGUMENT",
+        "TWSE detail contract probe 只接受已正規化的四碼上市公司權息事件。",
+      );
+    }
+    parseIsoDate(event.effectiveDate, "event.effectiveDate");
+    const deadline = new AbsoluteDeadline(this.deadlineMs);
+    try {
+      return await this.loadTwseCombinedDetailContract(event, deadline);
+    } finally {
+      deadline.dispose();
+    }
+  }
+
+  private async loadRangeContract(
+    request: RangeRequest,
+    deadline: AbsoluteDeadline,
+  ): Promise<CorporateActionRangeContractProbe> {
+    return normalizeRangeContract(
+      await this.loader.get(request.config, deadline),
+      request,
+    );
+  }
+
+  private async loadTwseCombinedDetailContract(
+    event: CorporateActionEvent,
+    deadline: AbsoluteDeadline,
+  ): Promise<CorporateActionDetailContractProbe> {
+    const config = detailConfig(event);
+    return normalizeTwseCombinedDetail(
+      await this.loader.get(config, deadline),
+      config,
+      event,
+    );
+  }
+
   async getHistory(
     market: CompanyMarket,
     startDate: string,
@@ -1315,21 +1540,48 @@ export class CorporateActionClient {
     validateMarket(market);
     validateRange(startDate, endDate);
     const filteredCompanyCodes = normalizeCompanyCodes(options.companyCodes);
-    const { requests, coverage } = requestsAndCoverage(
+    const { requests, coverage: initialCoverage } = requestsAndCoverage(
       market,
       startDate,
       endDate,
     );
     const deadline = new AbsoluteDeadline(this.deadlineMs);
     try {
-      const ranges = await Promise.all(
-        requests.map(async (request) => {
-          const snapshot = await this.loader.get(request.config, deadline);
-          return request.market === "listed"
-            ? normalizeTwseRange(snapshot, request)
-            : normalizeTpexRange(snapshot, request);
-        }),
+      const contracts = await Promise.all(
+        requests.map((request) => this.loadRangeContract(request, deadline)),
       );
+      const ranges: NormalizedRange[] = contracts.flatMap((contract) =>
+        contract.source === null
+          ? []
+          : [{ events: contract.events, source: contract.source }],
+      );
+      const unverifiedEmptyGaps: CorporateActionCoverageGap[] = contracts
+        .filter(
+          (
+            contract,
+          ): contract is Extract<
+            CorporateActionRangeContractProbe,
+            { status: "unverified_empty" }
+          > => contract.status === "unverified_empty",
+        )
+        .map((contract) => ({
+          market: contract.market,
+          family: contract.family,
+          requestedStart: contract.queryStart,
+          uncoveredThrough: contract.queryEnd,
+          supportedFrom: SUPPORTED_FROM[contract.market][contract.family],
+          reason: "unverified_empty_response" as const,
+          queryStart: contract.queryStart,
+          queryEnd: contract.queryEnd,
+          upstreamStatus: contract.upstreamStatus,
+        }));
+      const gaps = [...initialCoverage.gaps, ...unverifiedEmptyGaps];
+      const coverage: CorporateActionCoverage = {
+        ...initialCoverage,
+        status: gaps.length === 0 ? "complete" : "partial",
+        coverageComplete: gaps.length === 0,
+        gaps,
+      };
       const fullMarketEvents = collapseDuplicateEvents(
         ranges.flatMap((range) => range.events),
       ).sort(compareEvents);
@@ -1350,14 +1602,12 @@ export class CorporateActionClient {
         detailRequestCount = combinedEvents.length;
         const details = await Promise.all(
           combinedEvents.map(async (event) => {
-            const config = detailConfig(event);
             try {
               return {
                 status: "fulfilled" as const,
-                result: normalizeTwseCombinedDetail(
-                  await this.loader.get(config, deadline),
-                  config,
+                result: await this.loadTwseCombinedDetailContract(
                   event,
+                  deadline,
                 ),
               };
             } catch (error) {
@@ -1433,6 +1683,7 @@ export class CorporateActionClient {
         startDate,
         endDate,
         coverage,
+        contracts,
         ranges,
         fullMarketEvents,
         filteredCompanyCodes,
@@ -1462,7 +1713,7 @@ export class CorporateActionClient {
         coverage,
         fingerprint,
         fingerprintBasis:
-          "full_market_range_summary_plus_selected_scope_and_twse_combined_detail_without_retrieved_at",
+          "full_market_range_contracts_and_summaries_plus_selected_scope_and_twse_combined_detail_without_retrieved_at",
         warnings,
       };
     } finally {

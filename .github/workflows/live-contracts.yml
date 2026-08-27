@@ -2,6 +2,15 @@ name: Low-frequency live contracts
 
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Live contract suite to run
+        required: true
+        default: corporate-actions
+        type: choice
+        options:
+          - corporate-actions
+          - all
   schedule:
     - cron: "23 20 * * 0"
 
@@ -23,5 +32,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Run the fixture-independent official contract smoke suite once weekly
+      - name: Run the focused corporate-action contracts
+        if: github.event_name == 'schedule' || inputs.suite == 'corporate-actions'
+        run: npm run test:live:corporate-actions
+      - name: Run all live contracts
+        if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
         run: npm run test:live

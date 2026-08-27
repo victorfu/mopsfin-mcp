@@ -290,7 +290,7 @@ function fakeCorporateActions(options: {
           },
           fingerprint: options.fingerprint ?? "c".repeat(64),
           fingerprintBasis:
-            "full_market_range_summary_plus_selected_scope_and_twse_combined_detail_without_retrieved_at",
+            "full_market_range_contracts_and_summaries_plus_selected_scope_and_twse_combined_detail_without_retrieved_at",
           warnings: [],
         };
       },

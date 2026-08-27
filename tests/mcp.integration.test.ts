@@ -1637,7 +1637,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.5.0" },
+      { name: "mopsfin-test", version: "0.5.1" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,

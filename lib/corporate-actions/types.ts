@@ -59,14 +59,24 @@ export interface CorporateActionSource {
   officialDeclaredRowCountAvailable: boolean;
 }
 
-export interface CorporateActionCoverageGap {
+interface CorporateActionCoverageGapBase {
   market: CompanyMarket;
   family: CorporateActionFamily;
   requestedStart: string;
   uncoveredThrough: string;
   supportedFrom: string;
-  reason: "before_official_history_start";
 }
+
+export type CorporateActionCoverageGap =
+  | (CorporateActionCoverageGapBase & {
+      reason: "before_official_history_start";
+    })
+  | (CorporateActionCoverageGapBase & {
+      reason: "unverified_empty_response";
+      queryStart: string;
+      queryEnd: string;
+      upstreamStatus: string;
+    });
 
 export interface CorporateActionCoverage {
   status: "complete" | "partial";
@@ -79,11 +89,44 @@ export interface CorporateActionCoverage {
 export interface CorporateActionHistoryOptions {
   /**
    * Limits returned events and TWSE combined right/dividend detail requests.
-   * The history fingerprint binds both the full-market range summaries and
+   * The history fingerprint binds both the full-market range contracts and
+   * accepted summaries, including unverified-empty contract evidence, and
    * this normalized selection scope, including selected TWSE combined-event
    * detail evidence.
    */
   companyCodes?: string[];
+}
+
+interface CorporateActionRangeContractProbeBase {
+  market: CompanyMarket;
+  family: CorporateActionFamily;
+  queryStart: string;
+  queryEnd: string;
+  upstreamStatus: string;
+  events: CorporateActionEvent[];
+}
+
+/**
+ * Contract-only view of one official range endpoint. An unverified empty
+ * response deliberately has no source evidence because the upstream payload
+ * did not echo the requested range and therefore cannot prove no event.
+ */
+export type CorporateActionRangeContractProbe =
+  | (CorporateActionRangeContractProbeBase & {
+      status: "nonempty" | "verified_empty";
+      responseRangeVerified: true;
+      source: CorporateActionSource;
+    })
+  | (CorporateActionRangeContractProbeBase & {
+      status: "unverified_empty";
+      responseRangeVerified: false;
+      events: [];
+      source: null;
+    });
+
+export interface CorporateActionDetailContractProbe {
+  event: CorporateActionEvent;
+  source: CorporateActionSource;
 }
 
 export interface CorporateActionHistory {
@@ -97,6 +140,6 @@ export interface CorporateActionHistory {
   requestCount: number;
   coverage: CorporateActionCoverage;
   fingerprint: string;
-  fingerprintBasis: "full_market_range_summary_plus_selected_scope_and_twse_combined_detail_without_retrieved_at";
+  fingerprintBasis: "full_market_range_contracts_and_summaries_plus_selected_scope_and_twse_combined_detail_without_retrieved_at";
   warnings: string[];
 }

@@ -510,7 +510,7 @@ export const stockReactionSignalsInputSchema = z
       .string()
       .max(1000)
       .optional()
-      .describe("上一頁回傳的 v2 reaction cursor；綁定 query、目前 master、benchmark、公司行動 range summary 與整個 requested-company TWSE 權息 detail evidence"),
+      .describe("上一頁回傳的 v2 reaction cursor；綁定 query、目前 master、benchmark、公司行動 range contracts/summaries 與整個 requested-company TWSE 權息 detail evidence"),
   })
   .strict()
   .superRefine((value, context) => {
@@ -2181,7 +2181,7 @@ export const stockReactionSignalsOutputSchema = z
       .describe("本頁按 caller 順序回傳的公司 reaction signals；只有 actual-result 證據完整才提供 price-index-compatible excess，不含主觀分數或錯價結論"),
     benchmarkSources: z.array(benchmarkSourceSchema).describe("本頁載入並 fingerprint 的 TAIEX／TPEx 官方價格指數月份來源"),
     stockSources: z.array(priceSourceSchema).describe("本頁各公司實際使用的官方 raw OHLC 月份來源"),
-    corporateActionSources: z.array(corporateActionSourceSchema).describe("本頁載入並納入 source cutoffs 的 TWSE／TPEx official actual-result 來源；cursor fingerprint 同時綁定 full-market range summaries、排序後 selected-company scope 與 selected TWSE combined-event detail 的成功／失敗正規化證據，retrievedAt 不參與 fingerprint"),
+    corporateActionSources: z.array(corporateActionSourceSchema).describe("本頁載入並納入 source cutoffs 的 TWSE／TPEx official actual-result 來源；cursor fingerprint 同時綁定 full-market range contracts/summaries（含無法形成 source 的 unverified-empty contract evidence）、排序後 selected-company scope 與 selected TWSE combined-event detail 的成功／失敗正規化證據，retrievedAt 不參與 fingerprint"),
     ...warningShape,
   })
   .strict();

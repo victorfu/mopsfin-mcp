@@ -40,7 +40,7 @@ describe("README example prompts", () => {
     expect(readme).not.toContain("列出最近完成交易日全部上市櫃公司的 OHLC");
   });
 
-  it("documents the v0.5.0 sixteen-tool contract and official sources", () => {
+  it("documents the v0.5.1 sixteen-tool contract and official sources", () => {
     const tools = [
       "find_companies",
       "get_stock_ohlc",
@@ -59,7 +59,7 @@ describe("README example prompts", () => {
       "get_industry_data",
       "get_financial_institution_metric",
     ];
-    expect(readme).toContain("目前版本 `0.5.0`");
+    expect(readme).toContain("目前版本 `0.5.1`");
     expect(readme).toContain("十六個工具");
     for (const tool of tools) expect(readme).toContain(`\`${tool}\``);
     expect(readme).toContain("meta.contractVersion=mopsfin.result.v1");
@@ -107,6 +107,17 @@ describe("README example prompts", () => {
     expect(readme).toContain("Retry-After");
     expect(readme).toContain("不記錄 tool arguments");
     expect(readme).toContain("每週一次");
+    expect(readme).toContain("npm run test:live:corporate-actions");
+    expect(readme).toContain("完整 live suite");
+    expect(readme).toContain("`suite` 可選 `corporate-actions` 或 `all`");
+    expect(readme).toContain("六組 range-family");
+    expect(readme).toContain("TWSE `TWT49UDetail`");
+    expect(readme).toContain("`verified_empty`");
+    expect(readme).toContain("`unverified_empty`");
+    expect(readme).toContain("schema drift");
+    expect(readme).toContain("不使用資料庫、不寫入 persistence");
+    expect(readme).toContain("這兩個 OHLC tools");
+    expect(readme).toContain("不內嵌公司行動資料或公司行動調整價");
     expect(readme).toContain("balanced_non_financial_v2");
     expect(readme).toContain("taiwan_stock_screen.v2");
     expect(readme).toContain("coarseRanking");

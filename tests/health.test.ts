@@ -13,7 +13,7 @@ describe("health route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toMatchObject({
       status: "ok",
-      version: "0.5.0",
+      version: "0.5.1",
       toolCount: 16,
       readiness: {
         status: "ready",
@@ -39,6 +39,8 @@ describe("health route", () => {
       sourceUrls: {
         twseExRightDividend:
           "https://www.twse.com.tw/rwd/zh/exRight/TWT49U",
+        twseExRightDividendDetail:
+          "https://www.twse.com.tw/rwd/zh/exRight/TWT49UDetail",
         twseCapitalReduction:
           "https://www.twse.com.tw/rwd/zh/reducation/TWTAUU",
         twseParValueChange:

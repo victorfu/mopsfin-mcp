@@ -12,17 +12,29 @@ interface CorporateActionFixtures {
   exRightDetail2317?: Record<string, unknown>;
 }
 
-function fixture(name: string): CorporateActionFixtures {
+interface EmptyCorporateActionFixtures {
+  listed: CorporateActionFixtures;
+  otc: CorporateActionFixtures;
+}
+
+function fixture<T>(name: string): T {
   return JSON.parse(
     readFileSync(
       fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)),
       "utf8",
     ),
-  ) as CorporateActionFixtures;
+  ) as T;
 }
 
-const twseFixture = fixture("corporate-actions-twse.json");
-const tpexFixture = fixture("corporate-actions-tpex.json");
+const twseFixture = fixture<CorporateActionFixtures>(
+  "corporate-actions-twse.json",
+);
+const tpexFixture = fixture<CorporateActionFixtures>(
+  "corporate-actions-tpex.json",
+);
+const emptyFixture = fixture<EmptyCorporateActionFixtures>(
+  "corporate-actions-empty.json",
+);
 const now = () => new Date("2026-08-27T00:00:00.000Z");
 
 function response(body: unknown): Response {
@@ -299,7 +311,7 @@ describe("CorporateActionClient", () => {
     ).toBe(true);
   });
 
-  it("clamps each family to its official history start and reports every gap", async () => {
+  it("clamps each family and starts an unverified-empty runtime gap at queryStart", async () => {
     const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
       const url = new URL(String(input));
       const start = url.searchParams.get("startDate") as string;
@@ -322,20 +334,7 @@ describe("CorporateActionClient", () => {
         });
       }
       if (url.pathname.includes("TWTAUU")) {
-        return response({
-          stat: "OK",
-          fields: [
-            "恢復買賣日期",
-            "股票代號",
-            "名稱",
-            "停止買賣前收盤價格",
-            "恢復買賣參考價",
-            "減資原因",
-          ],
-          data: [],
-          strDate: start,
-          endDate: end,
-        });
+        return response({ stat: "很抱歉，沒有符合條件的資料!" });
       }
       throw new Error(`unexpected fixture URL: ${url}`);
     });
@@ -365,11 +364,19 @@ describe("CorporateActionClient", () => {
           uncoveredThrough: "2011-01-03",
           supportedFrom: "2019-09-09",
         },
+        {
+          family: "capital_reduction",
+          requestedStart: "2011-01-01",
+          uncoveredThrough: "2011-01-03",
+          supportedFrom: "2011-01-01",
+          reason: "unverified_empty_response",
+          queryStart: "2011-01-01",
+          queryEnd: "2011-01-03",
+        },
       ],
     });
     expect(result.sources.map((source) => [source.family, source.queryStart])).toEqual([
       ["ex_right_dividend", "2010-12-30"],
-      ["capital_reduction", "2011-01-01"],
     ]);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -473,6 +480,290 @@ describe("CorporateActionClient", () => {
 
     await expect(
       client.getHistory("otc", "2025-07-01", "2025-07-10"),
+    ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+  });
+
+  it.each([
+    ["listed", "ex_right_dividend", "unverified_empty"],
+    ["listed", "capital_reduction", "unverified_empty"],
+    ["listed", "par_value_change", "verified_empty"],
+    ["otc", "ex_right_dividend", "verified_empty"],
+    ["otc", "capital_reduction", "verified_empty"],
+    ["otc", "par_value_change", "verified_empty"],
+  ] as const)(
+    "classifies %s %s official empty contract as %s",
+    async (market, family, expectedStatus) => {
+      const result = await new CorporateActionClient(
+        fixtureFetch(emptyFixture.listed, emptyFixture.otc) as typeof fetch,
+        now,
+        { maxAttempts: 1 },
+      ).probeRangeContract(market, family, "2025-07-05", "2025-07-05");
+
+      expect(result).toMatchObject({
+        status: expectedStatus,
+        market,
+        family,
+        queryStart: "2025-07-05",
+        queryEnd: "2025-07-05",
+        events: [],
+      });
+      if (expectedStatus === "unverified_empty") {
+        expect(result).toMatchObject({
+          responseRangeVerified: false,
+          source: null,
+          upstreamStatus: "很抱歉，沒有符合條件的資料!",
+        });
+      } else {
+        expect(result.responseRangeVerified).toBe(true);
+        expect(result.source).toMatchObject({
+          market,
+          family,
+          queryStart: "2025-07-05",
+          queryEnd: "2025-07-05",
+          responseStart: "2025-07-05",
+          responseEnd: "2025-07-05",
+          rawRowCount: 0,
+        });
+      }
+    },
+  );
+
+  it("fails closed when a known TWSE no-data status contradicts nonempty rows or counts", async () => {
+    const withRows = structuredClone(emptyFixture.listed);
+    withRows.exRight.data = [["unexpected official row"]];
+    await expect(
+      new CorporateActionClient(
+        fixtureFetch(withRows, emptyFixture.otc) as typeof fetch,
+        now,
+        { maxAttempts: 1 },
+      ).probeRangeContract(
+        "listed",
+        "ex_right_dividend",
+        "2025-07-05",
+        "2025-07-05",
+      ),
+    ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+
+    const withCount = structuredClone(emptyFixture.listed);
+    withCount.capitalReduction.data = [];
+    withCount.capitalReduction.totalCount = 1;
+    await expect(
+      new CorporateActionClient(
+        fixtureFetch(withCount, emptyFixture.otc) as typeof fetch,
+        now,
+        { maxAttempts: 1 },
+      ).probeRangeContract(
+        "listed",
+        "capital_reduction",
+        "2025-07-05",
+        "2025-07-05",
+      ),
+    ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+  });
+
+  it("classifies contract nonempty from raw rows even when no row is an eligible company", async () => {
+    const listed = structuredClone(twseFixture);
+    const rawRows = listed.exRight.data as unknown[][];
+    listed.exRight.data = [
+      structuredClone(
+        rawRows.find((row) => row[1] === "00900") as unknown[],
+      ),
+    ];
+    const result = await new CorporateActionClient(
+      fixtureFetch(listed) as typeof fetch,
+      now,
+      { maxAttempts: 1 },
+    ).probeRangeContract(
+      "listed",
+      "ex_right_dividend",
+      "2025-07-01",
+      "2025-07-10",
+    );
+
+    expect(result).toMatchObject({
+      status: "nonempty",
+      events: [],
+      source: {
+        rawRowCount: 1,
+        companyEventCount: 0,
+      },
+    });
+  });
+
+  it("keeps verified peer families when TWSE returns an unverified empty range", async () => {
+    const listed = structuredClone(twseFixture);
+    listed.exRight = structuredClone(emptyFixture.listed.exRight);
+    const client = new CorporateActionClient(
+      fixtureFetch(listed) as typeof fetch,
+      now,
+      { maxAttempts: 1 },
+    );
+
+    const partial = await client.getHistory(
+      "listed",
+      "2025-07-01",
+      "2025-07-10",
+    );
+
+    expect(partial.coverage).toMatchObject({
+      status: "partial",
+      coverageComplete: false,
+      gaps: [
+        {
+          market: "listed",
+          family: "ex_right_dividend",
+          reason: "unverified_empty_response",
+          queryStart: "2025-07-01",
+          queryEnd: "2025-07-10",
+          upstreamStatus: "很抱歉，沒有符合條件的資料!",
+        },
+      ],
+    });
+    expect(partial.events.map((event) => event.companyCode)).toEqual([
+      "2371",
+      "2327",
+    ]);
+    expect(partial.sources.map((source) => source.family)).toEqual([
+      "capital_reduction",
+      "par_value_change",
+    ]);
+    expect(partial.requestCount).toBe(3);
+    expect(partial.warnings.join(" ")).toContain("不得視為已驗證無事件");
+
+    const verified = structuredClone(listed);
+    verified.exRight = {
+      stat: "OK",
+      fields: [
+        "資料日期",
+        "股票代號",
+        "股票名稱",
+        "除權息前收盤價",
+        "除權息參考價",
+        "權值+息值",
+        "權/息",
+      ],
+      data: [],
+      strDate: "20250701",
+      endDate: "20250710",
+    };
+    const complete = await new CorporateActionClient(
+      fixtureFetch(verified) as typeof fetch,
+      now,
+      { maxAttempts: 1 },
+    ).getHistory("listed", "2025-07-01", "2025-07-10");
+    expect(complete.coverage.coverageComplete).toBe(true);
+    expect(complete.fingerprint).not.toBe(partial.fingerprint);
+  });
+
+  it("probes TWSE combined detail through the production normalizer", async () => {
+    const fetchMock = fixtureFetch();
+    const client = new CorporateActionClient(fetchMock as typeof fetch, now, {
+      maxAttempts: 1,
+    });
+    const summary = await client.probeRangeContract(
+      "listed",
+      "ex_right_dividend",
+      "2025-07-01",
+      "2025-07-10",
+    );
+    expect(summary.status).toBe("nonempty");
+    const event = eventByCode(summary.events, "2317");
+
+    const detail = await client.probeTwseCombinedDetailContract(event);
+
+    expect(detail.event).toMatchObject({
+      companyCode: "2317",
+      kind: "rights_and_dividend",
+      cashDividendPerShareTwd: 3,
+      adjustmentStatus: "available",
+    });
+    expect(detail.source).toMatchObject({
+      scope: "event_detail",
+      family: "ex_right_dividend",
+      responseStart: null,
+      responseEnd: null,
+      rawRowCount: 1,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["listed", "ex_right_dividend", "權/息"],
+    ["listed", "capital_reduction", "減資原因"],
+    ["listed", "par_value_change", "恢復買賣參考價"],
+    ["otc", "ex_right_dividend", "現金股利"],
+    ["otc", "capital_reduction", "減資原因"],
+    ["otc", "par_value_change", "恢復買賣開始參考價"],
+  ] as const)(
+    "fails closed when %s %s required field %s drifts",
+    async (market, family, requiredHeader) => {
+      const listed = structuredClone(twseFixture);
+      const otc = structuredClone(tpexFixture);
+      const key =
+        family === "ex_right_dividend"
+          ? "exRight"
+          : family === "capital_reduction"
+            ? "capitalReduction"
+            : "parValueChange";
+      const payload = (market === "listed" ? listed : otc)[key];
+      const fields =
+        market === "listed"
+          ? (payload.fields as string[])
+          : (((payload.tables as Array<Record<string, unknown>>)[0]
+              .fields as string[]));
+      const index = fields.indexOf(requiredHeader);
+      expect(index).toBeGreaterThanOrEqual(0);
+      fields[index] = `${requiredHeader}（契約漂移）`;
+      const client = new CorporateActionClient(
+        fixtureFetch(listed, otc) as typeof fetch,
+        now,
+        { maxAttempts: 1 },
+      );
+
+      await expect(
+        client.probeRangeContract(
+          market,
+          family,
+          "2025-07-01",
+          "2025-07-10",
+        ),
+      ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+    },
+  );
+
+  it("fails closed on unknown non-success status and TWSE detail schema drift", async () => {
+    const unknown = structuredClone(twseFixture);
+    unknown.exRight.stat = "maintenance";
+    await expect(
+      new CorporateActionClient(
+        fixtureFetch(unknown) as typeof fetch,
+        now,
+        { maxAttempts: 1 },
+      ).probeRangeContract(
+        "listed",
+        "ex_right_dividend",
+        "2025-07-01",
+        "2025-07-10",
+      ),
+    ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+
+    const detailDrift = structuredClone(twseFixture);
+    const detailClient = new CorporateActionClient(
+      fixtureFetch(detailDrift) as typeof fetch,
+      now,
+      { maxAttempts: 1 },
+    );
+    const summary = await detailClient.probeRangeContract(
+      "listed",
+      "ex_right_dividend",
+      "2025-07-01",
+      "2025-07-10",
+    );
+    const event = eventByCode(summary.events, "2317");
+    const detailFields = detailDrift.exRightDetail2317?.fields as string[];
+    detailFields[2] = "每股現金股利（契約漂移）";
+    await expect(
+      detailClient.probeTwseCombinedDetailContract(event),
     ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
   });
 });

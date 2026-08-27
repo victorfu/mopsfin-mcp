@@ -1,0 +1,89 @@
+{
+  "listed": {
+    "exRight": {
+      "stat": "很抱歉，沒有符合條件的資料!"
+    },
+    "capitalReduction": {
+      "stat": "很抱歉，沒有符合條件的資料!"
+    },
+    "parValueChange": {
+      "stat": "OK",
+      "params": {
+        "startDate": "20250705",
+        "endDate": "20250705",
+        "response": "json",
+        "controller": "change",
+        "action": "TWTB8U",
+        "lang": "zh"
+      },
+      "fields": [
+        "恢復買賣日期",
+        "股票代號",
+        "名稱",
+        "停止買賣前收盤價格",
+        "恢復買賣參考價"
+      ],
+      "data": []
+    }
+  },
+  "otc": {
+    "exRight": {
+      "date": "20250705~20250705",
+      "tables": [
+        {
+          "title": "",
+          "totalCount": 0,
+          "fields": [
+            "除權息日期",
+            "代號",
+            "名稱",
+            "除權息前收盤價",
+            "除權息參考價",
+            "權/息",
+            "現金股利"
+          ],
+          "data": []
+        }
+      ],
+      "stat": "ok"
+    },
+    "capitalReduction": {
+      "date": "20250705~20250705",
+      "tables": [
+        {
+          "title": "",
+          "subtitle": "本日無資料",
+          "totalCount": 0,
+          "fields": [
+            "恢復買賣日期",
+            "股票代號",
+            "名稱",
+            "最後交易日之收盤價格",
+            "減資恢復買賣開始日參考價格",
+            "減資原因"
+          ],
+          "data": []
+        }
+      ],
+      "stat": "ok"
+    },
+    "parValueChange": {
+      "date": "20250705~20250705",
+      "tables": [
+        {
+          "title": "",
+          "totalCount": 0,
+          "fields": [
+            "恢復買賣日期",
+            "證券代號",
+            "證券名稱",
+            "最後交易日之收盤價格",
+            "恢復買賣開始參考價"
+          ],
+          "data": []
+        }
+      ],
+      "stat": "ok"
+    }
+  }
+}
