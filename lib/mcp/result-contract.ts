@@ -341,8 +341,15 @@ function inferSourceCutoffs(
       readString(raw, "dataDate") ??
       readString(raw, "dataMonth") ??
       readString(raw, "reportDate") ??
-      readString(raw, "sourceReportDate");
-    const granularity: ResultAsOfGranularity = value
+      readString(raw, "sourceReportDate") ??
+      readString(raw, "asOf");
+    const declaredGranularity = readString(raw, "asOfGranularity");
+    const granularity: ResultAsOfGranularity = declaredGranularity &&
+      ["instant", "date", "month", "quarter", "mixed", "none"].includes(
+        declaredGranularity,
+      )
+      ? (declaredGranularity as ResultAsOfGranularity)
+      : value
       ? /^\d{4}-\d{2}-\d{2}$/.test(value)
         ? "date"
         : /^\d{4}-\d{2}$/.test(value)

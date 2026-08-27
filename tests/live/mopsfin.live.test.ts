@@ -6,6 +6,7 @@ import { mopsfinClient } from "@/lib/mopsfin/client";
 import { priceClient } from "@/lib/price/client";
 import { reactionClient } from "@/lib/reaction/client";
 import { monthlyRevenueClient } from "@/lib/revenue/client";
+import { taiwanStockScreenClient } from "@/lib/screening/client";
 import { valuationClient } from "@/lib/valuation/client";
 
 const liveDescribe =
@@ -386,5 +387,25 @@ liveDescribe("live Mopsfin contracts", () => {
     expect(result.query.companyCodes).toEqual(companyCodes);
     expect(result.companies).toHaveLength(11);
     expect(result.companies.map((company) => company.companyCode)).toEqual(companyCodes);
+  }, 60_000);
+
+  it("runs the bounded latest Taiwan-stock research screen contract", async () => {
+    const result = await taiwanStockScreenClient.screenTaiwanStockCandidates({
+      market: "listed",
+      companyCodes: ["2330"],
+      includeKy: true,
+      candidateLimit: 1,
+      preset: "balanced_non_financial_v1",
+    });
+
+    expect(result.screenDefinition.id).toBe("taiwan_stock_screen.v1");
+    expect(result.screenDefinition.posture).toBe(
+      "research_triage_not_recommendation",
+    );
+    expect(result.funnel.deepSelected).toBeLessThanOrEqual(1);
+    expect(result.funnel.reactionSelected).toBeLessThanOrEqual(1);
+    expect(result.candidates.length).toBeLessThanOrEqual(1);
+    expect(result.asOf.granularity).toBe("mixed");
+    expect(result.warnings.join(" ")).toContain("不是買賣建議");
   }, 60_000);
 });

@@ -6,8 +6,8 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 
 連線資訊：
 - 名稱：Mopsfin 台股財務
-- 版本：0.3.1
-- 說明：查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、benchmark reaction signals，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
+- 版本：0.4.1
+- 說明：篩選台股研究候選，並查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、benchmark reaction signals，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
 - 驗證方式：不需要登入、API Key、Token 或 OAuth
@@ -18,7 +18,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 2. 如果你能操作目前應用程式的設定介面，請帶我完成新增，並在任何會改變帳號設定的步驟前讓我確認。
 3. 如果你不能直接操作設定，請不要聲稱已完成；請按照目前平台的最新介面名稱，一次只告訴我一個清楚步驟，等我完成後再繼續。
 4. URL 必須完整使用 /api/mcp，請勿改成網站首頁、/mcp 或其他路徑；若出現 OAuth 進階欄位，請保持空白。
-5. 連線後確認可以看到 15 個唯讀工具，包含 get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
+5. 連線後確認可以看到 16 個唯讀工具，包含 screen_taiwan_stock_candidates、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
 6. 最後在新對話啟用此連接器，並測試：「請先找出 2330 對應的公司，再查詢最近 12 季營業收入；標示期別、單位、來源與資料擷取時間。」
 7. 若我的方案或工作區政策不允許新增自訂 MCP，請明確告訴我限制及需要聯絡的管理員角色。`;
 
@@ -30,6 +30,7 @@ const tools = [
   ["get_daily_market_valuation", "查詢官方 latest 或指定日估值與參考財報欄位"],
   ["get_monthly_revenue", "查詢官方 latest 或指定月份營收"],
   ["get_monthly_revenue_trend", "查詢 3–24 個月營收序列與透明衍生趨勢"],
+  ["screen_taiwan_stock_candidates", "以四柱 latest 資料分流最多 5 個非金融研究候選"],
   ["list_companies", "列出目前上市／上櫃公司母體，並揭露 heuristic coverage"],
   ["list_catalog", "查看可用指標、報表、附註與期別"],
   ["get_company_metric", "查詢公司財務趨勢、比率與年增率"],
@@ -56,11 +57,11 @@ export default function Home() {
       </header>
 
       <section className="hero" id="top">
-        <p className="eyebrow">V0.3.1 · REMOTE MCP · TAIWAN FINANCIAL DATA</p>
+        <p className="eyebrow">V0.4.1 · REMOTE MCP · TAIWAN EQUITY RESEARCH</p>
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
-          上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢與市場反應代理，並查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
+          上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢與市場反應代理，並用透明四柱規則產生待深入研究的台股候選，再查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
         </p>
 
         <div className="endpointCard">
@@ -75,7 +76,7 @@ export default function Home() {
           <li><span aria-hidden="true">●</span> 服務已上線</li>
           <li>Streamable HTTP</li>
           <li>免登入、免 API Key</li>
-          <li>15 個唯讀工具</li>
+          <li>16 個唯讀工具</li>
         </ul>
       </section>
 
@@ -119,7 +120,7 @@ export default function Home() {
             </li>
             <li>
               <span className="stepNumber">4</span>
-              <div><strong>檢查並開始使用</strong><p>建立後確認辨識出 15 個工具。開啟新對話，從工具選單加入這個 MCP 連線。</p></div>
+              <div><strong>檢查並開始使用</strong><p>建立後確認辨識出 16 個工具。開啟新對話，從工具選單加入這個 MCP 連線。</p></div>
             </li>
           </ol>
 
@@ -237,6 +238,7 @@ export default function Home() {
             <p>OHLC 價格為新台幣原始未還原權值日線，另提供官方成交股數、成交金額、成交筆數與漲跌；不是盤中即時價，也不提供 adjusted close。長區間個股查詢需依 <code>coverageComplete</code> 與 <code>nextCursor</code> 續查。</p>
             <p><code>get_daily_market_valuation</code> 可查單一歷史交易日，<code>get_monthly_revenue</code> 與 trend 可查 2013-01 起月份；空白或 N/A 保留為 null 並附資料狀態，不會改寫成 0。歷史月營收是目前修訂後 archive，不是 point-in-time vintage。</p>
             <p><code>get_stock_reaction_signals</code> 使用原始未還原權值個股價格與市場 price index，只是可重算的反應代理，不代表已證明市場錯價。</p>
+            <p><code>screen_taiwan_stock_candidates</code> 是 latest-only、有工作量上限的非金融研究分流：以月營收領先粗篩，再對有限名單評估 <code>companyQuality</code>、<code>fundamentalImprovement</code>、<code>reasonableValuation</code> 與 <code>marketUnderreactionProxy</code>，最多回傳 5 個候選。deep stage 會在 24-unit 預算內隔離 identity／metric errors；受影響代號以 <code>dependencyStatus</code> 與 <code>notReactionScored</code> 標示 unknown，不會被誤判為 fail 或 0 分。其餘 deepSelected 公司繼續，但不從 deepSelected 之外自動遞補。不同資料來源的 as-of 可能不同；結果不是完整全市場深篩、point-in-time 回測、錯價證明或投資建議。</p>
             <p>成功結果固定提供 <code>meta.asOf</code>、<code>meta.quality</code> 與 <code>meta.page</code>；cursor 綁定原查詢及來源 snapshot，不儲存在伺服器。若來源在續頁間改變，須依錯誤 <code>action=restart_pagination</code> 從第一頁重啟。</p>
             <p>每個請求都有整體 deadline，暫時性上游錯誤會在期限內依 <code>Retry-After</code> 或 backoff 有限重試；response、cache、併發與等待 queue 均設上限。行程內 telemetry 只彙總 method、tool name、延遲、狀態與錯誤碼，不記錄 tool arguments 或 request body，也不持久化。服務狀態頁不呼叫上游，官方資料契約另以每週一次的低頻 live checks 驗證。</p>
             <p>上市櫃公司通常一年申報 4 次；興櫃與公開發行公司可能僅申報半年與年度，部分公司只需申報年度。查不到某季不一定代表連線失敗。</p>
@@ -264,7 +266,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>Mopsfin 台股 MCP · v0.3.1</span>
+        <span>Mopsfin 台股 MCP · v0.4.1</span>
         <span>公開 · 唯讀 · 無資料庫</span>
       </footer>
     </main>

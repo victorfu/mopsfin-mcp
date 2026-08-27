@@ -1,9 +1,11 @@
 import type { MetricDefinition } from "./types";
 
 export const MOPSFIN_SERVER_INSTRUCTIONS = `
-這是 Mopsfin 台股 MCP v0.3.1，一個公開、唯讀、無資料庫的台灣公司財務與市場資料 Server，共提供 15 個工具。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、歷史日估值、歷史月營收與市場價格指數直接取自 MOPS、TWSE 與 TPEx 官方資料。
+這是 Mopsfin 台股 MCP v0.4.1，一個公開、唯讀、無資料庫的台灣公司財務與市場資料 Server，共提供 16 個工具。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、歷史日估值、歷史月營收與市場價格指數直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
-使用順序：需要目前上市櫃母體或全市場掃描候選代號時先呼叫 list_companies；只知道特定公司名稱或代號時使用 find_companies，不要用 find_companies 枚舉全市場。list_companies 的 market=listed 只回上市（含創新板）、market=otc 只回上櫃、market=all 合併兩個當次官方來源；include_financial=false 或 include_ky=false 可排除金融保險業或 KY 公司。查單一股票跨期歷史價量使用 get_stock_ohlc；查同一交易日 accepted market snapshot 或一批代號使用 get_daily_market_ohlc，並依 universeCoverageVerified／reconciliation 判讀 rowset；比較個股與市場在 5／20／60／120 個交易日視窗的原始報酬、量能與價格路徑代理訊號使用 get_stock_reaction_signals。查 latest 或指定日估值使用 get_daily_market_valuation；查單月營收使用 get_monthly_revenue；查 3–24 個月營收序列與透明衍生值使用 get_monthly_revenue_trend。不知道 metric_code、industry_codes、institution_codes 或可用期別時先呼叫 list_catalog；單一指標使用 get_company_metric，多家公司 × 多指標使用 get_company_metrics_batch。回答前應讀取 list_catalog guidance 以及每次結果的 meta、coverage、status 與 warnings。
+使用順序：需要「好公司＋基本面改善＋估值合理＋市場尚未充分反應」的初步研究名單時使用 screen_taiwan_stock_candidates；它只做 latest、非金融、營收改善導向的有界 research triage。需要目前上市櫃母體或自行掃描候選代號時先呼叫 list_companies；只知道特定公司名稱或代號時使用 find_companies，不要用 find_companies 枚舉全市場。list_companies 的 market=listed 只回上市（含創新板）、market=otc 只回上櫃、market=all 合併兩個當次官方來源；include_financial=false 或 include_ky=false 可排除金融保險業或 KY 公司。查單一股票跨期歷史價量使用 get_stock_ohlc；查同一交易日 accepted market snapshot 或一批代號使用 get_daily_market_ohlc，並依 universeCoverageVerified／reconciliation 判讀 rowset；比較個股與市場在 5／20／60／120 個交易日視窗的原始報酬、量能與價格路徑代理訊號使用 get_stock_reaction_signals。查 latest 或指定日估值使用 get_daily_market_valuation；查單月營收使用 get_monthly_revenue；查 3–24 個月營收序列與透明衍生值使用 get_monthly_revenue_trend。不知道 metric_code、industry_codes、institution_codes 或可用期別時先呼叫 list_catalog；單一指標使用 get_company_metric，多家公司 × 多指標使用 get_company_metrics_batch。回答前應讀取 list_catalog guidance 以及每次結果的 meta、coverage、status 與 warnings。
+
+候選篩選：screen_taiwan_stock_candidates 固定 preset=balanced_non_financial_v1、screenDefinition.id=taiwan_stock_screen.v1，只接受目前上市櫃非金融公司，market 可選 all／listed／otc，company_codes 最多 100 家、candidate_limit 最多 5 家、include_ky 預設 true。省略 company_codes 時以目前 heuristic-gated master 為母體；先用 latest 月營收與 latest 估值做低成本粗篩，最多 10 家再查 6 個月營收趨勢及 ROE、NetIncome、OperatingCashFlow、DebtRatio、GrossMargin、OperatingMargin、EPS，最後只對最多 5 家查 5／20／60 日 reaction signals。deep batch 逐公司解析 identity，並在 24-unit 預算內嘗試隔離 metric 錯誤；受影響代號列在 dependencyStatus.affectedCompanyCodes，並以 notReactionScored.reasonCodes=company_metrics_unavailable 保留 unavailable／unknown 語意，不會當成 fail 或 0 分。無法精確隔離時保守標記共享 chunk；其餘 deepSelected 公司繼續，但不從 deepSelected 之外遞補。四柱 companyQuality、fundamentalImprovement、reasonableValuation、marketUnderreactionProxy 各自回 pass／fail／unknown；四柱都可判讀時才提供等權總分，四柱全 pass 才歸 research_candidate。只有完成 reaction 並形成 candidates 的公司才進 bucket；其中品質與改善通過但估值或市場柱未通過者為 watchlist，必要柱 unknown 為 insufficient_data，其餘為 deprioritized；deep evidence unavailable 者留在 notReactionScored。結果保留完整 coarseRanking、evidencePolicies、criteria／weights、funnel、workBudget、mixed asOf、dependencyStatus 與來源 lineage；不同來源的最新日期可能不一致。marketUnderreactionProxy 只根據 raw_unadjusted 個股價格、price-index benchmark 與成交金額形成代理；目前沒有分析師預期修正、新聞、法人流向、持股、放空或公司行動完整調整。這不是完整全市場深度覆蓋、point-in-time／無存活者偏誤回測、錯價證明或投資建議；應把候選視為下一輪查核清單。
 
 公司母體：list_companies 只列 TWSE／TPEx 公司普通股母體，不含 ETF、ETN、權證、特別股與 TDR。上市來源的 TDR 會固定排除，因為 Mopsfin 不涵蓋 TDR。market=all 只有在上市與上櫃兩個必要來源都成功，且各來源通過必要欄位、單一出表日期、唯一代號與最低筆數 heuristic gate 時才回傳 coverageComplete=true。官方來源沒有 declared row count，因此 coverageComplete 是向後相容成功旗標，不證明完整 rowset；必須保留 coverageVerification.status=heuristic、officialDeclaredRowCountAvailable=false、sources.minimumExpectedCount、meta.quality.universe=unverified、MASTER_ROWSET_HEURISTIC issue、各自 reportDate、snapshotId、counts 與 warnings。公司列在母體只表示目前屬上市櫃公司，不保證每個 Mopsfin 指標或期別都有資料。
 
@@ -17,7 +19,7 @@ export const MOPSFIN_SERVER_INSTRUCTIONS = `
 
 市場反應代理：get_stock_reaction_signals 接受 1–50 家目前上市櫃公司、as_of=latest 或 YYYY-MM-DD，以及不重複的 5／20／60／120 交易日 horizons；每頁 1–10 家且最多 48 個官方市場月份 work units。個股報酬使用 raw_unadjusted 價格，benchmark 使用 TAIEX 或櫃買官方 price index，不含股息再投資或公司行動調整；N-session 只採 benchmark 交易日曆的 exact 起訖日，個股缺錨點不以前一成交日代填。changeMarker、market transition 或 observed name 變化會降低 excess-return comparability；訊號是市場尚未反應的研究代理，不是錯價證明或投資建議。必須沿 pagination.nextCursor 續頁並檢查各 signal status、comparability、dataQualityComplete 與 warnings。pagination.snapshotId 固定 query／目前 master／benchmark，不包含尚未查詢公司的個股 OHLC。
 
-批次基本面：get_company_metrics_batch 一次可接受 1–100 家公司與 1–8 個 list_catalog family=data 指標；按 caller 順序分頁，每頁最多 20 家，且每家公司保留全部 requested metrics。預設每家公司每項指標最多自己的最近 12 期，也可指定含首尾最多 12 季；basis 與 yoy_quarter 沿用 get_company_metric。本工具不提供產業平均或所選公司平均；每 10 家 × 每個指標是一個上游工作，單頁最多 24 units、併發最多 3。NO_DATA 會成功回逐 metric coverage 而不阻斷後續頁；page snapshotId 包含完整 point 內容，但 cursor 只綁 query／catalog，跨頁逐公司值不是 point-in-time 快照。上游傳輸或 identity 衝突才整頁失敗。
+批次基本面：get_company_metrics_batch 一次可接受 1–100 家公司與 1–8 個 list_catalog family=data 指標；按 caller 順序分頁，每頁最多 20 家，且每家公司保留全部 requested metrics。預設每家公司每項指標最多自己的最近 12 期，也可指定含首尾最多 12 季；basis 與 yoy_quarter 沿用 get_company_metric。本工具不提供產業平均或所選公司平均；每 10 家 × 每個指標是一個上游工作，comparison plan 與二分 isolation 合計每頁最多 24 units、併發最多 3。NO_DATA 不算 failure；單一 identity failure 與預算內可隔離的 company×metric error 會 partial success，其他公司與工作繼續，受影響項目以 coverage、availability 與 failure 明示，不把 unavailable 轉成 0 或 fail。無法精確定位時回 failureIsolationComplete=false 與 attribution=chunk；catalog、request／work-budget、ambient deadline、必要 invariant 或所有工作均失敗時仍整頁失敗。page snapshotId 包含完整 point、availability／failure 與 coverage；cursor 只綁 query／catalog，跨頁逐公司值不是 point-in-time 快照。
 
 統一結果契約：成功 structuredContent 固定含 ok=true 與 meta.contractVersion=mopsfin.result.v1。meta.asOf 必須用來確認 requested selector、實際 resolved 範圍、Asia/Taipei、snapshotId 與各來源 cutoff；meta.quality 分別揭露 source、universe、selection、values、freshness 與 issues，universe=compatible/unverified 或 selection/value=unknown 時 overall status 為 partial；meta.page 統一表示 none、offset 或 cursor 分頁及 next。省略 page_size/cursor 的舊全市場工具維持回傳整個 accepted snapshot；提供 page_size 後必須沿 meta.page.next.cursor。HTML 表格沿 pagination.nextOffset，get_stock_ohlc 沿 coverage.nextCursor，reaction 沿 pagination.nextCursor。cursor 不在伺服器保存狀態；先取得整個 accepted rowset 再切頁的工具綁內容快照，但這不額外證明官方 rowset 完整；batch 綁 query／catalog，reaction 綁 query／master／benchmark，後兩者用 STATELESS_PAGE_VALUES_NOT_PINNED 明示尚未讀取的逐公司值不在 snapshot scope。CURSOR_INVALID 或 SNAPSHOT_CHANGED 時必須從第一頁重新查詢。
 
@@ -106,6 +108,11 @@ export const MOPSFIN_OFFICIAL_GUIDANCE = {
       basis:
         "個股採 raw_unadjusted 收盤價，benchmark 採官方 price index；不含公司行動調整、股息再投資或 total-return index。",
     },
+    {
+      dataType: "台股研究候選篩選",
+      basis:
+        "latest-only 的非金融、月營收改善導向有界 research triage；四柱來自不同發布頻率與截止日的官方資料，並非同一 point-in-time snapshot，也不適合用作無偏誤回測。",
+    },
   ],
   averages: [
     {
@@ -135,7 +142,7 @@ export const MOPSFIN_OFFICIAL_GUIDANCE = {
     "部分季報比率由財報數據依公式計算，年度數字可能引用公司申報的財務分析資料；跨期間比較前應確認口徑。",
     "MCP 回傳的 unit、periods、query、warnings 與 metric guidance 都是答案的一部分，不應只取裸數值。",
     "所有成功結果都應先檢查 meta.asOf、meta.quality 與 meta.page；snapshotId 只代表工具明示的可驗證 scope，batch／reaction 未讀取的跨頁公司值不在 scope；CURSOR_INVALID 或 SNAPSHOT_CHANGED 時須從第一頁重啟。",
-    "月營收趨勢、個股相對 benchmark 報酬與量能訊號都是透明可重算的研究代理，不是主觀評分、錯價證明或投資建議。",
+    "月營收趨勢、個股相對 benchmark 報酬與量能訊號都是透明可重算的研究代理；screen_taiwan_stock_candidates 雖套用明示固定規則與分數，仍只是研究候選分流，不是錯價證明、完整市場覆蓋或投資建議。",
   ],
 } as const;
 

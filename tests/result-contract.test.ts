@@ -166,6 +166,37 @@ describe("mopsfin.result.v1", () => {
       through: null,
     });
   });
+
+  it("uses normalized screen source as-of fields for mixed-source cutoffs", () => {
+    const meta = buildResultMeta(
+      {
+        sources: [
+          {
+            sourceUrl: "https://example.test/revenue",
+            retrievedAt: "2026-08-27T00:00:00.000Z",
+            asOf: "2026-07",
+            asOfGranularity: "month",
+          },
+          {
+            sourceUrl: "https://example.test/financials",
+            retrievedAt: "2026-08-27T00:00:00.000Z",
+            asOf: "2026Q2",
+            asOfGranularity: "quarter",
+          },
+        ],
+      },
+      {
+        selector: "latest",
+        resolved: { granularity: "mixed", from: null, through: null },
+      },
+      "2026-08-27T00:00:00.000Z",
+    );
+
+    expect(meta.asOf.sourceCutoffs.map((cutoff) => cutoff.resolved)).toEqual([
+      { granularity: "month", from: "2026-07", through: "2026-07" },
+      { granularity: "quarter", from: "2026Q2", through: "2026Q2" },
+    ]);
+  });
 });
 
 describe("stateless company cursor", () => {

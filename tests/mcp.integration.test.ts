@@ -16,6 +16,7 @@ import {
   listCompaniesInputSchema,
   monthlyRevenueInputSchema,
   monthlyRevenueTrendInputSchema,
+  screenTaiwanStockCandidatesInputSchema,
   stockOhlcOutputSchema,
   stockReactionSignalsInputSchema,
   stockReactionSignalsOutputSchema,
@@ -665,11 +666,13 @@ const companyMetricsBatch = {
       companyCode: "2330",
       companyName: "台積電",
       displayName: "2330 台積電",
+      evaluationStatus: "complete" as const,
       metrics: [
         {
           metricCode: "ROE",
           metricName: "權益報酬率",
           unit: "%",
+          availability: "available" as const,
           periods: ["2026Q1"],
           points: [
             { period: "2026Q1", value: 20.5, valueStatus: "reported" as const },
@@ -683,27 +686,153 @@ const companyMetricsBatch = {
             latestReportedPeriod: "2026Q1",
             missingPeriods: [],
           },
+          failure: null,
         },
       ],
     },
   ],
+  failures: [],
   coverage: {
     selectionComplete: true,
     requestedCompanyCodes: ["2330"],
     returnedCompanyCodes: ["2330"],
     missingCompanyCodes: [],
     noValidDataCompanyCodes: [],
+    unavailableCompanyCodes: [],
+    sourceComplete: true,
+    failureIsolationComplete: true,
+    identityFailedCompanyCodes: [],
     metrics: [
       {
         metricCode: "ROE",
         returnedCompanyCodes: ["2330"],
         missingCompanyCodes: [],
         noValidDataCompanyCodes: [],
+        unavailableCompanyCodes: [],
       },
     ],
   },
+  workBudget: {
+    comparisonPlanUnits: 1,
+    comparisonExecutedUnits: 1,
+    isolationRetryUnits: 0,
+    comparisonUnitLimit: 24 as const,
+    identityLookupUpperBound: 1,
+    unitDefinition: "one_metric_by_up_to_ten_companies_request" as const,
+  },
   sources: [source],
   warnings: [],
+} satisfies CompanyMetricsBatchResult;
+
+const unavailableMetricFailure = {
+  code: "UPSTREAM_TIMEOUT" as const,
+  reason: "UPSTREAM_ATTEMPT_TIMEOUT",
+  message: "fixture metric timeout",
+  retryable: true,
+  retryAfterMs: 1000,
+  action: "retry" as const,
+};
+
+const partialCompanyMetricsBatch = {
+  query: {
+    companyCodes: ["2330", "9999"],
+    metricCodes: ["ROE", "MARGIN"],
+    basis: "quarterly" as const,
+    history: "recent_12" as const,
+  },
+  retrievedAt: "2026-08-25T00:00:00.000Z",
+  snapshotId: "partial-batch-fixture",
+  metricDefinitions: [
+    { code: "ROE", name: "權益報酬率", unit: "%", category: "獲利能力" },
+    { code: "MARGIN", name: "毛利率", unit: "%", category: "獲利能力" },
+  ],
+  companies: [
+    {
+      companyCode: "2330",
+      companyName: "台積電",
+      displayName: "2330 台積電",
+      evaluationStatus: "partial" as const,
+      metrics: [
+        companyMetricsBatch.companies[0].metrics[0],
+        {
+          metricCode: "MARGIN",
+          metricName: "毛利率",
+          unit: "%",
+          availability: "unavailable" as const,
+          periods: [],
+          points: [],
+          coverage: {
+            seriesReturned: false,
+            nonNullPoints: 0,
+            missingPoints: 0,
+            invalidPoints: 0,
+            firstReportedPeriod: null,
+            latestReportedPeriod: null,
+            missingPeriods: [],
+          },
+          failure: unavailableMetricFailure,
+        },
+      ],
+    },
+  ],
+  failures: [
+    {
+      companyCode: "9999",
+      stage: "identity" as const,
+      metricCode: null,
+      attribution: "company" as const,
+      code: "NOT_FOUND" as const,
+      reason: null,
+      message: "fixture identity not found",
+      retryable: false,
+      retryAfterMs: null,
+      action: "change_query" as const,
+    },
+    {
+      companyCode: "2330",
+      stage: "metric" as const,
+      metricCode: "MARGIN",
+      attribution: "chunk" as const,
+      ...unavailableMetricFailure,
+    },
+  ],
+  coverage: {
+    selectionComplete: false,
+    requestedCompanyCodes: ["2330", "9999"],
+    returnedCompanyCodes: [],
+    missingCompanyCodes: ["9999", "2330"],
+    noValidDataCompanyCodes: ["9999"],
+    unavailableCompanyCodes: ["9999", "2330"],
+    sourceComplete: false,
+    failureIsolationComplete: false,
+    identityFailedCompanyCodes: ["9999"],
+    metrics: [
+      {
+        metricCode: "ROE",
+        returnedCompanyCodes: ["2330"],
+        missingCompanyCodes: ["9999"],
+        noValidDataCompanyCodes: ["9999"],
+        unavailableCompanyCodes: ["9999"],
+      },
+      {
+        metricCode: "MARGIN",
+        returnedCompanyCodes: [],
+        missingCompanyCodes: ["9999", "2330"],
+        noValidDataCompanyCodes: ["9999", "2330"],
+        unavailableCompanyCodes: ["9999", "2330"],
+      },
+    ],
+  },
+  workBudget: {
+    comparisonPlanUnits: 2,
+    comparisonExecutedUnits: 2,
+    isolationRetryUnits: 0,
+    comparisonUnitLimit: 24 as const,
+    identityLookupUpperBound: 2,
+    unitDefinition: "one_metric_by_up_to_ten_companies_request" as const,
+  },
+  sources: [source],
+  warnings: ["fixture partial success"],
 } satisfies CompanyMetricsBatchResult;
 
 const monthlyRevenueTrend = {
@@ -1063,6 +1192,30 @@ describe("MCP protocol integration", () => {
       }).success,
     ).toBe(false);
 
+    expect(screenTaiwanStockCandidatesInputSchema.parse({})).toEqual({
+      market: "all",
+      include_ky: true,
+      candidate_limit: 5,
+      preset: "balanced_non_financial_v1",
+    });
+    expect(
+      screenTaiwanStockCandidatesInputSchema.safeParse({
+        company_codes: codes(100),
+        candidate_limit: 1,
+      }).success,
+    ).toBe(true);
+    expect(
+      screenTaiwanStockCandidatesInputSchema.safeParse({
+        company_codes: codes(101),
+        candidate_limit: 6,
+      }).success,
+    ).toBe(false);
+    expect(
+      screenTaiwanStockCandidatesInputSchema.safeParse({
+        company_codes: ["2330", "2330"],
+      }).success,
+    ).toBe(false);
+
     for (const schema of [
       listCompaniesInputSchema,
       dailyMarketOhlcInputSchema,
@@ -1173,7 +1326,7 @@ describe("MCP protocol integration", () => {
     ).toBe(true);
   });
 
-  it("initializes, lists fifteen tools and calls each tool with structured output", async () => {
+  it("initializes, lists sixteen tools and calls each tool with structured output", async () => {
     const companyMasterSpy = vi
       .spyOn(companyMasterClient, "listCompanies")
       .mockResolvedValue(companyMaster);
@@ -1199,7 +1352,7 @@ describe("MCP protocol integration", () => {
     const companyMetricSpy = vi
       .spyOn(mopsfinClient, "getCompanyMetric")
       .mockResolvedValue(trend);
-    vi.spyOn(
+    const companyMetricsBatchSpy = vi.spyOn(
       companyMetricsBatchClient,
       "getCompanyMetricsBatch",
     ).mockResolvedValue(companyMetricsBatch);
@@ -1274,7 +1427,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.3.1" },
+      { name: "mopsfin-test", version: "0.4.1" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -1300,6 +1453,7 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("get_monthly_revenue");
     expect(client.getInstructions()).toContain("get_monthly_revenue_trend");
     expect(client.getInstructions()).toContain("get_stock_reaction_signals");
+    expect(client.getInstructions()).toContain("screen_taiwan_stock_candidates");
     expect(client.getInstructions()).toContain("get_company_metrics_batch");
     expect(client.getInstructions()).toContain("filingCoverage");
     const listed = await client.listTools();
@@ -1308,6 +1462,7 @@ describe("MCP protocol integration", () => {
       "get_stock_ohlc",
       "get_daily_market_ohlc",
       "get_stock_reaction_signals",
+      "screen_taiwan_stock_candidates",
       "get_daily_market_valuation",
       "get_monthly_revenue",
       "get_monthly_revenue_trend",
@@ -1440,10 +1595,43 @@ describe("MCP protocol integration", () => {
     expect(reactionTool?.inputSchema.properties?.horizons).toHaveProperty(
       "description",
     );
+    const screenTool = listed.tools.find(
+      (tool) => tool.name === "screen_taiwan_stock_candidates",
+    );
+    expect(screenTool?.description).toContain("latest");
+    expect(screenTool?.description).toContain("前 10 家");
+    expect(screenTool?.description).toContain("最多 5 家");
+    expect(screenTool?.description).toContain("hard gates");
+    expect(screenTool?.description).toContain("unknown 也不等於 0");
+    expect(screenTool?.description).toContain("24 comparison units");
+    expect(screenTool?.description).toContain("company_metrics_unavailable");
+    expect(screenTool?.description).toContain("notReactionScored");
+    expect(screenTool?.description).toContain("raw_unadjusted");
+    expect(screenTool?.description).toContain("mixed as-of");
+    expect(screenTool?.description).toContain("不是投資建議");
+    expect(screenTool?.inputSchema.properties?.market).toMatchObject({
+      default: "all",
+    });
+    expect(screenTool?.inputSchema.properties?.include_ky).toMatchObject({
+      default: true,
+    });
+    expect(screenTool?.inputSchema.properties?.candidate_limit).toMatchObject({
+      default: 5,
+      minimum: 1,
+      maximum: 5,
+    });
+    expect(screenTool?.inputSchema.properties?.preset).toMatchObject({
+      default: "balanced_non_financial_v1",
+      const: "balanced_non_financial_v1",
+    });
     const batchTool = listed.tools.find(
       (tool) => tool.name === "get_company_metrics_batch",
     );
     expect(batchTool?.description).toContain("1–100");
+    expect(batchTool?.description).toContain("availability=unavailable");
+    expect(batchTool?.description).toContain("failureIsolationComplete=false");
+    expect(batchTool?.description).toContain("Partial success");
+    expect(batchTool?.description).toContain("meta.page.next");
     expect(batchTool?.inputSchema.properties?.metric_codes).toHaveProperty(
       "description",
     );
@@ -1500,6 +1688,14 @@ describe("MCP protocol integration", () => {
           as_of: "latest",
           horizons: [5],
           page_size: 1,
+        },
+      ],
+      [
+        "screen_taiwan_stock_candidates",
+        {
+          market: "listed",
+          company_codes: ["2330"],
+          candidate_limit: 1,
         },
       ],
       ["get_daily_market_valuation", { market: "all" }],
@@ -1798,6 +1994,62 @@ describe("MCP protocol integration", () => {
           excessReturnPercentagePoints: 2,
         });
       }
+      if (name === "screen_taiwan_stock_candidates") {
+        const structured = result.structuredContent as {
+          meta: {
+            asOf: {
+              selector: string;
+              resolved: { granularity: string; from: string | null; through: string | null };
+            };
+            quality: {
+              source: string;
+              universe: string;
+              selection: string;
+              values: string;
+              freshness: string;
+              issues: Array<{ code: string }>;
+            };
+            page: { mode: string; unit: string };
+          };
+          screenDefinition: {
+            latestOnly: boolean;
+            financialCompanies: string;
+            scoreCompensationAcrossPillars: boolean;
+          };
+          workBudget: {
+            deepCompanyLimit: number;
+            reactionCompanyLimit: number;
+          };
+          candidates: unknown[];
+        };
+        expect(structured.meta.asOf).toMatchObject({
+          selector: "latest",
+          resolved: { granularity: "mixed", from: null, through: null },
+        });
+        expect(structured.meta.page).toEqual(
+          expect.objectContaining({ mode: "none", unit: "none" }),
+        );
+        expect(structured.meta.quality).toMatchObject({
+          source: "partial",
+          universe: "unverified",
+          selection: "complete",
+          values: "partial",
+          freshness: "unknown",
+        });
+        expect(structured.meta.quality.issues).toContainEqual(
+          expect.objectContaining({ code: "MASTER_ROWSET_HEURISTIC" }),
+        );
+        expect(structured.screenDefinition).toMatchObject({
+          latestOnly: true,
+          financialCompanies: "excluded",
+          scoreCompensationAcrossPillars: false,
+        });
+        expect(structured.workBudget).toMatchObject({
+          deepCompanyLimit: 10,
+          reactionCompanyLimit: 5,
+        });
+        expect(structured.candidates.length).toBeLessThanOrEqual(1);
+      }
       if (name === "get_monthly_revenue_trend") {
         const structured = result.structuredContent as {
           startMonth: string;
@@ -1857,31 +2109,59 @@ describe("MCP protocol integration", () => {
       }
       if (name === "get_company_metrics_batch") {
         const structured = result.structuredContent as {
-          meta: { page: { mode: string } };
+          meta: {
+            page: { mode: string };
+            quality: { source: string; selection: string; values: string };
+          };
           metricDefinitions: Array<{ code: string }>;
           companies: Array<{
             companyCode: string;
+            evaluationStatus: string;
             metrics: Array<{
               metricCode: string;
+              availability: string;
+              failure: unknown;
               points: Array<{ period: string; value: number | null }>;
             }>;
           }>;
-          coverage: { selectionComplete: boolean };
+          failures: unknown[];
+          coverage: {
+            selectionComplete: boolean;
+            sourceComplete: boolean;
+            failureIsolationComplete: boolean;
+            unavailableCompanyCodes: string[];
+          };
+          workBudget: { comparisonUnitLimit: number };
         };
         expect(structured.meta.page.mode).toBe("cursor");
+        expect(structured.meta.quality).toMatchObject({
+          source: "complete",
+          selection: "complete",
+          values: "complete",
+        });
         expect(structured.metricDefinitions).toEqual([
           expect.objectContaining({ code: "ROE" }),
         ]);
         expect(structured.companies[0]).toMatchObject({
           companyCode: "2330",
+          evaluationStatus: "complete",
           metrics: [
             {
               metricCode: "ROE",
+              availability: "available",
+              failure: null,
               points: [{ period: "2026Q1", value: 20.5, valueStatus: "reported" }],
             },
           ],
         });
-        expect(structured.coverage.selectionComplete).toBe(true);
+        expect(structured.failures).toEqual([]);
+        expect(structured.coverage).toMatchObject({
+          selectionComplete: true,
+          sourceComplete: true,
+          failureIsolationComplete: true,
+          unavailableCompanyCodes: [],
+        });
+        expect(structured.workBudget.comparisonUnitLimit).toBe(24);
       }
       if (name === "get_financial_institution_metric") {
         const structured = result.structuredContent as {
@@ -1902,6 +2182,123 @@ describe("MCP protocol integration", () => {
         ]);
       }
     }
+
+    companyMetricsBatchSpy.mockResolvedValueOnce(partialCompanyMetricsBatch);
+    const partialBatchPage = await client.callTool({
+      name: "get_company_metrics_batch",
+      arguments: {
+        company_codes: ["2330", "9999", "3105"],
+        metric_codes: ["ROE", "MARGIN"],
+        page_size: 2,
+      },
+    });
+    expect(partialBatchPage.isError).not.toBe(true);
+    const partialBatchData = partialBatchPage.structuredContent as {
+      meta: {
+        quality: {
+          status: string;
+          source: string;
+          selection: string;
+          values: string;
+          issues: Array<{ code: string }>;
+        };
+        page: {
+          mode: string;
+          returned: number | null;
+          total: number | null;
+          next: { kind: string; cursor: string } | null;
+        };
+      };
+      failures: Array<{
+        companyCode: string;
+        stage: string;
+        metricCode: string | null;
+        attribution: string;
+      }>;
+      companies: Array<{
+        companyCode: string;
+        evaluationStatus: string;
+        metrics: Array<{
+          metricCode: string;
+          availability: string;
+          failure: { code: string } | null;
+        }>;
+      }>;
+      coverage: {
+        selectionComplete: boolean;
+        sourceComplete: boolean;
+        failureIsolationComplete: boolean;
+        identityFailedCompanyCodes: string[];
+        unavailableCompanyCodes: string[];
+      };
+      workBudget: {
+        comparisonPlanUnits: number;
+        comparisonExecutedUnits: number;
+        isolationRetryUnits: number;
+        comparisonUnitLimit: number;
+      };
+    };
+    expect(partialBatchData.meta.quality).toMatchObject({
+      status: "partial",
+      source: "partial",
+      selection: "partial",
+      values: "partial",
+    });
+    expect(partialBatchData.meta.quality.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "STATELESS_PAGE_VALUES_NOT_PINNED",
+        "BATCH_COMPANY_IDENTITY_FAILED",
+        "BATCH_COMPANY_METRIC_FAILED",
+        "BATCH_FAILURE_ISOLATION_INCOMPLETE",
+      ]),
+    );
+    expect(partialBatchData.meta.page).toMatchObject({
+      mode: "cursor",
+      returned: 2,
+      total: 3,
+      next: { kind: "cursor", cursor: expect.any(String) },
+    });
+    expect(partialBatchData.failures).toEqual([
+      expect.objectContaining({
+        companyCode: "9999",
+        stage: "identity",
+        metricCode: null,
+        attribution: "company",
+      }),
+      expect.objectContaining({
+        companyCode: "2330",
+        stage: "metric",
+        metricCode: "MARGIN",
+        attribution: "chunk",
+      }),
+    ]);
+    expect(partialBatchData.companies[0]).toMatchObject({
+      companyCode: "2330",
+      evaluationStatus: "partial",
+      metrics: [
+        expect.objectContaining({ availability: "available", failure: null }),
+        expect.objectContaining({
+          metricCode: "MARGIN",
+          availability: "unavailable",
+          failure: expect.objectContaining({ code: "UPSTREAM_TIMEOUT" }),
+        }),
+      ],
+    });
+    expect(partialBatchData.coverage).toMatchObject({
+      selectionComplete: false,
+      sourceComplete: false,
+      failureIsolationComplete: false,
+      identityFailedCompanyCodes: ["9999"],
+      unavailableCompanyCodes: ["9999", "2330"],
+    });
+    expect(partialBatchData.workBudget).toEqual({
+      comparisonPlanUnits: 2,
+      comparisonExecutedUnits: 2,
+      isolationRetryUnits: 0,
+      comparisonUnitLimit: 24,
+      identityLookupUpperBound: 2,
+      unitDefinition: "one_metric_by_up_to_ten_companies_request",
+    });
 
     const firstCompanyPage = await client.callTool({
       name: "list_companies",

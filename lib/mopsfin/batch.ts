@@ -5,7 +5,11 @@ import {
   type CompanyMetricBasis,
   type MopsfinClient,
 } from "./client";
-import { MopsfinError } from "./errors";
+import {
+  MopsfinError,
+  type MopsfinErrorAction,
+  type MopsfinErrorCode,
+} from "./errors";
 import type {
   CompanySuggestion,
   MetricDefinition,
@@ -26,6 +30,7 @@ export interface CompanyMetricsBatchMetric {
   metricCode: string;
   metricName: string;
   unit: string;
+  availability: "available" | "no_data" | "unavailable";
   periods: string[];
   points: TrendPoint[];
   coverage: {
@@ -37,14 +42,41 @@ export interface CompanyMetricsBatchMetric {
     latestReportedPeriod: string | null;
     missingPeriods: string[];
   };
+  failure: CompanyMetricsBatchFailureDetail | null;
 }
 
 export interface CompanyMetricsBatchCompany {
   companyCode: string;
   companyName: string;
   displayName: string;
+  evaluationStatus: "complete" | "partial" | "unavailable";
   metrics: CompanyMetricsBatchMetric[];
 }
+
+export interface CompanyMetricsBatchFailureDetail {
+  code: MopsfinErrorCode;
+  reason: string | null;
+  message: string;
+  retryable: boolean;
+  retryAfterMs: number | null;
+  action: MopsfinErrorAction;
+}
+
+export type CompanyMetricsBatchFailure = CompanyMetricsBatchFailureDetail &
+  (
+    | {
+        companyCode: string;
+        stage: "identity";
+        metricCode: null;
+        attribution: "company";
+      }
+    | {
+        companyCode: string;
+        stage: "metric";
+        metricCode: string;
+        attribution: "company" | "chunk";
+      }
+  );
 
 export interface CompanyMetricsBatchResult {
   query: {
@@ -60,24 +92,54 @@ export interface CompanyMetricsBatchResult {
   snapshotId: string;
   metricDefinitions: Array<Pick<MetricDefinition, "code" | "name" | "unit" | "category">>;
   companies: CompanyMetricsBatchCompany[];
+  failures: CompanyMetricsBatchFailure[];
   coverage: {
     selectionComplete: boolean;
     requestedCompanyCodes: string[];
     returnedCompanyCodes: string[];
     missingCompanyCodes: string[];
     noValidDataCompanyCodes: string[];
+    unavailableCompanyCodes: string[];
+    sourceComplete: boolean;
+    failureIsolationComplete: boolean;
+    identityFailedCompanyCodes: string[];
     metrics: Array<{
       metricCode: string;
       returnedCompanyCodes: string[];
       missingCompanyCodes: string[];
       noValidDataCompanyCodes: string[];
+      unavailableCompanyCodes: string[];
     }>;
+  };
+  workBudget: {
+    comparisonPlanUnits: number;
+    comparisonExecutedUnits: number;
+    isolationRetryUnits: number;
+    comparisonUnitLimit: 24;
+    identityLookupUpperBound: number;
+    unitDefinition: "one_metric_by_up_to_ten_companies_request";
   };
   sources: SourceMetadata[];
   warnings: string[];
 }
 
 type SingleMetricResult = Awaited<ReturnType<MopsfinClient["getCompanyMetric"]>>;
+
+interface MetricJob {
+  metric: MetricDefinition;
+  companyCodes: string[];
+  identities: CompanySuggestion[];
+}
+
+interface MetricJobOutcome {
+  metricCode: string;
+  companyCodes: string[];
+  result: SingleMetricResult | null;
+  failure: CompanyMetricsBatchFailureDetail | null;
+  error?: MopsfinError;
+}
+
+const COMPARISON_PLAN_UNIT_LIMIT = 24 as const;
 
 function quarterIndex(period: string): number {
   const match = /^(\d{4})Q([1-4])$/.exec(period);
@@ -140,6 +202,42 @@ function chunks<T>(values: T[], size: number): T[][] {
   return result;
 }
 
+function failureDetail(error: MopsfinError): CompanyMetricsBatchFailureDetail {
+  return {
+    code: error.code,
+    reason: error.reason ?? null,
+    message: error.message,
+    retryable: error.retryable ?? false,
+    retryAfterMs: error.retryAfterMs ?? null,
+    action: error.action ?? (error.retryable ? "retry" : "none"),
+  };
+}
+
+function mustPropagate(error: MopsfinError): boolean {
+  return error.code === "INVALID_ARGUMENT" ||
+    error.reason === "UPSTREAM_DEADLINE_EXCEEDED";
+}
+
+function canBisectMetricFailure(error: MopsfinError): boolean {
+  if (mustPropagate(error)) return false;
+  return error.code === "UPSTREAM_BAD_RESPONSE" && error.retryable !== true;
+}
+
+function inRequestedOrder(
+  requestedCompanyCodes: string[],
+  ...groups: string[][]
+): string[] {
+  const included = new Set(groups.flat().map((code) => code.toLowerCase()));
+  return requestedCompanyCodes.filter((code) => included.has(code.toLowerCase()));
+}
+
+function isSourceFailure(failure: CompanyMetricsBatchFailure): boolean {
+  return failure.code === "INCOMPLETE_COVERAGE" ||
+    failure.code === "UPSTREAM_TIMEOUT" ||
+    failure.code === "UPSTREAM_RATE_LIMITED" ||
+    failure.code === "UPSTREAM_BAD_RESPONSE";
+}
+
 async function mapWithConcurrency<T, R>(
   values: T[],
   concurrency: number,
@@ -161,8 +259,7 @@ async function mapWithConcurrency<T, R>(
 
 function mergeMetricResults(
   metric: MetricDefinition,
-  chunkResults: Array<SingleMetricResult | null>,
-  companyChunks: string[][],
+  outcomes: MetricJobOutcome[],
   companyCodes: string[],
 ): {
   periods: string[];
@@ -170,14 +267,17 @@ function mergeMetricResults(
   returnedCompanyCodes: string[];
   missingCompanyCodes: string[];
   noValidDataCompanyCodes: string[];
+  unavailableCompanyCodes: string[];
 } {
   const periods = [
-    ...new Set(chunkResults.flatMap((result) => result?.periods ?? [])),
+    ...new Set(outcomes.flatMap((outcome) => outcome.result?.periods ?? [])),
   ].sort().slice(-12);
   const periodsByCompany = new Map<string, string[]>();
-  chunkResults.forEach((result, index) => {
-    const chunkPeriods = [...new Set(result?.periods ?? [])].sort().slice(-12);
-    for (const companyCode of companyChunks[index]) {
+  const outcomeByCompany = new Map<string, MetricJobOutcome>();
+  outcomes.forEach((outcome) => {
+    const chunkPeriods = [...new Set(outcome.result?.periods ?? [])].sort().slice(-12);
+    for (const companyCode of outcome.companyCodes) {
+      outcomeByCompany.set(companyCode.toLowerCase(), outcome);
       periodsByCompany.set(
         companyCode,
         chunkPeriods.length > 0 ? chunkPeriods : periods,
@@ -185,8 +285,8 @@ function mergeMetricResults(
     }
   });
   const seriesByCode = new Map(
-    chunkResults.flatMap((result) =>
-      (result?.series ?? [])
+    outcomes.flatMap((outcome) =>
+      (outcome.result?.series ?? [])
         .filter((series) => series.seriesType === "company")
         .map((series) => [series.companyCode.toLowerCase(), series] as const),
     ),
@@ -195,7 +295,10 @@ function mergeMetricResults(
   const returnedCompanyCodes: string[] = [];
   const missingCompanyCodes: string[] = [];
   const noValidDataCompanyCodes: string[] = [];
+  const unavailableCompanyCodes: string[] = [];
   for (const companyCode of companyCodes) {
+    const outcome = outcomeByCompany.get(companyCode.toLowerCase());
+    const unavailable = outcome?.failure ?? null;
     const series = seriesByCode.get(companyCode.toLowerCase());
     const companyPeriods = periodsByCompany.get(companyCode) ?? periods;
     const pointByPeriod = new Map(series?.points.map((point) => [point.period, point]));
@@ -209,26 +312,35 @@ function mergeMetricResults(
     );
     const reported = points.filter((point) => point.valueStatus === "reported");
     const invalidPoints = points.filter((point) => point.valueStatus === "invalid_upstream").length;
-    if (series) returnedCompanyCodes.push(companyCode);
+    if (series && !unavailable) returnedCompanyCodes.push(companyCode);
     else missingCompanyCodes.push(companyCode);
     if (reported.length === 0) noValidDataCompanyCodes.push(companyCode);
+    if (unavailable) unavailableCompanyCodes.push(companyCode);
     byCompany.set(companyCode, {
       metricCode: metric.code,
       metricName: metric.name,
-      unit: chunkResults.find(Boolean)?.unit || metric.unit,
-      periods: companyPeriods,
-      points,
+      unit: outcomes.find((candidate) => candidate.result)?.result?.unit || metric.unit,
+      availability: unavailable
+        ? "unavailable"
+        : reported.length > 0
+          ? "available"
+          : "no_data",
+      periods: unavailable ? [] : companyPeriods,
+      points: unavailable ? [] : points,
       coverage: {
-        seriesReturned: Boolean(series),
-        nonNullPoints: reported.length,
-        missingPoints: points.length - reported.length,
-        invalidPoints,
-        firstReportedPeriod: reported.at(0)?.period ?? null,
-        latestReportedPeriod: reported.at(-1)?.period ?? null,
-        missingPeriods: points
-          .filter((point) => point.valueStatus !== "reported")
-          .map((point) => point.period),
+        seriesReturned: Boolean(series) && !unavailable,
+        nonNullPoints: unavailable ? 0 : reported.length,
+        missingPoints: unavailable ? 0 : points.length - reported.length,
+        invalidPoints: unavailable ? 0 : invalidPoints,
+        firstReportedPeriod: unavailable ? null : reported.at(0)?.period ?? null,
+        latestReportedPeriod: unavailable ? null : reported.at(-1)?.period ?? null,
+        missingPeriods: unavailable
+          ? []
+          : points
+              .filter((point) => point.valueStatus !== "reported")
+              .map((point) => point.period),
       },
+      failure: unavailable,
     });
   }
   return {
@@ -237,6 +349,7 @@ function mergeMetricResults(
     returnedCompanyCodes,
     missingCompanyCodes,
     noValidDataCompanyCodes,
+    unavailableCompanyCodes,
   };
 }
 
@@ -248,17 +361,16 @@ export class CompanyMetricsBatchClient {
 
   async getCompanyMetricsBatch(query: CompanyMetricsBatchQuery): Promise<CompanyMetricsBatchResult> {
     const { companyCodes, metricCodes } = validateQuery(query);
-    const companyChunks = chunks(companyCodes, 10);
-    const workUnits = companyChunks.length * metricCodes.length;
-    if (workUnits > 24) {
+    const comparisonPlanUnits = chunks(companyCodes, 10).length * metricCodes.length;
+    if (comparisonPlanUnits > COMPARISON_PLAN_UNIT_LIMIT) {
       throw new MopsfinError("INVALID_ARGUMENT", "批次指標工作量超過每頁 24 units。", {
         reason: "WORK_BUDGET_EXCEEDED",
         details: {
-          workUnits,
-          comparisonWorkUnits: workUnits,
+          workUnits: comparisonPlanUnits,
+          comparisonWorkUnits: comparisonPlanUnits,
           identityLookupUpperBound: companyCodes.length,
-          maximum: 24,
-          maximumComparisonWorkUnits: 24,
+          maximum: COMPARISON_PLAN_UNIT_LIMIT,
+          maximumComparisonWorkUnits: COMPARISON_PLAN_UNIT_LIMIT,
         },
       });
     }
@@ -270,37 +382,73 @@ export class CompanyMetricsBatchClient {
       }
       return metric;
     });
-    const identities = await this.client.resolveCompanies(companyCodes, {
-      maximumCompanyCount: 100,
-    });
-    const identityByCode = new Map(
-      identities.map((company) => [company.code.toLowerCase(), company]),
-    );
-    const identityChunks = companyChunks.map((companyChunk) =>
-      companyChunk.map((companyCode) => {
-        const identity = identityByCode.get(companyCode.toLowerCase());
+    const identityOutcomes = await mapWithConcurrency(companyCodes, 3, async (companyCode) => {
+      try {
+        const identities = await this.client.resolveCompanies([companyCode], {
+          maximumCompanyCount: 1,
+        });
+        const identity = identities.find(
+          (candidate) => candidate.code.toLowerCase() === companyCode.toLowerCase(),
+        );
         if (!identity) {
           throw new MopsfinError(
             "UPSTREAM_BAD_RESPONSE",
             `公司 identity 解析結果缺少 ${companyCode}。`,
+            {
+              reason: "IDENTITY_RESULT_MISSING",
+              retryable: false,
+              action: "none",
+            },
           );
         }
-        return identity;
-      }),
+        return { companyCode, identity, error: null, failure: null };
+      } catch (error) {
+        if (!(error instanceof MopsfinError)) throw error;
+        if (mustPropagate(error)) throw error;
+        return {
+          companyCode,
+          identity: null,
+          error,
+          failure: failureDetail(error),
+        };
+      }
+    });
+    const resolvedIdentityOutcomes = identityOutcomes.filter(
+      (outcome): outcome is typeof outcome & { identity: CompanySuggestion } =>
+        outcome.identity !== null,
     );
-    const jobs = metrics.flatMap((metric) =>
-      companyChunks.map((companyChunk, chunkIndex) => ({
+    if (resolvedIdentityOutcomes.length === 0) {
+      throw identityOutcomes.find((outcome) => outcome.error)?.error ??
+        new MopsfinError(
+          "UPSTREAM_BAD_RESPONSE",
+          "本頁所有公司 identity 解析均失敗。",
+          { reason: "BATCH_IDENTITY_RESOLUTION_FAILED" },
+        );
+    }
+    const identityByCode = new Map(
+      resolvedIdentityOutcomes.map(({ identity }) => [identity.code.toLowerCase(), identity]),
+    );
+    const resolvedCompanyCodes = companyCodes.filter((companyCode) =>
+      identityByCode.has(companyCode.toLowerCase()),
+    );
+    const resolvedCompanyChunks = chunks(resolvedCompanyCodes, 10);
+    const jobs: MetricJob[] = metrics.flatMap((metric) =>
+      resolvedCompanyChunks.map((companyChunk) => ({
         metric,
-        companyChunk,
-        identities: identityChunks[chunkIndex],
+        companyCodes: companyChunk,
+        identities: companyChunk.map(
+          (companyCode) => identityByCode.get(companyCode.toLowerCase()) as CompanySuggestion,
+        ),
       })),
     );
-    const results = await mapWithConcurrency(jobs, 3, async ({ metric, companyChunk, identities }) => {
+    let isolationRetryUnits = 0;
+    let failureIsolationComplete = true;
+    const runMetricJob = async (job: MetricJob): Promise<MetricJobOutcome[]> => {
       try {
-        return await this.client.getCompanyMetric(
+        const result = await this.client.getCompanyMetric(
           {
-            metricCode: metric.code,
-            companyCodes: companyChunk,
+            metricCode: job.metric.code,
+            companyCodes: job.companyCodes,
             basis: query.basis,
             yoyQuarter: query.yoyQuarter,
             includeIndustryAverage: false,
@@ -311,46 +459,161 @@ export class CompanyMetricsBatchClient {
               endPeriod: query.endPeriod,
             },
           },
-          identities,
+          job.identities,
         );
+        return [{
+          metricCode: job.metric.code,
+          companyCodes: job.companyCodes,
+          result,
+          failure: null,
+        }];
       } catch (error) {
-        if (error instanceof MopsfinError && error.code === "NO_DATA") return null;
-        throw error;
+        if (!(error instanceof MopsfinError)) throw error;
+        if (error.code === "NO_DATA") {
+          return [{
+            metricCode: job.metric.code,
+            companyCodes: job.companyCodes,
+            result: null,
+            failure: null,
+          }];
+        }
+        if (mustPropagate(error) || error.code === "NOT_FOUND") throw error;
+        if (canBisectMetricFailure(error) && job.companyCodes.length > 1) {
+          const remainingUnits = COMPARISON_PLAN_UNIT_LIMIT - jobs.length - isolationRetryUnits;
+          if (remainingUnits >= 2) {
+            isolationRetryUnits += 2;
+            const splitAt = Math.ceil(job.companyCodes.length / 2);
+            const left = await runMetricJob({
+              metric: job.metric,
+              companyCodes: job.companyCodes.slice(0, splitAt),
+              identities: job.identities.slice(0, splitAt),
+            });
+            const right = await runMetricJob({
+              metric: job.metric,
+              companyCodes: job.companyCodes.slice(splitAt),
+              identities: job.identities.slice(splitAt),
+            });
+            return [...left, ...right];
+          }
+          failureIsolationComplete = false;
+        }
+        if (job.companyCodes.length > 1) failureIsolationComplete = false;
+        return [{
+          metricCode: job.metric.code,
+          companyCodes: job.companyCodes,
+          result: null,
+          failure: failureDetail(error),
+          error,
+        }];
       }
-    });
+    };
+    const outcomeGroups = await mapWithConcurrency(jobs, 3, runMetricJob);
+    const outcomes = outcomeGroups.flat();
+    const completedMetricOutcomes = outcomes.filter((outcome) => !outcome.failure);
+    if (jobs.length > 0 && completedMetricOutcomes.length === 0) {
+      const firstError = outcomes.find((outcome) => outcome.error)?.error;
+      if (firstError) throw firstError;
+    }
 
-    const mergedByMetric = metrics.map((metric, metricIndex) =>
+    const outcomesByMetric = new Map(
+      metrics.map((metric) => [
+        metric.code,
+        outcomes.filter((outcome) => outcome.metricCode === metric.code),
+      ]),
+    );
+    const mergedByMetric = metrics.map((metric) =>
       mergeMetricResults(
         metric,
-        results.slice(
-          metricIndex * companyChunks.length,
-          (metricIndex + 1) * companyChunks.length,
-        ),
-        companyChunks,
-        companyCodes,
+        outcomesByMetric.get(metric.code) ?? [],
+        resolvedCompanyCodes,
       ),
     );
-    const companies = companyCodes.map((companyCode) => {
+    const companies = resolvedCompanyCodes.map((companyCode) => {
       const identity = identityByCode.get(companyCode.toLowerCase()) as CompanySuggestion;
+      const companyMetrics = mergedByMetric.map(
+        (merged) => merged.byCompany.get(companyCode) as CompanyMetricsBatchMetric,
+      );
+      const availableMetrics = companyMetrics.filter(
+        (metric) => metric.availability === "available",
+      ).length;
+      const unavailableMetrics = companyMetrics.filter(
+        (metric) => metric.availability === "unavailable",
+      ).length;
       return {
         companyCode,
         companyName: identity.name,
         displayName: identity.displayName,
-        metrics: mergedByMetric.map((merged) => merged.byCompany.get(companyCode) as CompanyMetricsBatchMetric),
+        evaluationStatus:
+          unavailableMetrics === companyMetrics.length
+            ? "unavailable" as const
+            : availableMetrics === companyMetrics.length
+              ? "complete" as const
+              : "partial" as const,
+        metrics: companyMetrics,
       };
     });
+    const identityFailures: CompanyMetricsBatchFailure[] = identityOutcomes.flatMap(
+      (outcome): CompanyMetricsBatchFailure[] =>
+        outcome.failure
+          ? [{
+              companyCode: outcome.companyCode,
+              stage: "identity",
+              metricCode: null,
+              attribution: "company",
+              ...outcome.failure,
+            }]
+          : [],
+    );
+    const metricFailures: CompanyMetricsBatchFailure[] = outcomes.flatMap(
+      (outcome): CompanyMetricsBatchFailure[] =>
+        outcome.failure
+          ? outcome.companyCodes.map((companyCode) => ({
+              companyCode,
+              stage: "metric",
+              metricCode: outcome.metricCode,
+              attribution: outcome.companyCodes.length === 1 ? "company" : "chunk",
+              ...outcome.failure as CompanyMetricsBatchFailureDetail,
+            }))
+          : [],
+    );
+    const failures = [...identityFailures, ...metricFailures];
+    if (metricFailures.some((failure) => failure.attribution === "chunk")) {
+      failureIsolationComplete = false;
+    }
     const noValidDataCompanyCodes = companies
       .filter((company) => company.metrics.every((metric) => metric.coverage.nonNullPoints === 0))
       .map((company) => company.companyCode);
-    const missingCompanyCodes = companies
+    const identityFailedCompanyCodes = identityFailures.map(
+      (failure) => failure.companyCode,
+    );
+    const missingCompanyCodes = inRequestedOrder(
+      companyCodes,
+      identityFailedCompanyCodes,
+      companies
       .filter((company) => company.metrics.some((metric) => !metric.coverage.seriesReturned))
-      .map((company) => company.companyCode);
+      .map((company) => company.companyCode),
+    );
+    const unavailableCompanyCodes = inRequestedOrder(
+      companyCodes,
+      identityFailedCompanyCodes,
+      companies
+          .filter((company) =>
+            company.metrics.some((metric) => metric.availability === "unavailable"),
+          )
+          .map((company) => company.companyCode),
+    );
+    const orderedNoValidDataCompanyCodes = inRequestedOrder(
+      companyCodes,
+      identityFailedCompanyCodes,
+      noValidDataCompanyCodes,
+    );
     const selectionComplete = mergedByMetric.every(
       (metric) =>
         metric.missingCompanyCodes.length === 0 &&
         metric.noValidDataCompanyCodes.length === 0,
-    );
-    const sources = results
+    ) && identityFailures.length === 0 && failures.length === 0;
+    const sources = outcomes
+      .map((outcome) => outcome.result)
       .filter((result): result is SingleMetricResult => Boolean(result))
       .map((result) => ({
         sourceName: result.sourceName,
@@ -377,18 +640,42 @@ export class CompanyMetricsBatchClient {
     const coverage = {
       selectionComplete,
       requestedCompanyCodes: companyCodes,
-      returnedCompanyCodes: companyCodes.filter(
+      returnedCompanyCodes: resolvedCompanyCodes.filter(
         (code) => !missingCompanyCodes.includes(code),
       ),
       missingCompanyCodes,
-      noValidDataCompanyCodes,
+      noValidDataCompanyCodes: orderedNoValidDataCompanyCodes,
+      unavailableCompanyCodes,
+      sourceComplete: !failures.some(isSourceFailure),
+      failureIsolationComplete,
+      identityFailedCompanyCodes,
       metrics: metrics.map((metric, index) => ({
         metricCode: metric.code,
         returnedCompanyCodes: mergedByMetric[index].returnedCompanyCodes,
-        missingCompanyCodes: mergedByMetric[index].missingCompanyCodes,
-        noValidDataCompanyCodes:
+        missingCompanyCodes: inRequestedOrder(
+          companyCodes,
+          identityFailedCompanyCodes,
+          mergedByMetric[index].missingCompanyCodes,
+        ),
+        noValidDataCompanyCodes: inRequestedOrder(
+          companyCodes,
+          identityFailedCompanyCodes,
           mergedByMetric[index].noValidDataCompanyCodes,
+        ),
+        unavailableCompanyCodes: inRequestedOrder(
+          companyCodes,
+          identityFailedCompanyCodes,
+          mergedByMetric[index].unavailableCompanyCodes,
+        ),
       })),
+    };
+    const workBudget = {
+      comparisonPlanUnits,
+      comparisonExecutedUnits: jobs.length + isolationRetryUnits,
+      isolationRetryUnits,
+      comparisonUnitLimit: COMPARISON_PLAN_UNIT_LIMIT,
+      identityLookupUpperBound: companyCodes.length,
+      unitDefinition: "one_metric_by_up_to_ten_companies_request" as const,
     };
     const retrievedAt = this.now().toISOString();
     const snapshotId = createHash("sha256")
@@ -397,7 +684,9 @@ export class CompanyMetricsBatchClient {
           query: normalizedQuery,
           metricDefinitions,
           companies,
+          failures,
           coverage,
+          workBudget,
           sources: sources.map(({ sourceUrl, upstreamRoute, freshnessNote }) => ({
             sourceUrl,
             upstreamRoute,
@@ -413,11 +702,22 @@ export class CompanyMetricsBatchClient {
       snapshotId,
       metricDefinitions,
       companies,
+      failures,
       coverage,
+      workBudget,
       sources,
       warnings: [
-        "批次工具不包含產業平均或所選公司平均；每頁每家公司都包含全部 requested metrics。",
-        `本頁 comparison work units=${workUnits}/24；identity logical lookup 上限=${companyCodes.length}（cache hit 可減少，HTTP retry 另計），且每個代號的解析結果會跨全部 requested metrics 重用。`,
+        "批次工具不包含產業平均或所選公司平均；完成 identity 的每家公司都保留全部 requested metrics，unavailable 不會被改寫成 no_data 或 0。",
+        `本頁 comparison work units=${workBudget.comparisonExecutedUnits}/24（planned=${comparisonPlanUnits}、isolation=${isolationRetryUnits}）；identity logical lookup 上限=${companyCodes.length}（cache hit 可減少，HTTP retry 另計）。`,
+        ...(identityFailures.length > 0
+          ? [`部分公司 identity 失敗但未阻斷其他公司：${identityFailedCompanyCodes.join("、")}。`]
+          : []),
+        ...(metricFailures.length > 0
+          ? [`部分公司指標查詢 unavailable，其他成功公司／指標仍保留：${unavailableCompanyCodes.join("、")}。`]
+          : []),
+        ...(!failureIsolationComplete
+          ? ["部分指標錯誤只能歸因到共享的 metric×chunk request，或已用盡 24-unit 隔離預算；請依 failures[].attribution 判讀。"]
+          : []),
         ...(missingCompanyCodes.length > 0
           ? [`部分公司至少一項指標未回傳 series：${missingCompanyCodes.join("、")}。`]
           : []),

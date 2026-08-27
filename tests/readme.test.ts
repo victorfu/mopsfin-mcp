@@ -19,6 +19,7 @@ const verifiedExamplePrompts = [
   "查台積電截至 2026-07 的最近 12 個月營收趨勢，列出 3／6 月 YoY 與加速度。",
   "查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。",
   "比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始報酬與量能訊號。",
+  "用 balanced_non_financial_v1 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。",
   "列出全部上市公司代號，不要包含上櫃公司。",
   "列出全部上市與上櫃公司，排除金融業與 KY 公司。",
   "比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。",
@@ -39,7 +40,7 @@ describe("README example prompts", () => {
     expect(readme).not.toContain("列出最近完成交易日全部上市櫃公司的 OHLC");
   });
 
-  it("documents the v0.3.1 fifteen-tool contract and official sources", () => {
+  it("documents the v0.4.1 sixteen-tool contract and official sources", () => {
     const tools = [
       "find_companies",
       "get_stock_ohlc",
@@ -48,6 +49,7 @@ describe("README example prompts", () => {
       "get_daily_market_valuation",
       "get_monthly_revenue",
       "get_monthly_revenue_trend",
+      "screen_taiwan_stock_candidates",
       "list_companies",
       "list_catalog",
       "get_company_metric",
@@ -57,8 +59,8 @@ describe("README example prompts", () => {
       "get_industry_data",
       "get_financial_institution_metric",
     ];
-    expect(readme).toContain("目前版本 `0.3.1`");
-    expect(readme).toContain("十五個工具");
+    expect(readme).toContain("目前版本 `0.4.1`");
+    expect(readme).toContain("十六個工具");
     for (const tool of tools) expect(readme).toContain(`\`${tool}\``);
     expect(readme).toContain("meta.contractVersion=mopsfin.result.v1");
     expect(readme).toContain("meta.asOf");
@@ -93,6 +95,24 @@ describe("README example prompts", () => {
     expect(readme).toContain("Retry-After");
     expect(readme).toContain("不記錄 tool arguments");
     expect(readme).toContain("每週一次");
+    expect(readme).toContain("balanced_non_financial_v1");
+    expect(readme).toContain("taiwan_stock_screen.v1");
+    expect(readme).toContain("coarseRanking");
+    expect(readme).toContain("evidencePolicies");
+    expect(readme).toContain("companyQuality");
+    expect(readme).toContain("fundamentalImprovement");
+    expect(readme).toContain("reasonableValuation");
+    expect(readme).toContain("marketUnderreactionProxy");
+    expect(readme).toContain("latest-only");
+    expect(readme).toContain("最多 5 家");
+    expect(readme).toContain("不是 point-in-time／無存活者偏誤回測");
+    expect(readme).toContain("目前沒有分析師預期修正、新聞、法人流向、持股、放空");
+    expect(readme).toContain("failureIsolationComplete=false");
+    expect(readme).toContain("company×metric");
+    expect(readme).toContain("company_metrics_unavailable");
+    expect(readme).toContain("availability");
+    expect(readme).toContain("notReactionScored");
+    expect(readme).toContain("自動遞補");
     expect(readme).not.toContain("請勿把 live tests 設為定時 CI");
     expect(readme).not.toContain("v1 都只支援 latest");
     expect(readme).not.toContain("第一版只提供官方最新");

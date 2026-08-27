@@ -14,6 +14,7 @@ import { priceClient } from "@/lib/price/client";
 import { recordMcpToolError } from "@/lib/observability/telemetry";
 import { reactionClient } from "@/lib/reaction/client";
 import { monthlyRevenueClient } from "@/lib/revenue/client";
+import { taiwanStockScreenClient } from "@/lib/screening/client";
 import { valuationClient } from "@/lib/valuation/client";
 import {
   buildResultMeta,
@@ -49,6 +50,8 @@ import {
   monthlyRevenueOutputSchema,
   monthlyRevenueTrendInputSchema,
   monthlyRevenueTrendOutputSchema,
+  screenTaiwanStockCandidatesInputSchema,
+  screenTaiwanStockCandidatesOutputSchema,
   stockReactionSignalsInputSchema,
   stockReactionSignalsOutputSchema,
   stockOhlcInputSchema,
@@ -397,6 +400,173 @@ export function registerMopsfinTools(server: McpServer): void {
                     },
                   ]
                 : []),
+            ],
+          },
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "screen_taiwan_stock_candidates",
+    {
+      title: "篩選台股研究候選",
+      description:
+        "以各官方來源當下可取得的 latest 資料，對目前上市櫃非金融公司執行固定 balanced_non_financial_v1 研究分流：先用最新月營收與官方估值做全母體或指定 company_codes 的 coarse 粗篩，再對前 10 家做六個月營收趨勢與七項季度財務指標 deep 深篩，最後依 candidate_limit 對最多 5 家計算 5／20／60 個 benchmark sessions 的 reaction proxy。deep batch 逐公司解析 identity，並在總計 24 comparison units 內嘗試隔離 metric failure；受影響代號以 dependencyStatus.affectedCompanyCodes 與 notReactionScored.reasonCodes=company_metrics_unavailable 標示 unavailable／unknown，其他 deepSelected 公司繼續，但不從 top-10 外遞補；共享 chunk 無法精確隔離時會保守標記整個 chunk。金融保險業固定排除；好公司、基本面改善、估值合理、市場尚未充分反應 proxy 是四個 hard gates，任何 fail 或 unknown 都不能被 overallScore 或其他柱補償，unknown 也不等於 0 分。只有完成 reaction 的 candidates 才有 bucket；deep evidence unavailable 者留在 notReactionScored。結果使用 raw_unadjusted 個股價格與 price-index benchmark，且公司母體、月營收、估值、季度財報及市場反應是 mixed as-of，不是單一 point-in-time snapshot。本工具只供 research triage，不是投資建議、完整盡調、股票錯價證明或可直接使用的 point-in-time 回測；回答前必須檢查 bucket、逐柱 criteria、dependencyStatus、coverage、meta.quality 與限制。",
+      inputSchema: screenTaiwanStockCandidatesInputSchema,
+      outputSchema: screenTaiwanStockCandidatesOutputSchema,
+      annotations,
+    },
+    async ({
+      market,
+      company_codes,
+      include_ky,
+      candidate_limit,
+      preset,
+    }) => {
+      try {
+        const data = await taiwanStockScreenClient.screenTaiwanStockCandidates({
+          market,
+          ...(company_codes ? { companyCodes: company_codes } : {}),
+          includeKy: include_ky,
+          candidateLimit: candidate_limit,
+          preset,
+        });
+        const snapshotId = fingerprint({
+          query: data.query,
+          asOf: data.asOf,
+          funnel: data.funnel,
+          candidates: data.candidates,
+          sources: data.sources,
+        });
+        const incompleteDependencies = data.dependencyStatus.filter(
+          (item) => item.status === "partial" || item.status === "failed",
+        );
+        const dependencyIssues: NonNullable<ResultMetaHints["issues"]> =
+          incompleteDependencies.map((item) => ({
+            code:
+              item.status === "failed"
+                ? "SCREEN_DEPENDENCY_FAILED"
+                : "SCREEN_DEPENDENCY_PARTIAL",
+            severity: "warning",
+            scope: "source",
+            message: `${item.stage}/${item.dependency}: ${item.message ?? "dependency 未完整完成。"}`,
+            refs: {
+              companyCodes: item.affectedCompanyCodes,
+              fields: ["dependencyStatus", "coverage"],
+              periods: [],
+              sourceUrls: data.sources.map((item) => item.sourceUrl),
+            },
+          }));
+        return success(
+          `台股 latest-only 篩選完成：粗篩 ${data.funnel.coarseEligible} 家、深篩 ${data.funnel.deepSelected} 家、reaction ${data.funnel.reactionScored} 家；回傳 ${data.funnel.returned} 家四柱評估結果，其中 research_candidate ${data.funnel.buckets.research_candidate} 家。`,
+          data,
+          {
+            selector: "latest",
+            resolved: {
+              granularity: "mixed",
+              from: null,
+              through: null,
+            },
+            page: {
+              mode: "none",
+              unit: "none",
+              limit: null,
+              returned: null,
+              total: null,
+              next: null,
+            },
+            snapshotId,
+            source: data.coverage.sourceComplete ? "complete" : "partial",
+            universe: "unverified",
+            selection: data.coverage.selectionComplete ? "complete" : "partial",
+            values:
+              data.coverage.deepEvidenceComplete &&
+              data.coverage.reactionEvidenceComplete
+                ? "complete"
+                : "partial",
+            freshness: "unknown",
+            issues: [
+              {
+                code: "MASTER_ROWSET_HEURISTIC",
+                severity: "warning",
+                scope: "universe",
+                message:
+                  "目前公司母體通過必要來源與 heuristic gate，但官方沒有 declared row count，不能證明完整 rowset。",
+                refs: {
+                  companyCodes: data.query.companyCodes ?? [],
+                  fields: ["funnel.currentMaster", "coverage.selectionComplete"],
+                  periods: data.asOf.masterReportDates,
+                  sourceUrls: data.sources
+                    .filter((item) => item.kind === "company_master")
+                    .map((item) => item.sourceUrl),
+                },
+              },
+              {
+                code: "SCREEN_MIXED_AS_OF",
+                severity: "info",
+                scope: "period",
+                message:
+                  "公司母體、月營收、估值、季度財報與 reaction 日期不同，不是單一 point-in-time snapshot。",
+                refs: {
+                  companyCodes: data.candidates.map((item) => item.companyCode),
+                  fields: ["asOf", "candidates[].asOf", "sources"],
+                  periods: [
+                    ...data.asOf.masterReportDates,
+                    data.asOf.revenueMonth,
+                    data.asOf.valuationDate,
+                    ...data.asOf.financialThroughPeriods,
+                    ...data.asOf.reactionDates.map((item) => item.date),
+                  ],
+                  sourceUrls: data.sources.map((item) => item.sourceUrl),
+                },
+              },
+              {
+                code: "BOUNDED_SCREEN_FUNNEL",
+                severity: "info",
+                scope: "selection",
+                message:
+                  "coarse 後只對前 10 家做 deep，並只對 candidate_limit（最多 5 家）做 reaction；未評估公司另列摘要，不等於負面判定。",
+                refs: {
+                  companyCodes: [
+                    ...data.notDeepScored,
+                    ...data.notReactionScored,
+                  ].map((item) => item.companyCode),
+                  fields: [
+                    "workBudget.deepCompanyLimit",
+                    "workBudget.reactionCompanyLimit",
+                    "notDeepScored",
+                    "notReactionScored",
+                  ],
+                  periods: [],
+                  sourceUrls: [],
+                },
+              },
+              {
+                code: "RAW_UNADJUSTED_REACTION_PROXY",
+                severity: "info",
+                scope: "value",
+                message:
+                  "第四柱使用 raw unadjusted 個股價格與 price-index benchmark，只是市場反應 proxy，不是 total shareholder return 或錯價證明。",
+                refs: {
+                  companyCodes: data.candidates.map((item) => item.companyCode),
+                  fields: [
+                    "pillars.marketUnderreactionProxy",
+                    "overallScore",
+                  ],
+                  periods: data.asOf.reactionDates.map((item) => item.date),
+                  sourceUrls: data.sources
+                    .filter(
+                      (item) =>
+                        item.kind === "reaction_benchmark" ||
+                        item.kind === "reaction_stock",
+                    )
+                    .map((item) => item.sourceUrl),
+                },
+              },
+              ...dependencyIssues,
             ],
           },
         );
@@ -973,7 +1143,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "批次查詢多家公司多項財務指標",
       description:
-        "以單一呼叫取得 1–100 家公司、1–8 個 list_catalog family=data 指標；每個公司頁面都包含全部 requested metrics，不按指標拆頁。預設每家公司每項指標最多回自己的最近 12 期，也可指定最多 12 季的成對 start_period/end_period。basis 與 yoy_quarter 語意沿用 get_company_metric；本工具不提供產業平均或所選公司平均。每頁最多 20 家、最多 24 個上游工作單位；合法缺值以逐點 status 與 coverage 揭露，上游傳輸或 identity 衝突則整頁失敗。無狀態 cursor 綁 query 與 catalog 定義，但各頁財務值於該頁即時取得，不是跨頁 point-in-time 快照；回答前應檢查 meta.quality 與 meta.page.next。",
+        "以單一呼叫取得 1–100 家公司、1–8 個 list_catalog family=data 指標；每個成功解析 identity 的公司頁面都保留全部 requested metrics，不按指標拆頁。預設每家公司每項指標最多回自己的最近 12 期，也可指定最多 12 季的成對 start_period/end_period。basis 與 yoy_quarter 語意沿用 get_company_metric；本工具不提供產業平均或所選公司平均。每頁最多 20 家、comparison 與有界二分 failure isolation 合計最多 24 個上游工作單位。單一公司 identity 或 company×metric failure 會以 evaluationStatus、availability=unavailable、failure、failures 與 coverage 隔離，其他成功公司／指標仍回傳；合法 no_data 與 unavailable 明確分開，兩者都不能當成 0。failureIsolationComplete=false 或 failures[].attribution=chunk 表示共享 request 或隔離預算使錯誤不能精確歸因至單一公司。Partial success 仍保留按 requested companies 計算的 meta.page.next。無狀態 cursor 只綁 query 與 catalog 定義，各頁財務值於該頁即時取得，不是跨頁 point-in-time 快照；回答前應檢查 failures、coverage、workBudget、meta.quality 與 meta.page.next。",
       inputSchema: companyMetricsBatchInputSchema,
       outputSchema: companyMetricsBatchOutputSchema,
       annotations,
@@ -1017,34 +1187,134 @@ export function registerMopsfinTools(server: McpServer): void {
         const returnedPeriods = data.companies.flatMap((company) =>
           company.metrics.flatMap((metric) => metric.periods),
         );
+        const identityFailures = data.failures.filter(
+          (item) => item.stage === "identity",
+        );
+        const metricFailures = data.failures.filter(
+          (item) => item.stage === "metric",
+        );
+        const chunkFailures = metricFailures.filter(
+          (item) => item.attribution === "chunk",
+        );
+        const metricValuesPartial =
+          metricFailures.length > 0 ||
+          data.companies.some((company) =>
+            company.metrics.some(
+              (metric) =>
+                metric.availability === "unavailable" ||
+                metric.coverage.invalidPoints > 0,
+            ),
+          );
+        const sourceUrls = [
+          ...new Set([
+            ...data.sources.map((item) => item.sourceUrl),
+            ...(data.failures.length > 0 ? [MOPSFIN_SOURCE_URL] : []),
+          ]),
+        ];
+        const qualityIssues: NonNullable<ResultMetaHints["issues"]> = [
+          {
+            code: "STATELESS_PAGE_VALUES_NOT_PINNED",
+            severity: "info",
+            scope: "page",
+            message:
+              "無狀態 cursor 固定 query 與 catalog；各頁 Mopsfin 財務值在該頁查詢時取得，不保證跨頁 point-in-time 一致。",
+            refs: {
+              companyCodes: data.coverage.requestedCompanyCodes,
+              fields: data.metricDefinitions.map((metric) => metric.code),
+              periods: [...new Set(returnedPeriods)].sort(),
+              sourceUrls,
+            },
+          },
+          ...(identityFailures.length > 0
+            ? [
+                {
+                  code: "BATCH_COMPANY_IDENTITY_FAILED",
+                  severity: "warning" as const,
+                  scope: "selection" as const,
+                  message:
+                    "部分 requested 公司 identity 解析失敗；其他公司仍已處理，失敗公司不會被補成名稱、no_data 或 0。",
+                  refs: {
+                    companyCodes: [
+                      ...new Set(
+                        identityFailures.map((item) => item.companyCode),
+                      ),
+                    ],
+                    fields: [
+                      "failures",
+                      "coverage.identityFailedCompanyCodes",
+                      "companies",
+                    ],
+                    periods: [],
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+          ...(metricFailures.length > 0
+            ? [
+                {
+                  code: "BATCH_COMPANY_METRIC_FAILED",
+                  severity: "warning" as const,
+                  scope: "source" as const,
+                  message:
+                    "部分 company×metric 查詢 unavailable；成功值仍保留，失敗項目必須依 availability 與 failure 重試或降級。",
+                  refs: {
+                    companyCodes: [
+                      ...new Set(
+                        metricFailures.map((item) => item.companyCode),
+                      ),
+                    ],
+                    fields: [
+                      ...new Set(
+                        metricFailures.flatMap((item) =>
+                          item.metricCode ? [item.metricCode] : [],
+                        ),
+                      ),
+                    ],
+                    periods: [],
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+          ...(!data.coverage.failureIsolationComplete
+            ? [
+                {
+                  code: "BATCH_FAILURE_ISOLATION_INCOMPLETE",
+                  severity: "warning" as const,
+                  scope: "source" as const,
+                  message:
+                    "部分 metric failure 只能歸因到共享 company chunk，不能據此判定每一家都是錯誤來源。",
+                  refs: {
+                    companyCodes: [
+                      ...new Set(
+                        chunkFailures.map((item) => item.companyCode),
+                      ),
+                    ],
+                    fields: [
+                      "failures[].attribution",
+                      "coverage.failureIsolationComplete",
+                      "workBudget.isolationRetryUnits",
+                    ],
+                    periods: [],
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+        ];
         return success(
-          `本頁 ${data.companies.length} 家公司、${data.metricDefinitions.length} 項財務指標；selectionComplete=${data.coverage.selectionComplete}。`,
+          `本頁處理 ${data.coverage.requestedCompanyCodes.length} 家 requested 公司、${data.metricDefinitions.length} 項財務指標；${data.companies.length} 家完成 identity、${data.coverage.unavailableCompanyCodes.length} 家含 unavailable 結果，selectionComplete=${data.coverage.selectionComplete}。`,
           data,
           {
             page: paginated.page,
             snapshotId: cursorScopeId,
+            source: data.coverage.sourceComplete ? "complete" : "partial",
             universe: "not_applicable",
             selection: data.coverage.selectionComplete ? "complete" : "partial",
-            values: data.companies.some((company) =>
-              company.metrics.some((metric) => metric.coverage.invalidPoints > 0),
-            )
-              ? "partial"
-              : "complete",
+            values: metricValuesPartial ? "partial" : "complete",
             resolved: resolvedQuarterRange(returnedPeriods),
-            issues: [
-              {
-                code: "STATELESS_PAGE_VALUES_NOT_PINNED",
-                severity: "info",
-                scope: "page",
-                message: "無狀態 cursor 固定 query 與 catalog；各頁 Mopsfin 財務值在該頁查詢時取得，不保證跨頁 point-in-time 一致。",
-                refs: {
-                  companyCodes: data.companies.map((company) => company.companyCode),
-                  fields: data.metricDefinitions.map((metric) => metric.code),
-                  periods: [...new Set(returnedPeriods)].sort(),
-                  sourceUrls: data.sources.map((item) => item.sourceUrl),
-                },
-              },
-            ],
+            issues: qualityIssues,
           },
         );
       } catch (error) {

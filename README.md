@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.3.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十五個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收與大盤指數直接取自 MOPS、TWSE 與 TPEx 官方資料。
+目前版本 `0.4.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十六個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收與大盤指數直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -42,6 +42,7 @@ Next.js /api/mcp on Vercel
 | `get_daily_market_valuation` | 查詢上市、上櫃或全部市場 latest／指定日估值與參考財報欄位 |
 | `get_monthly_revenue` | 查詢上市、上櫃或全部市場 latest／指定月份營收、MoM、YoY 與累計營收 |
 | `get_monthly_revenue_trend` | 查詢 3–24 個月營收序列、滾動 YoY 與改善加速度 |
+| `screen_taiwan_stock_candidates` | 以四柱固定規則分流最多 5 個 latest 非金融台股研究候選 |
 | `list_companies` | 取得目前上市／上櫃公司母體；以 heuristic coverage gate 偵測明顯截斷，可排除金融業與 KY 公司 |
 | `list_catalog` | 即時列出指標、endpoint family、產業、金融機構及期間 |
 | `get_company_metric` | 一般公司財務趨勢、比率、YOY 與現金流指標 |
@@ -53,7 +54,7 @@ Next.js /api/mcp on Vercel
 
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。成功結果固定包含 `ok=true` 與 `meta`；`meta.asOf`、`meta.quality`、`meta.page` 分別揭露實際資料時間、來源／母體／selection／值品質與續頁狀態。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
-LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對十五個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、申報頻率、缺值、平均數或分頁警示。
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對十六個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、申報頻率、缺值、平均數、研究代理或分頁警示。
 
 需要目前上市櫃代號母體或全市場掃描候選代號時使用 `list_companies`；只知道特定公司名稱或代號時使用 `find_companies`，不要以 `find_companies` 枚舉全市場。不知道資料指標或期間時使用 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
@@ -64,6 +65,14 @@ LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions �
 | `bcode` | `get_industry_data` |
 | `xb` | `get_financial_note` |
 | `fin`, `adequacy` | `get_financial_institution_metric` |
+
+### `screen_taiwan_stock_candidates` 研究候選分流
+
+這是 latest-only、工作量有上限的非金融 research triage，不是最終選股或交易建議。`market` 可選 `all | listed | otc`，也可指定最多 100 個 `company_codes`；`include_ky` 預設為 `true`，`candidate_limit` 為 1–5、預設 5，`preset` 固定為 `balanced_non_financial_v1`。省略代號時以目前 heuristic-gated 上市櫃 master 為母體，金融保險業固定排除。
+
+工具先以 latest 月營收與 latest 估值做低成本粗篩，再對最多 10 家取得 6 個月營收趨勢與七項財務指標，最後只對最多 5 家取得 5／20／60 交易日 reaction signals。deep batch 會逐公司解析 identity，並在 24-unit 預算內嘗試隔離 metric 錯誤；受影響代號會列在 `dependencyStatus.affectedCompanyCodes`，並以 `notReactionScored.reasonCodes=company_metrics_unavailable` 保留 unavailable／unknown 語意，不會被當成 `fail` 或 0 分。無法精確隔離時會保守標記共享 chunk 中的公司；其餘已進入 deep stage 的公司仍按既定規則繼續，但不會從 `deepSelected` 之外自動遞補。四柱 `companyQuality`、`fundamentalImprovement`、`reasonableValuation`、`marketUnderreactionProxy` 分別回 `pass | fail | unknown`；只有四柱皆可判讀時才提供等權總分，四柱全數通過才是 `research_candidate`。只有完成 reaction 並形成 `candidates` 的公司才進 bucket；其中品質與改善通過但估值或市場柱未通過者列為 `watchlist`，必要柱未知者列為 `insufficient_data`，其餘為 `deprioritized`。deep evidence unavailable 而未進 reaction 的公司則留在 `notReactionScored`。`screenDefinition.id=taiwan_stock_screen.v1` 會完整揭露 `coarseRanking`、`evidencePolicies`、criteria 與 weights，`funnel`、`workBudget`、`dependencyStatus` 及 deprioritized 摘要則交代有多少公司在哪一階段被排除或證據不足。
+
+四柱資料來自不同發布頻率與截止日，結果的 `asOf` 是 mixed、不是單一同步快照；應沿 `meta.asOf.sourceCutoffs` 與來源 lineage 判讀。`marketUnderreactionProxy` 只用 `raw_unadjusted` 個股價格、官方 price-index benchmark 與成交金額做代理，目前沒有分析師預期修正、新聞、法人流向、持股、放空或完整公司行動調整。因為深篩名單與工作量刻意有界，結果不代表完整全市場四柱覆蓋，也不是 point-in-time／無存活者偏誤回測、錯價證明或投資建議；應把候選當成下一輪公開申報查核、估值建模與風險研究的優先清單。
 
 ### `list_companies` 公司母體
 
@@ -90,7 +99,7 @@ MCP descriptions 必須與實際行為同步，不能只更新程式邏輯或 RE
 3. 每個 input/output 欄位的 Zod `.describe(...)`，包括 enum 各值的精確語意。
 4. README、首頁工具清單、設定 prompt、smoke client 與 MCP integration tests。
 
-整合測試會直接稽核 MCP `tools/list` 的實際輸出：每個工具必須有 title 與足夠完整的 tool description，所有 input/output 的巢狀 object、array item 與其欄位都必須有 description。測試也會特別鎖定 `list_companies` 的市場／TDR 完整性、兩個 OHLC 工具的 `raw_unadjusted`、價量單位、時間游標與完整性，以及歷史估值、歷史月營收／趨勢、批次指標與 reaction signals 的來源、缺值、分頁及比較限制。
+整合測試會直接稽核 MCP `tools/list` 的實際輸出：每個工具必須有 title 與足夠完整的 tool description，所有 input/output 的巢狀 object、array item 與其欄位都必須有 description。測試也會特別鎖定 `list_companies` 的市場／TDR 完整性、兩個 OHLC 工具的 `raw_unadjusted`、價量單位、時間游標與完整性，以及歷史估值、歷史月營收／趨勢、批次指標、reaction signals 與候選篩選四柱的來源、缺值、分頁及比較限制。
 
 ### 統一結果、分頁與錯誤契約
 
@@ -134,7 +143,7 @@ HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `
 
 一般財務趨勢預設回最近 12 季，可用 `start_period`、`end_period` 或 `history: "all"`。大型 HTML 表格使用 `offset`、`limit` 分頁，預設 100 列、上限 500 列。期別格式為 `YYYYQn`。
 
-`get_company_metrics_batch` 適合一次取得多家公司 × 多個基本面指標：接受 1–100 家公司與 1–8 個 `list_catalog` `family=data` 指標，按 caller 公司順序分頁且每頁最多 20 家，每家公司保留全部 requested metrics。預設每家公司每項指標最多回自己的最近 12 期，也可指定含首尾最多 12 季；每 10 家 × 每個指標計為一個上游工作，單頁上限 24 units、併發上限 3。本工具不提供產業平均或所選公司平均；`NO_DATA` 是可表達的 company × metric coverage，不會阻斷仍有下一頁的公司，只有上游傳輸或 identity 衝突才整頁失敗。page 內 `snapshotId` 會包含完整 identity、unit、period、point value/status 與 coverage；cursor scope 則只綁 query／catalog，跨頁值不具 point-in-time 保證。
+`get_company_metrics_batch` 適合一次取得多家公司 × 多個基本面指標：接受 1–100 家公司與 1–8 個 `list_catalog` `family=data` 指標，按 caller 公司順序分頁且每頁最多 20 家，每家公司保留全部 requested metrics。預設每家公司每項指標最多回自己的最近 12 期，也可指定含首尾最多 12 季；每 10 家 × 每個指標計為一個上游工作，comparison plan 與二分 isolation 合計每頁上限 24 units、併發上限 3。本工具不提供產業平均或所選公司平均；`NO_DATA` 不算 failure，單一 identity failure 與可在預算內隔離的 company×metric error 會 partial success，未受影響公司與工作繼續，受影響 company／metric 以 coverage、availability 與 failure 明示，unavailable 不會被改寫為 `fail` 或 0。若錯誤只能定位到共享 request 或隔離預算已滿，`failureIsolationComplete=false` 且 `failures[].attribution=chunk`，不能宣稱已找到單一故障公司；catalog、request／work-budget、ambient deadline、必要 invariant 或所有工作均失敗時仍整頁失敗。page 內 `snapshotId` 會包含完整 identity、unit、period、point value/status、availability／failure 與 coverage；cursor scope 則只綁 query／catalog，跨頁值不具 point-in-time 保證。
 
 公司指標可用 `include_industry_average`、`include_company_average` 加入產業平均及所選公司簡單平均；金融機構指標可用 `include_industry_average`、`include_institution_average` 加入相應金融業別平均及所選機構簡單平均。這些平均數皆由 Mopsfin 計算，並非市值加權。
 
@@ -185,7 +194,7 @@ ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` �
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
 4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
-5. 建立後確認 ChatGPT 能辨識十五個工具。
+5. 建立後確認 ChatGPT 能辨識十六個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
 Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流程見 [OpenAI 官方連接說明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。
@@ -202,6 +211,7 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 - 「查台積電截至 2026-07 的最近 12 個月營收趨勢，列出 3／6 月 YoY 與加速度。」
 - 「查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。」
 - 「比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始報酬與量能訊號。」
+- 「用 balanced_non_financial_v1 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。」
 - 「列出全部上市公司代號，不要包含上櫃公司。」
 - 「列出全部上市與上櫃公司，排除金融業與 KY 公司。」
 - 「比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。」
@@ -218,7 +228,7 @@ npm test
 npm run build
 ```
 
-一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
+一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、latest 候選篩選四柱與 funnel、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
 
 Live contract tests 預設從一般測試跳過，只有明確設定時才會查詢原站：
 
@@ -236,7 +246,7 @@ GitHub Actions 另以每週一次、單一 concurrency group 的低頻 live cont
 4. 部署後以 `npm run test:client -- https://<preview>/api/mcp` 驗收。
 5. 視公開流量在 Vercel Firewall 設定適當規則；應用本身不建立跨 instance rate-limit 資料庫。
 
-建議 Preview 驗收：台積電最近 12 季營收、台積電與聯發科 ROE、多家公司多指標 batch、2026-08-24 上市櫃 OHLC、指定日估值、歷史月營收／趨勢、台積電相對 TAIEX reaction signals、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
+建議 Preview 驗收：latest 非金融研究候選篩選、台積電最近 12 季營收、台積電與聯發科 ROE、多家公司多指標 batch、2026-08-24 上市櫃 OHLC、指定日估值、歷史月營收／趨勢、台積電相對 TAIEX reaction signals、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
 
 ## 錯誤碼
 
