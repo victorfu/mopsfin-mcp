@@ -395,10 +395,10 @@ liveDescribe("live Mopsfin contracts", () => {
       companyCodes: ["2330"],
       includeKy: true,
       candidateLimit: 1,
-      preset: "balanced_non_financial_v1",
+      preset: "balanced_non_financial_v2",
     });
 
-    expect(result.screenDefinition.id).toBe("taiwan_stock_screen.v1");
+    expect(result.screenDefinition.id).toBe("taiwan_stock_screen.v2");
     expect(result.screenDefinition.posture).toBe(
       "research_triage_not_recommendation",
     );

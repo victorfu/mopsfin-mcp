@@ -8,6 +8,10 @@ import type {
   CompanyMarket,
   MasterCompany,
 } from "@/lib/company-master/types";
+import type {
+  CorporateActionEvent,
+  CorporateActionHistory,
+} from "@/lib/corporate-actions/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import type { OhlcBar, StockOhlcResult } from "@/lib/price/types";
 import {
@@ -159,6 +163,9 @@ interface FakePriceOptions {
   historicalMarket?: CompanyMarket;
   observedNames?: string[];
   noDataCodes?: Set<string>;
+  splitFromDate?: string;
+  splitFactor?: number;
+  failures?: Map<string, unknown>;
 }
 
 function fakePrice(
@@ -168,6 +175,9 @@ function fakePrice(
   const byCode = new Map(companies.map((item) => [item.code, item]));
   return {
     getStockOhlc: vi.fn(async (query): Promise<StockOhlcResult> => {
+      if (options.failures?.has(query.companyCode)) {
+        throw options.failures.get(query.companyCode);
+      }
       if (options.noDataCodes?.has(query.companyCode)) {
         throw new MopsfinError("NO_DATA", "fixture no data");
       }
@@ -181,7 +191,11 @@ function fakePrice(
         )
         .map((date): OhlcBar => {
           const index = allSessions.indexOf(date);
-          const close = 100 + index;
+          const close =
+            (100 + index) *
+            (options.splitFromDate && date >= options.splitFromDate
+              ? (options.splitFactor ?? 1)
+              : 1);
           return {
             date,
             open: close - 1,
@@ -220,6 +234,90 @@ function fakePrice(
         warnings: [],
       };
     }),
+  };
+}
+
+function fakeCorporateActions(options: {
+  events?: CorporateActionEvent[];
+  coverageComplete?: boolean;
+  fingerprint?: string;
+} = {}) {
+  return {
+    getHistory: vi.fn(
+      async (
+        market: CompanyMarket,
+        startDate: string,
+        endDate: string,
+        query?: { companyCodes?: string[] },
+      ): Promise<CorporateActionHistory> => {
+        const coverageComplete = options.coverageComplete ?? true;
+        const selectedCodes = query?.companyCodes
+          ? new Set(query.companyCodes)
+          : null;
+        return {
+          market,
+          requestedStart: startDate,
+          requestedEnd: endDate,
+          filteredCompanyCodes: query?.companyCodes
+            ? [...query.companyCodes].sort()
+            : null,
+          events: (options.events ?? []).filter(
+            (event) =>
+              event.market === market &&
+              event.effectiveDate >= startDate &&
+              event.effectiveDate <= endDate &&
+              (!selectedCodes || selectedCodes.has(event.companyCode)),
+          ),
+          sources: [],
+          requestCount: 3,
+          coverage: {
+            status: coverageComplete ? "complete" : "partial",
+            coverageComplete,
+            requestedStart: startDate,
+            requestedEnd: endDate,
+            gaps: coverageComplete
+              ? []
+              : [
+                  {
+                    market,
+                    family: "ex_right_dividend",
+                    requestedStart: startDate,
+                    uncoveredThrough: endDate,
+                    supportedFrom: endDate,
+                    reason: "before_official_history_start",
+                  },
+                ],
+          },
+          fingerprint: options.fingerprint ?? "c".repeat(64),
+          fingerprintBasis:
+            "full_market_range_summary_plus_selected_scope_and_twse_combined_detail_without_retrieved_at",
+          warnings: [],
+        };
+      },
+    ),
+  };
+}
+
+function action(
+  overrides: Partial<CorporateActionEvent> = {},
+): CorporateActionEvent {
+  return {
+    companyCode: "2330",
+    name: "台積電",
+    market: "listed",
+    effectiveDate: "2026-06-16",
+    kind: "stock_rights",
+    priorCloseTwd: 485,
+    referencePriceTwd: 242.5,
+    cashDividendPerShareTwd: 0,
+    priceIndexAdjustmentFactor: 0.5,
+    shareCountChanged: true,
+    adjustmentStatus: "available",
+    adjustmentReason: "official_reference_price_divided_by_prior_close",
+    sourceFamily: "ex_right_dividend",
+    sourceUrl: "https://example.test/corporate-action",
+    rawType: "權",
+    ...overrides,
   };
 }
 
@@ -336,7 +434,7 @@ describe("official price-index benchmark adapters", () => {
 });
 
 describe("ReactionClient getStockReactionSignals", () => {
-  it("computes exact N-session raw, benchmark, excess, liquidity, and path signals", async () => {
+  it("computes exact N-session raw and price-index-compatible reaction signals", async () => {
     const companies = [company("2330", "台積電")];
     const benchmark = fakeBenchmark();
     const price = fakePrice(companies);
@@ -345,7 +443,10 @@ describe("ReactionClient getStockReactionSignals", () => {
       now,
       master(companies),
       price,
-      { benchmarkClient: benchmark },
+      {
+        benchmarkClient: benchmark,
+        corporateActionClient: fakeCorporateActions(),
+      },
     );
 
     const result = await client.getStockReactionSignals({
@@ -372,6 +473,10 @@ describe("ReactionClient getStockReactionSignals", () => {
       (stockEnd / stockStart - 1) * 100,
       7,
     );
+    expect(
+      item.returns.at(-1)?.priceIndexCompatibleStockReturnPercent,
+    ).toBeCloseTo((stockEnd / stockStart - 1) * 100, 7);
+    expect(item.returns.at(-1)?.corporateActionAdjustmentFactor).toBe(1);
     expect(item.returns.at(-1)?.benchmarkReturnPercent).toBeCloseTo(
       (benchmarkEnd / benchmarkStart - 1) * 100,
       7,
@@ -397,11 +502,16 @@ describe("ReactionClient getStockReactionSignals", () => {
       status: "available",
     });
     expect(item.comparability).toMatchObject({
-      status: "provisional_raw",
-      corporateActionEvidence: "none_observed",
+      status: "price_index_compatible",
+      corporateActionAdjustment: "not_required",
+      corporateActionEvidence: "official_history_verified_no_event",
       marketTransitionDetected: false,
-      reasons: ["raw_prices_not_adjusted"],
+      reasons: [],
     });
+    expect(result.returnBasis).toBe(
+      "price_index_compatible_corporate_action_adjusted",
+    );
+    expect(result.coverage.corporateActionHistoryComplete).toBe(true);
     expect(result.workBudget.consumed).toBeLessThanOrEqual(48);
     expect(result.pagination).toMatchObject({ hasMore: false, nextCursor: null });
   });
@@ -415,7 +525,10 @@ describe("ReactionClient getStockReactionSignals", () => {
       now,
       master(companies),
       fakePrice(companies, { omitDates: new Set([missing20Start]) }),
-      { benchmarkClient: fakeBenchmark() },
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
     );
 
     const result = await client.getStockReactionSignals({
@@ -452,7 +565,10 @@ describe("ReactionClient getStockReactionSignals", () => {
         historicalMarket: "otc",
         observedNames: ["融程電", "舊公司"],
       }),
-      { benchmarkClient: fakeBenchmark() },
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
     );
 
     const result = await client.getStockReactionSignals({
@@ -467,22 +583,21 @@ describe("ReactionClient getStockReactionSignals", () => {
       excessReturnPercentagePoints: null,
       excessReturnStatus: "not_comparable",
       excessReturnReasons: [
-        "official_change_marker_within_horizon",
+        "unmatched_official_change_marker_within_horizon",
         "market_transition_or_historical_market_mismatch_within_horizon",
         "multiple_observed_names",
       ],
     });
     expect(item.comparability).toMatchObject({
       status: "not_comparable",
-      corporateActionAdjustment: "not_applied",
-      corporateActionEvidence: "official_marker_present",
+      corporateActionAdjustment: "not_required",
+      corporateActionEvidence: "official_history_verified_no_event",
       marketTransitionDetected: true,
       observedMarkets: ["otc"],
       officialChangeMarkers: [{ date: markerDate, marker: "X" }],
     });
     expect(item.comparability.reasons).toEqual([
-      "raw_prices_not_adjusted",
-      "official_change_marker_present",
+      "unmatched_official_change_marker_present",
       "market_transition_or_historical_market_mismatch",
       "multiple_observed_names",
     ]);
@@ -497,7 +612,10 @@ describe("ReactionClient getStockReactionSignals", () => {
       now,
       master(companies),
       fakePrice(companies, { markerDate }),
-      { benchmarkClient: fakeBenchmark() },
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
     );
 
     const result = await client.getStockReactionSignals({
@@ -515,7 +633,320 @@ describe("ReactionClient getStockReactionSignals", () => {
       horizonSessions: 20,
       excessReturnPercentagePoints: null,
       excessReturnStatus: "not_comparable",
-      excessReturnReasons: ["official_change_marker_within_horizon"],
+      excessReturnReasons: [
+        "unmatched_official_change_marker_within_horizon",
+      ],
+    });
+  });
+
+  it("does not cross a return-anchor marker but retains it for the 20-session volume window", async () => {
+    const companies = [company("2330", "台積電")];
+    const endIndex = allSessions.indexOf("2026-06-30");
+    const markerDate = allSessions[endIndex - 5];
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, { markerDate }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+
+    expect(result.companies[0].returns[0]).toMatchObject({
+      startDate: markerDate,
+      excessReturnStatus: "available",
+      excessReturnReasons: [],
+    });
+    expect(result.companies[0].comparability).toMatchObject({
+      status: "not_comparable",
+      officialChangeMarkers: [{ date: markerDate, marker: "X" }],
+      unmatchedOfficialChangeMarkers: [{ date: markerDate, marker: "X" }],
+    });
+    expect(
+      result.companies[0].liquidity.averageVolume20SessionsShares.status,
+    ).toBe("not_comparable_corporate_action");
+  });
+
+  it("removes a verified share-count price break without hiding the raw return", async () => {
+    const companies = [company("2330", "台積電")];
+    const endIndex = allSessions.indexOf("2026-06-30");
+    const effectiveDate = allSessions[endIndex - 10];
+    const priorDate = allSessions[endIndex - 11];
+    const priorClose = 100 + allSessions.indexOf(priorDate);
+    const corporateEvent = action({
+      effectiveDate,
+      priorCloseTwd: priorClose,
+      referencePriceTwd: priorClose * 0.5,
+      priceIndexAdjustmentFactor: 0.5,
+    });
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, {
+        markerDate: effectiveDate,
+        splitFromDate: effectiveDate,
+        splitFactor: 0.5,
+      }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions({ events: [corporateEvent] }),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "2026-06-30",
+      horizons: [5, 20, 60],
+    });
+    const item = result.companies[0];
+    const return20 = item.returns.find((signal) => signal.horizonSessions === 20);
+
+    expect(return20?.stockReturnPercent).toBeLessThan(-40);
+    expect(return20).toMatchObject({
+      corporateActionAdjustmentFactor: 0.5,
+      excessReturnStatus: "available",
+      excessReturnReasons: [],
+    });
+    expect(return20?.priceIndexCompatibleStockReturnPercent).toBeGreaterThan(0);
+    expect(item.comparability).toMatchObject({
+      status: "price_index_compatible",
+      corporateActionAdjustment: "applied",
+      corporateActionEvidence: "official_history_verified_events",
+      unmatchedOfficialChangeMarkers: [],
+    });
+    expect(item.pricePath.status).toBe("available");
+    expect(item.liquidity.averageVolume5SessionsShares.status).toBe("available");
+    expect(item.liquidity.averageVolume20SessionsShares.status).toBe(
+      "not_comparable_corporate_action",
+    );
+    expect(item.liquidity.volume5To20Ratio.status).toBe(
+      "not_comparable_corporate_action",
+    );
+    expect(item.liquidity.averageTurnover20SessionsTwd.status).toBe("available");
+  });
+
+  it("refuses an official factor that cannot bridge to the raw prior close", async () => {
+    const companies = [company("2330", "台積電")];
+    const endIndex = allSessions.indexOf("2026-06-30");
+    const effectiveDate = allSessions[endIndex - 2];
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, { markerDate: effectiveDate }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions({
+          events: [
+            action({
+              effectiveDate,
+              priorCloseTwd: 9_999,
+              referencePriceTwd: 4_999.5,
+            }),
+          ],
+        }),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+    const item = result.companies[0];
+
+    expect(item.returns[0]).toMatchObject({
+      stockReturnPercent: expect.any(Number),
+      priceIndexCompatibleStockReturnPercent: null,
+      corporateActionAdjustmentFactor: null,
+      excessReturnPercentagePoints: null,
+      excessReturnStatus: "not_comparable",
+      excessReturnReasons: ["corporate_action_prior_close_mismatch"],
+    });
+    expect(item.comparability.reasons).toContain(
+      "corporate_action_prior_close_mismatch",
+    );
+    expect(item.pricePath.status).toBe("not_comparable_corporate_action");
+  });
+
+  it("fails closed on multiple official action families on the same effective date", async () => {
+    const companies = [company("2330", "台積電")];
+    const endIndex = allSessions.indexOf("2026-06-30");
+    const effectiveDate = allSessions[endIndex - 2];
+    const priorDate = allSessions[endIndex - 3];
+    const priorClose = 100 + allSessions.indexOf(priorDate);
+    const events = [
+      action({ effectiveDate, priorCloseTwd: priorClose }),
+      action({
+        effectiveDate,
+        kind: "par_value_change",
+        priorCloseTwd: priorClose,
+        referencePriceTwd: priorClose / 10,
+        priceIndexAdjustmentFactor: 0.1,
+        cashDividendPerShareTwd: null,
+        adjustmentReason: "official_reference_price_divided_by_prior_close",
+        sourceFamily: "par_value_change",
+        rawType: "變更股票面額",
+      }),
+    ];
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, { markerDate: effectiveDate }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions({ events }),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+
+    expect(result.companies[0].returns[0]).toMatchObject({
+      stockReturnPercent: expect.any(Number),
+      priceIndexCompatibleStockReturnPercent: null,
+      excessReturnStatus: "not_comparable",
+      excessReturnReasons: ["corporate_action_adjustment_unavailable"],
+    });
+  });
+
+  it("marks selected unavailable corporate-action factors as incomplete history", async () => {
+    const companies = [company("2330", "台積電")];
+    const endIndex = allSessions.indexOf("2026-06-30");
+    const effectiveDate = allSessions[endIndex - 2];
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, { markerDate: effectiveDate }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions({
+          events: [
+            action({
+              effectiveDate,
+              priorCloseTwd: null,
+              referencePriceTwd: null,
+              priceIndexAdjustmentFactor: null,
+              adjustmentStatus: "unavailable",
+              adjustmentReason: "twse_combined_event_detail_failed",
+            }),
+          ],
+        }),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+
+    expect(result.coverage.corporateActionHistoryComplete).toBe(false);
+    expect(result.coverage.dataQualityComplete).toBe(false);
+    expect(result.companies[0].comparability).toMatchObject({
+      status: "not_comparable",
+      corporateActionCoverageComplete: true,
+      reasons: ["corporate_action_adjustment_unavailable"],
+      corporateActions: [
+        expect.objectContaining({
+          effectiveDate,
+          adjustmentStatus: "unavailable",
+          adjustmentReason: "twse_combined_event_detail_failed",
+        }),
+      ],
+    });
+  });
+
+  it("does not let an unavailable event on the action-window anchor poison completeness", async () => {
+    const companies = [company("2330", "台積電")];
+    const endIndex = allSessions.indexOf("2026-06-30");
+    const actionWindowStart = allSessions[endIndex - 19];
+    const actions = fakeCorporateActions({
+      events: [
+        action({
+          effectiveDate: actionWindowStart,
+          priorCloseTwd: null,
+          referencePriceTwd: null,
+          priceIndexAdjustmentFactor: null,
+          adjustmentStatus: "unavailable",
+          adjustmentReason: "twse_combined_event_detail_failed",
+        }),
+      ],
+    });
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: actions,
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+
+    expect(actions.getHistory).toHaveBeenCalledWith(
+      "listed",
+      actionWindowStart,
+      "2026-06-30",
+      { companyCodes: ["2330"] },
+    );
+    expect(result.coverage.corporateActionHistoryComplete).toBe(true);
+    expect(result.coverage.dataQualityComplete).toBe(true);
+    expect(result.companies[0].comparability).toMatchObject({
+      status: "price_index_compatible",
+      corporateActions: [],
+    });
+  });
+
+  it("treats an unverified empty corporate-action range as unknown, not no-event", async () => {
+    const companies = [company("2330", "台積電")];
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions({ coverageComplete: false }),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+
+    expect(result.coverage.corporateActionHistoryComplete).toBe(false);
+    expect(result.companies[0].returns[0]).toMatchObject({
+      stockReturnPercent: expect.any(Number),
+      priceIndexCompatibleStockReturnPercent: null,
+      excessReturnStatus: "not_comparable",
+      excessReturnReasons: ["corporate_action_coverage_incomplete"],
+    });
+    expect(result.companies[0].comparability).toMatchObject({
+      status: "not_comparable",
+      corporateActionEvidence: "official_history_incomplete",
     });
   });
 
@@ -526,7 +957,10 @@ describe("ReactionClient getStockReactionSignals", () => {
       now,
       master(companies),
       fakePrice(companies, { noDataCodes: new Set(["1101"]) }),
-      { benchmarkClient: fakeBenchmark() },
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
     );
 
     const result = await client.getStockReactionSignals({
@@ -545,9 +979,179 @@ describe("ReactionClient getStockReactionSignals", () => {
     });
     expect(result.companies[1].comparability).toMatchObject({
       status: "unavailable",
-      reasons: ["raw_prices_not_adjusted", "no_stock_data"],
+      reasons: ["no_stock_data"],
+    });
+    expect(result.companies[1].stockDataFailure).toBeNull();
+    expect(result.coverage.dataQualityComplete).toBe(false);
+  });
+
+  it("isolates one company OHLC MopsfinError and keeps healthy peers", async () => {
+    const companies = [company("2330", "台積電"), company("1101", "台泥")];
+    const timeout = new MopsfinError(
+      "UPSTREAM_TIMEOUT",
+      "fixture stock timeout",
+      {
+        reason: "UPSTREAM_REQUEST_TIMEOUT",
+        retryable: true,
+        retryAfterMs: 250,
+        action: "retry",
+      },
+    );
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, {
+        failures: new Map([["1101", timeout]]),
+      }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330", "1101"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+
+    expect(result.companies).toHaveLength(2);
+    expect(result.companies[0]).toMatchObject({
+      companyCode: "2330",
+      stockDataStatus: "available",
+      stockDataFailure: null,
+      dataQualityComplete: true,
+    });
+    const unavailable = result.companies[1];
+    expect(unavailable).toMatchObject({
+      companyCode: "1101",
+      stockDataStatus: "unavailable",
+      stockDataFailure: {
+        code: "UPSTREAM_TIMEOUT",
+        reason: "UPSTREAM_REQUEST_TIMEOUT",
+        message: "fixture stock timeout",
+        retryable: true,
+        retryAfterMs: 250,
+        action: "retry",
+      },
+      comparability: {
+        status: "unavailable",
+        reasons: ["stock_data_unavailable"],
+      },
+      dataQualityComplete: false,
+    });
+    expect(unavailable.returns).toEqual([
+      expect.objectContaining({
+        stockReturnPercent: null,
+        priceIndexCompatibleStockReturnPercent: null,
+        corporateActionAdjustmentFactor: null,
+        excessReturnPercentagePoints: null,
+        status: "stock_data_unavailable",
+        excessReturnStatus: "stock_data_unavailable",
+      }),
+    ]);
+    expect(Object.values(unavailable.liquidity)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: null,
+          status: "stock_data_unavailable",
+        }),
+      ]),
+    );
+    expect(
+      Object.values(unavailable.liquidity).every(
+        (signal) =>
+          signal.value === null && signal.status === "stock_data_unavailable",
+      ),
+    ).toBe(true);
+    expect(unavailable.pricePath).toMatchObject({
+      observationCount: 0,
+      maximumDrawdownPercent: null,
+      distanceBelowWindowHighPercent: null,
+      status: "stock_data_unavailable",
     });
     expect(result.coverage.dataQualityComplete).toBe(false);
+    expect(result.pagination.returnedCompanyCount).toBe(2);
+  });
+
+  it("still fails fast on a non-MopsfinError from a stock dependency", async () => {
+    const companies = [company("2330", "台積電"), company("1101", "台泥")];
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, {
+        failures: new Map([["1101", new Error("fixture programmer failure")]]),
+      }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
+    );
+
+    await expect(
+      client.getStockReactionSignals({
+        companyCodes: ["2330", "1101"],
+        asOf: "2026-06-30",
+        horizons: [5],
+      }),
+    ).rejects.toThrow("fixture programmer failure");
+  });
+
+  it("checks the 20-session share-volume window even when only horizon 5 is requested", async () => {
+    const companies = [company("2330", "台積電")];
+    const endIndex = allSessions.indexOf("2026-06-30");
+    const effectiveDate = allSessions[endIndex - 10];
+    const priorDate = allSessions[endIndex - 11];
+    const priorClose = 100 + allSessions.indexOf(priorDate);
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, {
+        markerDate: effectiveDate,
+        splitFromDate: effectiveDate,
+        splitFactor: 0.5,
+      }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions({
+          events: [
+            action({
+              effectiveDate,
+              priorCloseTwd: priorClose,
+              referencePriceTwd: priorClose * 0.5,
+              priceIndexAdjustmentFactor: 0.5,
+            }),
+          ],
+        }),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+    const item = result.companies[0];
+
+    expect(item.returns[0]).toMatchObject({
+      status: "available",
+      excessReturnStatus: "available",
+      corporateActionAdjustmentFactor: 1,
+    });
+    expect(item.pricePath.status).toBe("available");
+    expect(item.comparability.corporateActions).toContainEqual(
+      expect.objectContaining({ effectiveDate, shareCountChanged: true }),
+    );
+    expect(item.liquidity.averageVolume5SessionsShares.status).toBe("available");
+    expect(item.liquidity.averageVolume20SessionsShares.status).toBe(
+      "not_comparable_corporate_action",
+    );
+    expect(item.liquidity.volume5To20Ratio.status).toBe(
+      "not_comparable_corporate_action",
+    );
   });
 
   it("paginates companies under the 48 source-work-unit cap with a scoped cursor", async () => {
@@ -556,12 +1160,16 @@ describe("ReactionClient getStockReactionSignals", () => {
     );
     const benchmark = fakeBenchmark();
     const price = fakePrice(companies);
+    const actions = fakeCorporateActions();
     const client = new ReactionClient(
       vi.fn() as typeof fetch,
       now,
       master(companies),
       price,
-      { benchmarkClient: benchmark },
+      {
+        benchmarkClient: benchmark,
+        corporateActionClient: actions,
+      },
     );
     const query = {
       companyCodes: companies.map((item) => item.code),
@@ -593,6 +1201,11 @@ describe("ReactionClient getStockReactionSignals", () => {
       ...first.companies.map((item) => item.companyCode),
       ...second.companies.map((item) => item.companyCode),
     ]).toEqual(query.companyCodes);
+    expect(actions.getHistory).toHaveBeenCalledTimes(2);
+    for (const call of actions.getHistory.mock.calls) {
+      expect(call[0]).toBe("listed");
+      expect(call[3]).toEqual({ companyCodes: query.companyCodes });
+    }
 
     await expect(
       client.getStockReactionSignals({
@@ -648,7 +1261,10 @@ describe("ReactionClient getStockReactionSignals", () => {
       now,
       currentMaster,
       fakePrice(companies),
-      { benchmarkClient: fakeBenchmark() },
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
     );
     const query = {
       companyCodes: ["2330", "1101"],
@@ -675,6 +1291,46 @@ describe("ReactionClient getStockReactionSignals", () => {
     });
   });
 
+  it("rejects a cursor after the official corporate-action snapshot changes", async () => {
+    const companies = [company("2330", "台積電"), company("1101", "台泥")];
+    const actionOptions = { fingerprint: "a".repeat(64) };
+    const actions = fakeCorporateActions(actionOptions);
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: actions,
+      },
+    );
+    const query = {
+      companyCodes: ["2330", "1101"],
+      asOf: "2026-06-30" as const,
+      horizons: [5] as const,
+      pageSize: 1,
+    };
+    const first = await client.getStockReactionSignals({
+      ...query,
+      horizons: [...query.horizons],
+    });
+    actionOptions.fingerprint = "b".repeat(64);
+
+    await expect(
+      client.getStockReactionSignals({
+        ...query,
+        horizons: [...query.horizons],
+        cursor: first.pagination.nextCursor as string,
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      reason: "SNAPSHOT_CHANGED",
+      category: "pagination",
+      action: "restart_pagination",
+    });
+  });
+
   it("requires an explicit as_of to be an exact benchmark session", async () => {
     const companies = [company("2330", "台積電")];
     const price = fakePrice(companies);
@@ -683,7 +1339,10 @@ describe("ReactionClient getStockReactionSignals", () => {
       now,
       master(companies),
       price,
-      { benchmarkClient: fakeBenchmark() },
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
     );
 
     await expect(

@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.4.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十六個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收與大盤指數直接取自 MOPS、TWSE 與 TPEx 官方資料。
+目前版本 `0.5.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十六個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收、大盤指數與公司行動實際結果直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -17,7 +17,7 @@ Next.js /api/mcp on Vercel
        │    └─ HTML → 展開 rowspan/colspan 的二維 tables
        ├─ openapi.twse.com.tw → 上市公司母體
        ├─ www.tpex.org.tw/openapi → 上櫃公司母體
-       └─ TWSE／TPEx／MOPS 官方資料 → 原始日線價量、日估值、月營收與市場指數
+       └─ TWSE／TPEx／MOPS 官方資料 → 原始日線價量、日估值、月營收、市場指數與公司行動實際結果
 ```
 
 - 不使用資料庫、Redis 或已淘汰的 HTTP+SSE transport。
@@ -38,7 +38,7 @@ Next.js /api/mcp on Vercel
 | `find_companies` | 搜尋公司代號與名稱 |
 | `get_stock_ohlc` | 查詢單一目前或歷史公司股票的跨期原始日線 OHLC，支援時間游標與轉板合併 |
 | `get_daily_market_ohlc` | 查詢最近完成交易日或指定日期的上市、上櫃或全部市場日線價量 |
-| `get_stock_reaction_signals` | 比較個股 5／20／60／120 交易日原始報酬、價格指數 benchmark、量能與回撤代理訊號 |
+| `get_stock_reaction_signals` | 比較個股 5／20／60／120 交易日原始與 price-index-compatible 報酬、價格指數 benchmark、量能與回撤代理訊號 |
 | `get_daily_market_valuation` | 查詢上市、上櫃或全部市場 latest／指定日估值與參考財報欄位 |
 | `get_monthly_revenue` | 查詢上市、上櫃或全部市場 latest／指定月份營收、MoM、YoY 與累計營收 |
 | `get_monthly_revenue_trend` | 查詢 3–24 個月營收序列、滾動 YoY 與改善加速度 |
@@ -68,11 +68,11 @@ LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions �
 
 ### `screen_taiwan_stock_candidates` 研究候選分流
 
-這是 latest-only、工作量有上限的非金融 research triage，不是最終選股或交易建議。`market` 可選 `all | listed | otc`，也可指定最多 100 個 `company_codes`；`include_ky` 預設為 `true`，`candidate_limit` 為 1–5、預設 5，`preset` 固定為 `balanced_non_financial_v1`。省略代號時以目前 heuristic-gated 上市櫃 master 為母體，金融保險業固定排除。
+這是 latest-only、工作量有上限的非金融 research triage，不是最終選股或交易建議。`market` 可選 `all | listed | otc`，也可指定最多 100 個 `company_codes`；`include_ky` 預設為 `true`，`candidate_limit` 為 1–5、預設 5，`preset` 固定為 `balanced_non_financial_v2`。省略代號時以目前 heuristic-gated 上市櫃 master 為母體，金融保險業固定排除。
 
-工具先以 latest 月營收與 latest 估值做低成本粗篩，再對最多 10 家取得 6 個月營收趨勢與七項財務指標，最後只對最多 5 家取得 5／20／60 交易日 reaction signals。deep batch 會逐公司解析 identity，並在 24-unit 預算內嘗試隔離 metric 錯誤；受影響代號會列在 `dependencyStatus.affectedCompanyCodes`，並以 `notReactionScored.reasonCodes=company_metrics_unavailable` 保留 unavailable／unknown 語意，不會被當成 `fail` 或 0 分。無法精確隔離時會保守標記共享 chunk 中的公司；其餘已進入 deep stage 的公司仍按既定規則繼續，但不會從 `deepSelected` 之外自動遞補。四柱 `companyQuality`、`fundamentalImprovement`、`reasonableValuation`、`marketUnderreactionProxy` 分別回 `pass | fail | unknown`；只有四柱皆可判讀時才提供等權總分，四柱全數通過才是 `research_candidate`。只有完成 reaction 並形成 `candidates` 的公司才進 bucket；其中品質與改善通過但估值或市場柱未通過者列為 `watchlist`，必要柱未知者列為 `insufficient_data`，其餘為 `deprioritized`。deep evidence unavailable 而未進 reaction 的公司則留在 `notReactionScored`。`screenDefinition.id=taiwan_stock_screen.v1` 會完整揭露 `coarseRanking`、`evidencePolicies`、criteria 與 weights，`funnel`、`workBudget`、`dependencyStatus` 及 deprioritized 摘要則交代有多少公司在哪一階段被排除或證據不足。
+工具先以 latest 月營收與 latest 估值做低成本粗篩，再對最多 10 家取得 6 個月營收趨勢與七項財務指標，最後只對最多 5 家取得 5／20／60 交易日 reaction signals。deep batch 會逐公司解析 identity，並在 24-unit 預算內嘗試隔離 metric 錯誤；受影響代號會列在 `dependencyStatus.affectedCompanyCodes`，並以 `notReactionScored.reasonCodes=company_metrics_unavailable` 保留 unavailable／unknown 語意，不會被當成 `fail` 或 0 分。無法精確隔離時會保守標記共享 chunk 中的公司；其餘已進入 deep stage 的公司仍按既定規則繼續，但不會從 `deepSelected` 之外自動遞補。四柱 `companyQuality`、`fundamentalImprovement`、`reasonableValuation`、`marketUnderreactionProxy` 分別回 `pass | fail | unknown`；只有四柱皆可判讀時才提供等權總分，四柱全數通過才是 `research_candidate`。只有完成 reaction 並形成 `candidates` 的公司才進 bucket；其中品質與改善通過但估值或市場柱未通過者列為 `watchlist`，必要柱未知者列為 `insufficient_data`，其餘為 `deprioritized`。deep evidence unavailable 而未進 reaction 的公司則留在 `notReactionScored`。`screenDefinition.id=taiwan_stock_screen.v2` 會完整揭露 `coarseRanking`、`evidencePolicies`、criteria 與 weights，`funnel`、`workBudget`、`dependencyStatus` 及 deprioritized 摘要則交代有多少公司在哪一階段被排除或證據不足。
 
-四柱資料來自不同發布頻率與截止日，結果的 `asOf` 是 mixed、不是單一同步快照；應沿 `meta.asOf.sourceCutoffs` 與來源 lineage 判讀。`marketUnderreactionProxy` 只用 `raw_unadjusted` 個股價格、官方 price-index benchmark 與成交金額做代理，目前沒有分析師預期修正、新聞、法人流向、持股、放空或完整公司行動調整。因為深篩名單與工作量刻意有界，結果不代表完整全市場四柱覆蓋，也不是 point-in-time／無存活者偏誤回測、錯價證明或投資建議；應把候選當成下一輪公開申報查核、估值建模與風險研究的優先清單。
+四柱資料來自不同發布頻率與截止日，結果的 `asOf` 是 mixed、不是單一同步快照；應沿 `meta.asOf.sourceCutoffs` 與來源 lineage 判讀。`marketUnderreactionProxy` 僅接受公司行動 coverage、調整因子、前收盤核對與 marker reconciliation 均足以形成 `price_index_compatible` 證據的 reaction；任一必要證據不足即為 `unknown`，不會退回原始報酬評分。目前沒有分析師預期修正、新聞、法人流向、持股、放空資料。因為深篩名單與工作量刻意有界，結果不代表完整全市場四柱覆蓋，也不是 point-in-time／無存活者偏誤回測、錯價證明或投資建議；應把候選當成下一輪公開申報查核、估值建模與風險研究的優先清單。
 
 ### `list_companies` 公司母體
 
@@ -109,7 +109,7 @@ MCP descriptions 必須與實際行為同步，不能只更新程式邏輯或 RE
 - `meta.quality` 分開揭露 source、universe、selection、values、freshness 與具體 `issues`；`universe=compatible | unverified` 或 selection/value 尚為 `unknown` 時 overall `status=partial`，而 `status=complete` 仍不代表每個數值都非 null。
 - `meta.page` 統一表示 `none`、`offset` 或 `cursor` 分頁，以及下一頁 token。`list_companies`、單日全市場 OHLC、估值與月營收在省略 `page_size`／`cursor` 時維持完整回傳，提供 `page_size` 後才啟用 stateless cursor；批次指標與 reaction signals 則預設分頁。
 
-HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `coverage.nextCursor` 續頁，reaction signals 以 `pagination.nextCursor` 續頁。cursor 不需要資料庫，也不保存伺服器端 session；`meta.asOf.snapshotId` 表示該工具可驗證的 snapshot scope。先取得整個 accepted rowset 再切頁的工具可綁內容快照，但這不額外證明官方 rowset 完整；`get_company_metrics_batch` 只綁 query／catalog，reaction 只綁 query／目前 master／benchmark，各頁財務值或個股 OHLC 仍於該頁即時取得，因此會以 `STATELESS_PAGE_VALUES_NOT_PINNED` 明示不具跨頁 point-in-time 保證。若錯誤 `reason` 是 `CURSOR_INVALID` 或 `SNAPSHOT_CHANGED`，依 `action=restart_pagination` 從第一頁重啟。
+HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `coverage.nextCursor` 續頁，reaction signals 以 `pagination.nextCursor` 續頁。cursor 不需要資料庫，也不保存伺服器端 session；`meta.asOf.snapshotId` 表示該工具可驗證的 snapshot scope。先取得整個 accepted rowset 再切頁的工具可綁內容快照，但這不額外證明官方 rowset 完整；`get_company_metrics_batch` 只綁 query／catalog，reaction cursor v2 綁 query／目前 master／benchmark，以及 full-market 公司行動 range summary 與整個 requested company scope 的 TWSE 權息 detail fingerprint。各頁財務值或個股 OHLC 仍於該頁即時取得，因此會以 `STATELESS_PAGE_VALUES_NOT_PINNED` 明示不具跨頁 point-in-time 保證。若錯誤 `reason` 是 `CURSOR_INVALID` 或 `SNAPSHOT_CHANGED`，依 `action=restart_pagination` 從第一頁重啟。
 
 工具 handler 失敗時仍會回傳 `structuredContent`，固定含 `ok=false`、原有 `error.code`，以及 `reason`、`category`、`retryable`、`retryAfterMs`、`action` 與已清理的 `details`。只有上游逾時／限流等可重試錯誤應依指示重試；Zod input 驗證失敗仍使用 MCP protocol `InvalidParams`。
 
@@ -125,9 +125,13 @@ HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `
 
 ### Benchmark 與市場反應代理
 
-`get_stock_reaction_signals` 接受 1–50 個目前上市櫃四碼代號、`as_of=latest | YYYY-MM-DD`，以及不重複的 5／20／60／120 交易日 `horizons` 子集合。benchmark 歷史自 `1999-01-05` 起；每頁最多 10 家、最多 48 個「一個官方市場月份 request」工作單位，受限時必須沿 `pagination.nextCursor` 續查。`pagination.snapshotId` 在正常續頁保持相同，綁定 query、目前 master 與 benchmark；尚未查詢公司的個股 OHLC 不在此快照內。
+`get_stock_reaction_signals` 接受 1–50 個目前上市櫃四碼代號、`as_of=latest | YYYY-MM-DD`，以及不重複的 5／20／60／120 交易日 `horizons` 子集合。benchmark 歷史自 `1999-01-05` 起；每頁最多 10 家、最多 48 個「一個官方市場月份 request」工作單位，受限時必須沿 `pagination.nextCursor` 續查。stateless reaction cursor 已升為 v2；`pagination.snapshotId` 在正常續頁保持相同，綁定 query、目前 master、benchmark、公司行動 range summary，以及整個 requested company scope 的 TWSE 權息 detail evidence，來源改變時要求從第一頁重啟。尚未查詢公司的個股 OHLC 仍不在此快照內。
 
-個股報酬使用 `raw_unadjusted` 收盤價，上市 benchmark 是 TAIEX、上櫃 benchmark 是櫃買指數，兩者皆為官方 `price_index`，不是 total-return index。N-session 視窗依 benchmark 交易日曆的 exact 起訖日期計算，個股缺少錨點不會以前一成交日代填。官方 `changeMarker` 只能提示部分公司行動；沒有 marker 不代表已證明沒有除權息、減資或其他公司行動。`comparability`、各 signal `status`、轉板／名稱變化與 `dataQualityComplete` 都必須保留；這些訊號只是可重算的市場反應代理，不是錯價證明或投資建議。
+工具保留 `raw_unadjusted` 原始收盤報酬供稽核，另依 TWSE／TPEx 公司行動「實際結果」建立 `price_index_compatible_corporate_action_adjusted` 報酬，再與 TAIEX 或櫃買官方 `price_index` 比較。現金股利造成的價格效果會保留，以配合 price index 口徑；股票股利／除權、減資及面額變更的機械跳動則依官方前收盤與參考價調整。這個序列不是 adjusted close，也不是 total-return index／股息再投資報酬，不能當成總股東報酬。
+
+公司行動來源包括 TWSE [除權除息計算結果（TWT49U）](https://www.twse.com.tw/zh/announcement/ex-right/twt49u.html)、[減資恢復買賣參考價格（TWTAUU）](https://www.twse.com.tw/zh/announcement/reduction/twtauu.html)、[變更股票面額恢復買賣參考價格（TWTB8U）](https://www.twse.com.tw/zh/announcement/change/twtb8u.html)，以及 TPEx [除權息計算結果](https://www.tpex.org.tw/www/zh-tw/bulletin/exDailyQ)、[減資恢復交易參考價格](https://www.tpex.org.tw/www/zh-tw/bulletin/revivt)、[變更股票面額恢復交易參考價格](https://www.tpex.org.tw/www/zh-tw/bulletin/pvChgRslt)。各資料集的可查起日不同，工具只對查詢視窗內已驗證的官方 coverage 下結論，不宣稱涵蓋來源支援日前的早期公司行動。
+
+N-session 視窗依 benchmark 交易日曆的 exact 起訖日期計算，個股缺少錨點不會以前一成交日代填。官方 coverage、調整因子、前收盤核對或 `changeMarker` reconciliation 任一不足時，相應 adjusted return、excess return 與 screening market pillar 會是 `unknown`，不會猜測因子或回退成 raw score；沒有 marker 也不單獨證明沒有公司行動。跨越會改變股數的公司行動時，原始成交股數不可直接比較，因此 affected volume signal 會標成不可比；成交金額仍保留原始 TWD 證據。`comparability`、各 signal `status`、轉板／名稱變化與 `dataQualityComplete` 都必須保留；這些訊號只是可重算的市場反應代理，不是錯價證明或投資建議。
 
 ### 歷史估值、月營收與趨勢
 
@@ -210,8 +214,8 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 - 「查台積電 2025-01 月營收，標示目前修訂後 archive、來源產業名稱與資料出表日。」
 - 「查台積電截至 2026-07 的最近 12 個月營收趨勢，列出 3／6 月 YoY 與加速度。」
 - 「查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。」
-- 「比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始報酬與量能訊號。」
-- 「用 balanced_non_financial_v1 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。」
+- 「比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始與 price-index-compatible 報酬、公司行動證據及量能訊號。」
+- 「用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。」
 - 「列出全部上市公司代號，不要包含上櫃公司。」
 - 「列出全部上市與上櫃公司，排除金融業與 KY 公司。」
 - 「比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。」

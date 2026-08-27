@@ -730,11 +730,13 @@ function reactionReturnSignal(
 export function buildMarketUnderreactionPillar(
   reaction: CompanyReactionSignals | null,
 ): ScreenPillar {
-  if (!reaction || reaction.comparability.status !== "provisional_raw") {
+  if (!reaction || reaction.comparability.status !== "price_index_compatible") {
     return unknownPillar(
       "market_underreaction_proxy",
       "市場尚未充分反應（proxy）",
-      reaction ? "raw_price_path_not_comparable" : "reaction_evidence_unavailable",
+      reaction
+        ? "price_index_compatible_reaction_unavailable"
+        : "reaction_evidence_unavailable",
     );
   }
   const return5 = reactionReturnSignal(reaction, 5);
@@ -775,7 +777,9 @@ export function buildMarketUnderreactionPillar(
       rule: "介於 -8pp 與 +3pp",
       weight: 15,
       context: {
-        stockReturnPercent: return5?.stockReturnPercent ?? null,
+        rawStockReturnPercent: return5?.stockReturnPercent ?? null,
+        priceIndexCompatibleStockReturnPercent:
+          return5?.priceIndexCompatibleStockReturnPercent ?? null,
         benchmarkReturnPercent: return5?.benchmarkReturnPercent ?? null,
         hardFailAbovePercentagePoints: 10,
       },
@@ -790,7 +794,9 @@ export function buildMarketUnderreactionPillar(
       rule: "介於 -15pp 與 +8pp",
       weight: 25,
       context: {
-        stockReturnPercent: return20?.stockReturnPercent ?? null,
+        rawStockReturnPercent: return20?.stockReturnPercent ?? null,
+        priceIndexCompatibleStockReturnPercent:
+          return20?.priceIndexCompatibleStockReturnPercent ?? null,
         benchmarkReturnPercent: return20?.benchmarkReturnPercent ?? null,
         hardFailAbovePercentagePoints: 15,
       },
@@ -805,7 +811,9 @@ export function buildMarketUnderreactionPillar(
       rule: "介於 -25pp 與 +15pp",
       weight: 20,
       context: {
-        stockReturnPercent: return60?.stockReturnPercent ?? null,
+        rawStockReturnPercent: return60?.stockReturnPercent ?? null,
+        priceIndexCompatibleStockReturnPercent:
+          return60?.priceIndexCompatibleStockReturnPercent ?? null,
         benchmarkReturnPercent: return60?.benchmarkReturnPercent ?? null,
         hardFailAbovePercentagePoints: 25,
       },
@@ -1001,7 +1009,7 @@ export function nextDiligenceSteps(
     steps.push("以正常化盈餘、forward estimates 與產業週期重新檢驗估值，避免把低 PE 誤判為便宜。");
   }
   if (pillars.marketUnderreactionProxy.status !== "pass") {
-    steps.push("核對除權息、分割等公司行動後的 adjusted return，並確認近期價格反應是否已反映事件。");
+    steps.push("核對官方除權息、減資與面額變更證據及 price-index-compatible return，並確認近期價格反應是否已反映事件。");
   }
   steps.push("閱讀最新財報、法說與重大訊息，確認改善的原因、可持續性及反證條件。");
   steps.push("補做市場預期、分析師修正與未來催化劑研究；本 screen 沒有 consensus 或新聞資料。");

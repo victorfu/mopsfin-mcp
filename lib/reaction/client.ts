@@ -6,6 +6,12 @@ import type {
   CompanyMasterResult,
   MasterCompany,
 } from "@/lib/company-master/types";
+import { corporateActionClient } from "@/lib/corporate-actions/client";
+import type {
+  CorporateActionEvent,
+  CorporateActionHistory,
+  CorporateActionSource,
+} from "@/lib/corporate-actions/types";
 import type { OfficialMarketClientOptions } from "@/lib/market-data/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { priceClient } from "@/lib/price/client";
@@ -32,11 +38,14 @@ import {
   type ReactionCursorPayload,
 } from "./cursor";
 import type {
+  AverageWindowSignal,
   BenchmarkHistory,
   CompanyReactionSignals,
   ExcessReturnComparabilityReason,
   ReactionComparability,
   ReactionHorizon,
+  ReactionStockDataFailure,
+  ReactionStockDataStatus,
   ReturnReactionSignal,
   StockReactionSignalsQuery,
   StockReactionSignalsResult,
@@ -61,10 +70,20 @@ interface BenchmarkLike {
   getHistory(market: CompanyMarket, months: string[]): Promise<BenchmarkHistory>;
 }
 
+interface CorporateActionLike {
+  getHistory(
+    market: CompanyMarket,
+    startDate: string,
+    endDate: string,
+    options?: { companyCodes?: string[] },
+  ): Promise<CorporateActionHistory>;
+}
+
 interface ReactionClientOptions extends OfficialMarketClientOptions {
   concurrency?: number;
   benchmarkConcurrency?: number;
   benchmarkClient?: BenchmarkLike;
+  corporateActionClient?: CorporateActionLike;
 }
 
 interface NormalizedQuery {
@@ -83,15 +102,28 @@ interface PlannedCompany {
 }
 
 interface LoadedStockHistory {
-  noData: boolean;
+  status: ReactionStockDataStatus;
   bars: OhlcBar[];
   observedNames: string[];
   sources: PriceSource[];
+  failure: ReactionStockDataFailure | null;
+}
+
+interface LoadedCorporateActionHistory {
+  market: CompanyMarket;
+  history: CorporateActionHistory | null;
+  fingerprint: string;
+  requestCount: number;
+  failure: string | null;
 }
 
 const WORK_UNIT_LIMIT = 48 as const;
 const BENCHMARK_SUPPORTED_FROM = "1999-01-05";
 const TWSE_STOCK_SUPPORTED_FROM = "2010-01-04";
+const CORPORATE_ACTION_SUPPORTED_FROM: Record<CompanyMarket, string[]> = {
+  listed: ["2003-05-05", "2011-01-01", "2019-09-09"],
+  otc: ["2008-01-02", "2013-01-01", "2019-09-09"],
+};
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ALLOWED_HORIZONS = new Set<ReactionHorizon>([5, 20, 60, 120]);
 
@@ -199,6 +231,15 @@ function monthsBetween(startDate: string, endDate: string): string[] {
     months.push(month);
   }
   return months;
+}
+
+function corporateActionBaseRequestCount(
+  market: CompanyMarket,
+  endDate: string,
+): number {
+  return CORPORATE_ACTION_SUPPORTED_FROM[market].filter(
+    (supportedFrom) => endDate >= supportedFrom,
+  ).length;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -375,6 +416,45 @@ function uniquePriceSources(values: PriceSource[]): PriceSource[] {
   });
 }
 
+function uniqueCorporateActionSources(
+  values: CorporateActionSource[],
+): CorporateActionSource[] {
+  const seen = new Set<string>();
+  return values.filter((source) => {
+    const key = JSON.stringify(source);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function combinedCorporateActionFingerprint(
+  values: LoadedCorporateActionHistory[],
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        [...values]
+          .sort((left, right) => left.market.localeCompare(right.market))
+          .map(({ market, fingerprint }) => ({ market, fingerprint })),
+      ),
+    )
+    .digest("hex");
+}
+
+function loadedCorporateActionEvidenceComplete(
+  loaded: LoadedCorporateActionHistory,
+): boolean {
+  const history = loaded.history;
+  return (
+    history !== null &&
+    history.coverage.coverageComplete &&
+    history.events
+      .filter((event) => event.effectiveDate > history.requestedStart)
+      .every(actionIsAdjustable)
+  );
+}
+
 function noDataPriceSources(error: MopsfinError): PriceSource[] {
   const values = error.details?.sources;
   if (values === undefined) return [];
@@ -399,71 +479,208 @@ function noDataPriceSources(error: MopsfinError): PriceSource[] {
   return sources;
 }
 
+function stockDataFailure(error: MopsfinError): ReactionStockDataFailure {
+  const retryable =
+    error.retryable ??
+    (error.code === "UPSTREAM_TIMEOUT" ||
+      error.code === "UPSTREAM_RATE_LIMITED");
+  return {
+    code: error.code,
+    reason: error.reason ?? null,
+    message: error.message,
+    retryable,
+    retryAfterMs: error.retryAfterMs ?? null,
+    action: error.action ?? (retryable ? "retry" : "none"),
+  };
+}
+
 function sameBar(left: OhlcBar, right: OhlcBar): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function comparability(
-  company: MasterCompany,
-  bars: OhlcBar[],
-  observedNames: string[],
-  noStockData: boolean,
-): ReactionComparability {
-  const observedMarkets = (["listed", "otc"] as const).filter((market) =>
-    bars.some((bar) => bar.market === market),
+function actionIsAdjustable(event: CorporateActionEvent): boolean {
+  return (
+    event.adjustmentStatus === "available" &&
+    typeof event.priceIndexAdjustmentFactor === "number" &&
+    Number.isFinite(event.priceIndexAdjustmentFactor) &&
+    event.priceIndexAdjustmentFactor > 0
   );
-  const marketTransitionDetected =
-    observedMarkets.length > 1 ||
-    observedMarkets.some((market) => market !== company.market);
-  const officialChangeMarkers = bars
-    .filter((bar) => bar.changeMarker !== null)
-    .map((bar) => ({ date: bar.date, marker: bar.changeMarker as string }));
-  const reasons: ReactionComparability["reasons"] = ["raw_prices_not_adjusted"];
-  if (noStockData) reasons.push("no_stock_data");
-  if (officialChangeMarkers.length > 0) {
-    reasons.push("official_change_marker_present");
-  }
-  if (marketTransitionDetected) {
-    reasons.push("market_transition_or_historical_market_mismatch");
-  }
-  if (
-    new Set([company.shortName, ...observedNames].map((name) => name.trim())).size > 1
-  ) {
-    reasons.push("multiple_observed_names");
-  }
-  return {
-    status: noStockData
-      ? "unavailable"
-      : reasons.length > 1
-        ? "not_comparable"
-        : "provisional_raw",
-    priceBasis: "raw_unadjusted",
-    corporateActionAdjustment: "not_applied",
-    corporateActionEvidence:
-      officialChangeMarkers.length > 0
-        ? "official_marker_present"
-        : "none_observed",
-    marketTransitionDetected,
-    observedMarkets,
-    officialChangeMarkers,
-    reasons,
-  };
 }
 
-function applyReturnComparability(
+function actionPriorCloseMatches(
+  event: CorporateActionEvent,
+  bars: OhlcBar[],
+): boolean {
+  if (
+    typeof event.priorCloseTwd !== "number" ||
+    !Number.isFinite(event.priorCloseTwd) ||
+    event.priorCloseTwd <= 0
+  ) {
+    return false;
+  }
+  const previousClose = bars
+    .filter(
+      (bar) =>
+        bar.date < event.effectiveDate &&
+        typeof bar.close === "number" &&
+        Number.isFinite(bar.close) &&
+        bar.close > 0,
+    )
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .at(-1)?.close;
+  if (typeof previousClose !== "number") return false;
+  const tolerance = Math.max(1e-6, event.priorCloseTwd * 1e-8);
+  return Math.abs(previousClose - event.priorCloseTwd) <= tolerance;
+}
+
+function ambiguousSameDayActionKeys(
+  events: CorporateActionEvent[],
+): Set<string> {
+  const counts = new Map<string, number>();
+  for (const event of events) {
+    const key = `${event.companyCode}:${event.effectiveDate}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return new Set(
+    [...counts]
+      .filter(([, count]) => count > 1)
+      .map(([key]) => key),
+  );
+}
+
+function hasAmbiguousSameDayActions(events: CorporateActionEvent[]): boolean {
+  return ambiguousSameDayActionKeys(events).size > 0;
+}
+
+function actionIsUsable(
+  event: CorporateActionEvent,
+  bars: OhlcBar[],
+  events: CorporateActionEvent[],
+): boolean {
+  return (
+    !ambiguousSameDayActionKeys(events).has(
+      `${event.companyCode}:${event.effectiveDate}`,
+    ) &&
+    actionIsAdjustable(event) &&
+    actionPriorCloseMatches(event, bars)
+  );
+}
+
+function eventsWithin(
+  events: CorporateActionEvent[],
+  startDate: string,
+  endDate: string,
+): CorporateActionEvent[] {
+  return events.filter(
+    (event) => event.effectiveDate > startDate && event.effectiveDate <= endDate,
+  );
+}
+
+function officialMarkersWithin(
+  bars: OhlcBar[],
+  startDate: string,
+  endDate: string,
+) {
+  return bars
+    .filter(
+      (bar) =>
+        bar.date > startDate &&
+        bar.date <= endDate &&
+        bar.changeMarker !== null,
+    )
+    .map((bar) => ({ date: bar.date, marker: bar.changeMarker as string }));
+}
+
+function unmatchedMarkers(
+  bars: OhlcBar[],
+  events: CorporateActionEvent[],
+  startDate: string,
+  endDate: string,
+) {
+  const eventDates = new Set(
+    eventsWithin(events, startDate, endDate).map((event) => event.effectiveDate),
+  );
+  return officialMarkersWithin(bars, startDate, endDate).filter(
+    (marker) => !eventDates.has(marker.date),
+  );
+}
+
+function adjustedCloseMap(
+  benchmarkWindow: BenchmarkHistory["bars"],
+  barsByDate: Map<string, OhlcBar>,
+  events: CorporateActionEvent[],
+): { closes: Map<string, number>; startFactor: number } {
+  const endDate = (benchmarkWindow.at(-1) as { date: string }).date;
+  const relevantEvents = eventsWithin(events, benchmarkWindow[0].date, endDate);
+  const bars = [...barsByDate.values()];
+  const closes = new Map<string, number>();
+  for (const benchmark of benchmarkWindow) {
+    const close = barsByDate.get(benchmark.date)?.close;
+    if (typeof close !== "number" || !Number.isFinite(close) || close <= 0) continue;
+    const factor = relevantEvents
+      .filter((event) => event.effectiveDate > benchmark.date)
+      .reduce(
+        (product, event) =>
+          product * (actionIsUsable(event, bars, relevantEvents)
+            ? (event.priceIndexAdjustmentFactor as number)
+            : 1),
+        1,
+      );
+    closes.set(benchmark.date, close * factor);
+  }
+  const startFactor = relevantEvents.reduce(
+    (product, event) =>
+      product * (actionIsUsable(event, bars, relevantEvents)
+        ? (event.priceIndexAdjustmentFactor as number)
+        : 1),
+    1,
+  );
+  return { closes, startFactor };
+}
+
+function returnComparabilityReasons(
   signal: ReturnReactionSignal,
   company: MasterCompany,
   bars: OhlcBar[],
   observedNames: string[],
-): ReturnReactionSignal {
-  if (signal.status !== "available") return signal;
+  actionHistory: CorporateActionHistory | null,
+  companyEvents: CorporateActionEvent[],
+): ExcessReturnComparabilityReason[] {
+  const reasons: ExcessReturnComparabilityReason[] = [];
+  if (!actionHistory?.coverage.coverageComplete) {
+    reasons.push("corporate_action_coverage_incomplete");
+  }
+  const horizonEvents = eventsWithin(
+    companyEvents,
+    signal.startDate,
+    signal.endDate,
+  );
+  if (
+    horizonEvents.some((event) => !actionIsAdjustable(event)) ||
+    hasAmbiguousSameDayActions(horizonEvents)
+  ) {
+    reasons.push("corporate_action_adjustment_unavailable");
+  }
+  if (
+    horizonEvents.some(
+      (event) => actionIsAdjustable(event) && !actionPriorCloseMatches(event, bars),
+    )
+  ) {
+    reasons.push("corporate_action_prior_close_mismatch");
+  }
+  if (
+    unmatchedMarkers(
+      bars,
+      companyEvents,
+      signal.startDate,
+      signal.endDate,
+    ).length > 0
+  ) {
+    reasons.push("unmatched_official_change_marker_within_horizon");
+  }
   const horizonBars = bars.filter(
     (bar) => bar.date >= signal.startDate && bar.date <= signal.endDate,
   );
-  const reasons: ExcessReturnComparabilityReason[] = [];
-  if (horizonBars.some((bar) => bar.changeMarker !== null)) {
-    reasons.push("official_change_marker_within_horizon");
-  }
   const horizonMarkets = new Set(horizonBars.map((bar) => bar.market));
   if (
     horizonMarkets.size > 1 ||
@@ -474,18 +691,164 @@ function applyReturnComparability(
     );
   }
   if (
-    new Set([company.shortName, ...observedNames].map((name) => name.trim())).size > 1
+    new Set(
+      [company.shortName, ...observedNames, ...companyEvents.map((event) => event.name)]
+        .map((name) => name.trim()),
+    ).size > 1
   ) {
     reasons.push("multiple_observed_names");
   }
+  return reasons;
+}
+
+function applyReturnComparability(
+  signal: ReturnReactionSignal,
+  company: MasterCompany,
+  bars: OhlcBar[],
+  observedNames: string[],
+  actionHistory: CorporateActionHistory | null,
+  companyEvents: CorporateActionEvent[],
+): ReturnReactionSignal {
+  if (signal.status !== "available") return signal;
+  const reasons = returnComparabilityReasons(
+    signal,
+    company,
+    bars,
+    observedNames,
+    actionHistory,
+    companyEvents,
+  );
   return reasons.length === 0
     ? signal
     : {
         ...signal,
+        priceIndexCompatibleStockReturnPercent: null,
+        corporateActionAdjustmentFactor: null,
         excessReturnPercentagePoints: null,
         excessReturnStatus: "not_comparable",
         excessReturnReasons: reasons,
       };
+}
+
+function corporateActionNotComparable(
+  signal: AverageWindowSignal,
+): AverageWindowSignal {
+  return {
+    ...signal,
+    value: null,
+    status: "not_comparable_corporate_action",
+  };
+}
+
+function volumeWindowComparable(
+  signal: { startDate: string; endDate: string },
+  bars: OhlcBar[],
+  actionHistory: CorporateActionHistory | null,
+  companyEvents: CorporateActionEvent[],
+): boolean {
+  if (!actionHistory?.coverage.coverageComplete) return false;
+  if (
+    unmatchedMarkers(bars, companyEvents, signal.startDate, signal.endDate).length > 0
+  ) {
+    return false;
+  }
+  return !eventsWithin(companyEvents, signal.startDate, signal.endDate).some(
+    (event) => event.shareCountChanged || !actionIsAdjustable(event),
+  );
+}
+
+function comparability(
+  company: MasterCompany,
+  bars: OhlcBar[],
+  observedNames: string[],
+  stockDataStatus: ReactionStockDataStatus,
+  actionHistory: CorporateActionHistory | null,
+  companyEvents: CorporateActionEvent[],
+  startDate: string,
+  endDate: string,
+): ReactionComparability {
+  const observedMarkets = (["listed", "otc"] as const).filter((market) =>
+    bars.some((bar) => bar.market === market),
+  );
+  const marketTransitionDetected =
+    observedMarkets.length > 1 ||
+    observedMarkets.some((market) => market !== company.market);
+  const officialChangeMarkers = bars
+    .filter((bar) => bar.changeMarker !== null)
+    .map((bar) => ({ date: bar.date, marker: bar.changeMarker as string }));
+  const unmatchedOfficialChangeMarkers = unmatchedMarkers(
+    bars,
+    companyEvents,
+    startDate,
+    endDate,
+  );
+  const coverageComplete = actionHistory?.coverage.coverageComplete === true;
+  const hasUnavailableAdjustment = eventsWithin(
+    companyEvents,
+    startDate,
+    endDate,
+  ).some((event) => !actionIsAdjustable(event)) ||
+    hasAmbiguousSameDayActions(eventsWithin(companyEvents, startDate, endDate));
+  const hasPriorCloseMismatch = eventsWithin(
+    companyEvents,
+    startDate,
+    endDate,
+  ).some(
+    (event) => actionIsAdjustable(event) && !actionPriorCloseMatches(event, bars),
+  );
+  const reasons: ReactionComparability["reasons"] = [];
+  if (stockDataStatus === "no_data") reasons.push("no_stock_data");
+  if (stockDataStatus === "unavailable") {
+    reasons.push("stock_data_unavailable");
+  }
+  if (!coverageComplete) reasons.push("corporate_action_coverage_incomplete");
+  if (hasUnavailableAdjustment) {
+    reasons.push("corporate_action_adjustment_unavailable");
+  }
+  if (hasPriorCloseMismatch) {
+    reasons.push("corporate_action_prior_close_mismatch");
+  }
+  if (unmatchedOfficialChangeMarkers.length > 0) {
+    reasons.push("unmatched_official_change_marker_present");
+  }
+  if (marketTransitionDetected) {
+    reasons.push("market_transition_or_historical_market_mismatch");
+  }
+  if (
+    new Set(
+      [company.shortName, ...observedNames, ...companyEvents.map((event) => event.name)]
+        .map((name) => name.trim()),
+    ).size > 1
+  ) {
+    reasons.push("multiple_observed_names");
+  }
+  return {
+    status: stockDataStatus !== "available"
+      ? "unavailable"
+      : reasons.length > 0
+        ? "not_comparable"
+        : "price_index_compatible",
+    rawPriceBasis: "raw_unadjusted",
+    returnBasis: "price_index_compatible_corporate_action_adjusted",
+    corporateActionAdjustment:
+      !coverageComplete || hasUnavailableAdjustment || hasPriorCloseMismatch
+      ? "incomplete"
+      : companyEvents.length > 0
+        ? "applied"
+        : "not_required",
+    corporateActionEvidence: !coverageComplete
+      ? "official_history_incomplete"
+      : companyEvents.length > 0
+        ? "official_history_verified_events"
+        : "official_history_verified_no_event",
+    corporateActionCoverageComplete: coverageComplete,
+    marketTransitionDetected,
+    observedMarkets,
+    corporateActions: companyEvents,
+    officialChangeMarkers,
+    unmatchedOfficialChangeMarkers,
+    reasons,
+  };
 }
 
 function companySignals(
@@ -495,74 +858,148 @@ function companySignals(
   benchmark: BenchmarkHistory,
   resolvedAsOf: string,
   stock: LoadedStockHistory,
+  actionHistory: CorporateActionHistory | null,
+  actionFailure: string | null,
 ): CompanyReactionSignals {
   const barsByDate = new Map(stock.bars.map((bar) => [bar.date, bar]));
-  const returns = horizons.map((horizon) =>
-    applyReturnComparability(
-      calculateReturnSignal(
-        horizon,
-        exactSessionWindow(benchmark.bars, resolvedAsOf, horizon + 1),
-        barsByDate,
-        stock.noData,
-      ),
-      company,
-      stock.bars,
-      stock.observedNames,
-    ),
-  );
-  const volume5 = calculateAverageWindowSignal(
-    5,
-    exactSessionWindow(benchmark.bars, resolvedAsOf, 5),
-    barsByDate,
-    "volumeShares",
-    stock.noData,
-  );
-  const volume20 = calculateAverageWindowSignal(
-    20,
-    exactSessionWindow(benchmark.bars, resolvedAsOf, 20),
-    barsByDate,
-    "volumeShares",
-    stock.noData,
-  );
-  const turnover20 = calculateAverageWindowSignal(
-    20,
-    exactSessionWindow(benchmark.bars, resolvedAsOf, 20),
-    barsByDate,
-    "turnoverTwd",
-    stock.noData,
-  );
-  const turnover60 = calculateAverageWindowSignal(
-    60,
-    exactSessionWindow(benchmark.bars, resolvedAsOf, 60),
-    barsByDate,
-    "turnoverTwd",
-    stock.noData,
-  );
   const longestHorizon = horizons.at(-1) as ReactionHorizon;
   const longestBenchmarkWindow = exactSessionWindow(
     benchmark.bars,
     resolvedAsOf,
     longestHorizon + 1,
   );
-  const pricePath = calculatePricePathSignal(
+  const actionEvidenceWindow = exactSessionWindow(
+    benchmark.bars,
+    resolvedAsOf,
+    Math.max(longestHorizon + 1, 20),
+  );
+  const companyEvents = (actionHistory?.events ?? []).filter(
+    (event) =>
+      event.companyCode === company.code &&
+      event.effectiveDate > actionEvidenceWindow[0].date &&
+      event.effectiveDate <= resolvedAsOf,
+  );
+  const returns = horizons.map((horizon) => {
+    const window = exactSessionWindow(
+      benchmark.bars,
+      resolvedAsOf,
+      horizon + 1,
+    );
+    const adjusted = adjustedCloseMap(window, barsByDate, companyEvents);
+    return applyReturnComparability(
+      calculateReturnSignal(
+        horizon,
+        window,
+        barsByDate,
+        stock.status,
+        adjusted.closes,
+        adjusted.startFactor,
+      ),
+      company,
+      stock.bars,
+      stock.observedNames,
+      actionHistory,
+      companyEvents,
+    );
+  });
+  const rawVolume5 = calculateAverageWindowSignal(
+    5,
+    exactSessionWindow(benchmark.bars, resolvedAsOf, 5),
+    barsByDate,
+    "volumeShares",
+    stock.status,
+  );
+  const rawVolume20 = calculateAverageWindowSignal(
+    20,
+    exactSessionWindow(benchmark.bars, resolvedAsOf, 20),
+    barsByDate,
+    "volumeShares",
+    stock.status,
+  );
+  const turnover20 = calculateAverageWindowSignal(
+    20,
+    exactSessionWindow(benchmark.bars, resolvedAsOf, 20),
+    barsByDate,
+    "turnoverTwd",
+    stock.status,
+  );
+  const turnover60 = calculateAverageWindowSignal(
+    60,
+    exactSessionWindow(benchmark.bars, resolvedAsOf, 60),
+    barsByDate,
+    "turnoverTwd",
+    stock.status,
+  );
+  const adjustedPath = adjustedCloseMap(
+    longestBenchmarkWindow,
+    barsByDate,
+    companyEvents,
+  );
+  const rawPricePath = calculatePricePathSignal(
     longestHorizon,
     longestBenchmarkWindow,
     barsByDate,
-    stock.noData,
+    stock.status,
+    adjustedPath.closes,
   );
+  const actionPathComparable =
+    actionHistory?.coverage.coverageComplete === true &&
+    eventsWithin(
+      companyEvents,
+      rawPricePath.startDate,
+      rawPricePath.endDate,
+    ).every((event) =>
+      actionIsUsable(
+        event,
+        stock.bars,
+        eventsWithin(
+          companyEvents,
+          rawPricePath.startDate,
+          rawPricePath.endDate,
+        ),
+      ),
+    ) &&
+    unmatchedMarkers(
+      stock.bars,
+      companyEvents,
+      rawPricePath.startDate,
+      rawPricePath.endDate,
+    ).length === 0;
+  const pricePath = actionPathComparable || rawPricePath.status !== "available"
+    ? rawPricePath
+    : {
+        ...rawPricePath,
+        maximumDrawdownPercent: null,
+        distanceBelowWindowHighPercent: null,
+        status: "not_comparable_corporate_action" as const,
+      };
   const comparison = comparability(
     company,
     stock.bars.filter(
       (bar) =>
-        bar.date >= longestBenchmarkWindow[0].date && bar.date <= resolvedAsOf,
+        bar.date >= actionEvidenceWindow[0].date && bar.date <= resolvedAsOf,
     ),
     stock.observedNames,
-    stock.noData,
+    stock.status,
+    actionHistory,
+    companyEvents,
+    actionEvidenceWindow[0].date,
+    resolvedAsOf,
   );
+  const volume5 =
+    rawVolume5.status === "available" &&
+    !volumeWindowComparable(rawVolume5, stock.bars, actionHistory, companyEvents)
+      ? corporateActionNotComparable(rawVolume5)
+      : rawVolume5;
+  const volume20 =
+    rawVolume20.status === "available" &&
+    !volumeWindowComparable(rawVolume20, stock.bars, actionHistory, companyEvents)
+      ? corporateActionNotComparable(rawVolume20)
+      : rawVolume20;
   const volumeRatio = calculateRatioSignal(volume5, volume20);
   const turnoverRatio = calculateRatioSignal(turnover20, turnover60);
   const statuses = [
-    ...returns.map((signal) => signal.status),
+    ...returns.map((signal) => signal.excessReturnStatus),
     volume5.status,
     volume20.status,
     volumeRatio.status,
@@ -572,13 +1009,28 @@ function companySignals(
     pricePath.status,
   ];
   const warnings: string[] = [];
-  if (stock.noData) {
+  if (stock.status === "no_data") {
     warnings.push("指定 exact benchmark 視窗內查無個股官方 OHLC。");
+  } else if (stock.status === "unavailable") {
+    warnings.push(
+      `個股官方 OHLC dependency 無法完成；本公司所有 stock-derived signals 保持 unavailable：${stock.failure?.code ?? "UNKNOWN"}。`,
+    );
   } else if (statuses.some((status) => status !== "available")) {
     warnings.push("個股在部分 exact benchmark sessions 缺少必要成交或收盤欄位；相關 signal 為 null。");
   }
-  if (comparison.officialChangeMarkers.length > 0) {
-    warnings.push("requested return 視窗內存在官方漲跌註記；受影響 horizon 的 excess return 為 null。");
+  if (actionFailure) {
+    warnings.push(`公司行動官方歷史無法驗證；price-compatible signals 為 null：${actionFailure}`);
+  } else if (!comparison.corporateActionCoverageComplete) {
+    warnings.push("公司行動官方歷史 coverage 不完整；跨越未驗證區間的 price-compatible signals 為 null。");
+  }
+  if (comparison.unmatchedOfficialChangeMarkers.length > 0) {
+    warnings.push("requested 視窗存在無法與官方公司行動結果對上的漲跌註記；受影響 signal 為 null。");
+  }
+  if (comparison.reasons.includes("corporate_action_adjustment_unavailable")) {
+    warnings.push("至少一筆官方公司行動缺少可驗證 factor；跨越該事件的 signal 為 null。");
+  }
+  if (comparison.reasons.includes("corporate_action_prior_close_mismatch")) {
+    warnings.push("至少一筆公司行動的官方事件前收盤無法與 raw OHLC 銜接；跨越該事件的 signal 為 null。");
   }
   if (comparison.marketTransitionDetected) {
     warnings.push("requested return 視窗內市場別與目前母體不一致或跨市場；受影響 horizon 的 excess return 為 null。");
@@ -593,7 +1045,8 @@ function companySignals(
     benchmarkCode: benchmark.benchmarkCode,
     requestedAsOf,
     resolvedAsOf,
-    stockDataStatus: stock.noData ? "no_data" : "available",
+    stockDataStatus: stock.status,
+    stockDataFailure: stock.failure,
     returns,
     liquidity: {
       averageVolume5SessionsShares: volume5,
@@ -605,13 +1058,16 @@ function companySignals(
     },
     pricePath,
     comparability: comparison,
-    dataQualityComplete: statuses.every((status) => status === "available"),
+    dataQualityComplete:
+      statuses.every((status) => status === "available") &&
+      comparison.status === "price_index_compatible",
     warnings,
   };
 }
 
 export class ReactionClient {
   private readonly benchmarkClient: BenchmarkLike;
+  private readonly corporateActions: CorporateActionLike;
   private readonly concurrency: number;
 
   constructor(
@@ -622,6 +1078,7 @@ export class ReactionClient {
     options: ReactionClientOptions = {},
   ) {
     this.concurrency = Math.max(1, Math.min(options.concurrency ?? 2, 2));
+    this.corporateActions = options.corporateActionClient ?? corporateActionClient;
     this.benchmarkClient =
       options.benchmarkClient ??
       new BenchmarkClient(fetchImpl, now, {
@@ -750,6 +1207,10 @@ export class ReactionClient {
       (normalized.horizons.at(-1) as ReactionHorizon) + 1,
       60,
     );
+    const corporateActionObservationCount = Math.max(
+      (normalized.horizons.at(-1) as ReactionHorizon) + 1,
+      20,
+    );
     for (const { market, date } of resolvedByMarket) {
       const bars = (historyByMarket.get(market) as BenchmarkHistory).bars;
       const endIndex = bars.findIndex((bar) => bar.date === date);
@@ -805,13 +1266,57 @@ export class ReactionClient {
       });
     }
 
-    const loadedStocks = await mapWithConcurrency(
-      plannedCompanies,
-      this.concurrency,
-      (plan) => this.loadStockHistory(plan),
+    const [loadedStocks, loadedCorporateActions] = await Promise.all([
+      mapWithConcurrency(
+        plannedCompanies,
+        this.concurrency,
+        (plan) => this.loadStockHistory(plan),
+      ),
+      Promise.all(
+        markets.map((market) => {
+          // Keep the corporate-action scope identical on every stateless page.
+          // The returned fingerprint includes selected TWSE combined-event
+          // details, so limiting this to plannedCompanies would make the
+          // fingerprint (and its evidence) change merely because the cursor
+          // advanced to a different company page.
+          const companyCodes = requestedCompanies
+            .filter((company) => company.market === market)
+            .map((company) => company.code);
+          const benchmark = historyByMarket.get(market) as BenchmarkHistory;
+          const resolved = resolvedMap.get(market) as string;
+          const actionStart = exactSessionWindow(
+            benchmark.bars,
+            resolved,
+            corporateActionObservationCount,
+          )[0].date;
+          return this.loadCorporateActionHistory(
+            market,
+            actionStart,
+            resolved,
+            companyCodes,
+          );
+        }),
+      ),
+    ]);
+    const corporateActionFingerprint = combinedCorporateActionFingerprint(
+      loadedCorporateActions,
+    );
+    if (
+      decodedCursor &&
+      decodedCursor.corporateActionFingerprint !== corporateActionFingerprint
+    ) {
+      snapshotChanged(
+        "cursor 釘住的公司行動官方歷史已變更，請重新開始查詢。",
+      );
+    }
+    const corporateActionByMarket = new Map(
+      loadedCorporateActions.map((loaded) => [loaded.market, loaded]),
     );
     const companies = plannedCompanies.map((plan, index) => {
       const benchmark = historyByMarket.get(plan.company.market) as BenchmarkHistory;
+      const actions = corporateActionByMarket.get(
+        plan.company.market,
+      ) as LoadedCorporateActionHistory;
       return companySignals(
         plan.company,
         normalized.asOf,
@@ -819,12 +1324,14 @@ export class ReactionClient {
         benchmark,
         plan.endDate,
         loadedStocks[index],
+        actions.history,
+        actions.failure,
       );
     });
     const nextIndex = startIndex + plannedCompanies.length;
     const hasMore = nextIndex < requestedCompanies.length;
     const cursorPayload: Omit<ReactionCursorPayload, "nextIndex"> = {
-      version: 1,
+      version: 2,
       queryHash,
       masterSnapshotId: master.snapshotId,
       masterFingerprint,
@@ -832,6 +1339,7 @@ export class ReactionClient {
       rangeEnd,
       resolvedByMarket,
       benchmarkFingerprint: fingerprint,
+      corporateActionFingerprint,
     };
     const snapshotId = createHash("sha256")
       .update(JSON.stringify(cursorPayload))
@@ -840,11 +1348,17 @@ export class ReactionClient {
     const dataQualityComplete = companies.every(
       (company) => company.dataQualityComplete,
     );
+    const corporateActionHistoryComplete = loadedCorporateActions.every(
+      loadedCorporateActionEvidenceComplete,
+    );
+    const corporateActionSources = uniqueCorporateActionSources(
+      loadedCorporateActions.flatMap((loaded) => loaded.history?.sources ?? []),
+    );
     const warnings = [
-      "所有個股價格與報酬均為 raw unadjusted；沒有 adjusted close，也沒有股息再投資。",
-      "benchmark 使用官方 price index，不是 total-return index。",
+      "stockReturnPercent 保留 raw unadjusted 原始報酬；priceIndexCompatibleStockReturnPercent 才用官方 actual-result factor 移除股數變動的機械斷點。",
+      "現金股利造成的價格效果會保留，以維持和官方 price index 一致；這不是 adjusted close 或 total shareholder return。",
       "N-session 報酬只使用 benchmark 交易日曆的 exact 起訖日期；個股缺少任一錨點時不以前一成交日代填。",
-      "官方 change marker 只能提示部分公司行動；none_observed 不代表已驗證期間內沒有公司行動。",
+      "只有 TWSE／TPEx 公司行動實際計算結果可產生 factor；coverage、factor 或 marker reconciliation 不完整時回 null／not_comparable，不猜測。",
     ];
     if (hasMore) {
       warnings.push("本頁受 48 work-unit 上限限制；請使用 nextCursor 續查其餘公司。");
@@ -852,11 +1366,15 @@ export class ReactionClient {
     if (!dataQualityComplete) {
       warnings.push("部分公司無法形成完整 exact-session signals；請依各 signal status 判斷。");
     }
+    if (!corporateActionHistoryComplete) {
+      warnings.push("至少一個市場的公司行動官方歷史 coverage 不完整，或 requested-company event 缺少可用 adjustment factor；相關 price-compatible signals 不可比較。");
+    }
     return {
       query: normalizedForHash,
       timezone: "Asia/Taipei",
       currency: "TWD",
       priceBasis: "raw_unadjusted",
+      returnBasis: "price_index_compatible_corporate_action_adjusted",
       benchmarkBasis: "price_index",
       asOf: {
         requested: normalized.asOf,
@@ -865,6 +1383,7 @@ export class ReactionClient {
       coverage: {
         selectionComplete: true,
         benchmarkHistoryComplete: true,
+        corporateActionHistoryComplete,
         dataQualityComplete,
         missingCompanyCodes: [],
       },
@@ -886,14 +1405,82 @@ export class ReactionClient {
         benchmarkUnits,
         stockUnits,
         unitDefinition: "one_official_market_month_request",
+        corporateActionRequests: loadedCorporateActions.reduce(
+          (sum, loaded) => sum + loaded.requestCount,
+          0,
+        ),
+        corporateActionRequestDefinition: "one_official_range_or_detail_request",
       },
       companies,
       benchmarkSources: histories.flatMap((history) => history.sources),
       stockSources: uniquePriceSources(
         loadedStocks.flatMap((stock) => stock.sources),
       ),
+      corporateActionSources,
       warnings,
     };
+  }
+
+  private async loadCorporateActionHistory(
+    market: CompanyMarket,
+    startDate: string,
+    endDate: string,
+    companyCodes: string[],
+  ): Promise<LoadedCorporateActionHistory> {
+    try {
+      const history = await this.corporateActions.getHistory(
+        market,
+        startDate,
+        endDate,
+        companyCodes.length > 0 ? { companyCodes } : undefined,
+      );
+      if (
+        history.market !== market ||
+        history.requestedStart !== startDate ||
+        history.requestedEnd !== endDate ||
+        !/^[a-f0-9]{64}$/.test(history.fingerprint)
+      ) {
+        fail(
+          "UPSTREAM_BAD_RESPONSE",
+          "公司行動 dependency 回傳查詢 scope 或 fingerprint 不一致。",
+          {
+            requestedMarket: market,
+            returnedMarket: history.market,
+            requestedStart: startDate,
+            returnedStart: history.requestedStart,
+            requestedEnd: endDate,
+            returnedEnd: history.requestedEnd,
+          },
+        );
+      }
+      return {
+        market,
+        history,
+        fingerprint: history.fingerprint,
+        requestCount: history.requestCount,
+        failure: null,
+      };
+    } catch (error) {
+      const code = error instanceof MopsfinError ? error.code : "UNKNOWN";
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        market,
+        history: null,
+        fingerprint: createHash("sha256")
+          .update(
+            JSON.stringify({
+              market,
+              startDate,
+              endDate,
+              status: "unavailable",
+              code,
+            }),
+          )
+          .digest("hex"),
+        requestCount: corporateActionBaseRequestCount(market, endDate),
+        failure: `${code}: ${message}`,
+      };
+    }
   }
 
   private async loadStockHistory(plan: PlannedCompany): Promise<LoadedStockHistory> {
@@ -958,13 +1545,14 @@ export class ReactionClient {
             left.date.localeCompare(right.date),
           );
           return {
-            noData: bars.length === 0,
+            status: bars.length === 0 ? "no_data" : "available",
             bars,
             observedNames:
               observedNames.size > 0
                 ? [...observedNames]
                 : [plan.company.shortName],
             sources: uniquePriceSources(sources),
+            failure: null,
           };
         }
         const nextCursor = result.coverage.nextCursor;
@@ -980,18 +1568,39 @@ export class ReactionClient {
         companyCode: plan.company.code,
       });
     } catch (error) {
-      if (error instanceof MopsfinError && error.code === "NO_DATA") {
+      if (!(error instanceof MopsfinError)) throw error;
+      if (error.code === "NO_DATA") {
+        let explicitNoDataSources: PriceSource[];
+        try {
+          explicitNoDataSources = noDataPriceSources(error);
+        } catch (sourceError) {
+          if (!(sourceError instanceof MopsfinError)) throw sourceError;
+          return {
+            status: "unavailable",
+            bars: [],
+            observedNames: [plan.company.shortName],
+            sources: uniquePriceSources(sources),
+            failure: stockDataFailure(sourceError),
+          };
+        }
         return {
-          noData: true,
+          status: "no_data",
           bars: [],
           observedNames: [plan.company.shortName],
           sources: uniquePriceSources([
             ...sources,
-            ...noDataPriceSources(error),
+            ...explicitNoDataSources,
           ]),
+          failure: null,
         };
       }
-      throw error;
+      return {
+        status: "unavailable",
+        bars: [],
+        observedNames: [plan.company.shortName],
+        sources: uniquePriceSources(sources),
+        failure: stockDataFailure(error),
+      };
     }
   }
 }

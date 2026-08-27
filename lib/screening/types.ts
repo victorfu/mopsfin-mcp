@@ -3,8 +3,8 @@ import type {
   CompanyMarketSelection,
 } from "@/lib/company-master/types";
 
-export const TAIWAN_STOCK_SCREEN_PRESET = "balanced_non_financial_v1" as const;
-export const TAIWAN_STOCK_SCREEN_DEFINITION = "taiwan_stock_screen.v1" as const;
+export const TAIWAN_STOCK_SCREEN_PRESET = "balanced_non_financial_v2" as const;
+export const TAIWAN_STOCK_SCREEN_DEFINITION = "taiwan_stock_screen.v2" as const;
 
 export type TaiwanStockScreenPreset = typeof TAIWAN_STOCK_SCREEN_PRESET;
 export type ScreenCriterionStatus = "pass" | "fail" | "unknown";
@@ -119,7 +119,8 @@ export interface ScreenSource {
     | "valuation_latest"
     | "company_metrics"
     | "reaction_benchmark"
-    | "reaction_stock";
+    | "reaction_stock"
+    | "reaction_corporate_action";
   sourceName: string;
   sourceUrl: string;
   retrievedAt: string;
@@ -170,7 +171,7 @@ export interface TaiwanStockScreenDefinition {
     valuationPeerMinimum: 20;
     valuationPeerFallback: "same_industry_then_same_market";
     reactionHorizons: Array<5 | 20 | 60>;
-    reactionPriceBasis: "raw_unadjusted_vs_price_index";
+    reactionPriceBasis: "price_index_compatible_corporate_action_adjusted_vs_price_index";
   };
   decisionPolicy: {
     researchCandidate: string;
@@ -210,6 +211,7 @@ export interface ScreenWorkBudget {
   reactionCompaniesRequested: number;
   reactionOfficialMonthUnits: number;
   reactionOfficialMonthUnitLimit: 48;
+  reactionCorporateActionRequests: number;
 }
 
 export interface TaiwanStockScreenResult {

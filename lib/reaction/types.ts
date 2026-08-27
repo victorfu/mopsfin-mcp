@@ -1,5 +1,13 @@
 import type { CompanyMarket } from "@/lib/company-master/types";
+import type {
+  CorporateActionEvent,
+  CorporateActionSource,
+} from "@/lib/corporate-actions/types";
 import type { PriceSource } from "@/lib/price/types";
+import type {
+  MopsfinErrorAction,
+  MopsfinErrorCode,
+} from "@/lib/mopsfin/errors";
 
 export type ReactionHorizon = 5 | 20 | 60 | 120;
 
@@ -40,15 +48,31 @@ export interface BenchmarkHistory {
 export type ReactionSignalStatus =
   | "available"
   | "no_stock_data"
+  | "stock_data_unavailable"
   | "missing_stock_start_close"
   | "missing_stock_end_close"
   | "incomplete_stock_window"
-  | "invalid_denominator";
+  | "invalid_denominator"
+  | "not_comparable_corporate_action";
 
 export type ExcessReturnStatus = ReactionSignalStatus | "not_comparable";
 
+export type ReactionStockDataStatus = "available" | "no_data" | "unavailable";
+
+export interface ReactionStockDataFailure {
+  code: MopsfinErrorCode;
+  reason: string | null;
+  message: string;
+  retryable: boolean;
+  retryAfterMs: number | null;
+  action: MopsfinErrorAction;
+}
+
 export type ExcessReturnComparabilityReason =
-  | "official_change_marker_within_horizon"
+  | "corporate_action_coverage_incomplete"
+  | "corporate_action_adjustment_unavailable"
+  | "corporate_action_prior_close_mismatch"
+  | "unmatched_official_change_marker_within_horizon"
   | "market_transition_or_historical_market_mismatch_within_horizon"
   | "multiple_observed_names";
 
@@ -56,7 +80,15 @@ export interface ReturnReactionSignal {
   horizonSessions: ReactionHorizon;
   startDate: string;
   endDate: string;
+  /** Raw exchange close-to-close return retained for audit only. */
   stockReturnPercent: number | null;
+  /**
+   * Close-to-close return after neutralizing share-count mechanics so it is
+   * comparable with the official price index. Cash-dividend price effects
+   * remain; this is not a total-shareholder-return series.
+   */
+  priceIndexCompatibleStockReturnPercent: number | null;
+  corporateActionAdjustmentFactor: number | null;
   benchmarkReturnPercent: number;
   excessReturnPercentagePoints: number | null;
   status: ReactionSignalStatus;
@@ -89,6 +121,7 @@ export interface PricePathSignal {
   observationCount: number;
   maximumDrawdownPercent: number | null;
   distanceBelowWindowHighPercent: number | null;
+  priceBasis: "price_index_compatible_corporate_action_adjusted";
   status: ReactionSignalStatus;
 }
 
@@ -98,19 +131,29 @@ export interface OfficialChangeMarker {
 }
 
 export interface ReactionComparability {
-  status: "provisional_raw" | "not_comparable" | "unavailable";
-  priceBasis: "raw_unadjusted";
-  corporateActionAdjustment: "not_applied";
-  corporateActionEvidence: "official_marker_present" | "none_observed";
+  status: "price_index_compatible" | "not_comparable" | "unavailable";
+  rawPriceBasis: "raw_unadjusted";
+  returnBasis: "price_index_compatible_corporate_action_adjusted";
+  corporateActionAdjustment: "applied" | "not_required" | "incomplete";
+  corporateActionEvidence:
+    | "official_history_verified_no_event"
+    | "official_history_verified_events"
+    | "official_history_incomplete";
+  corporateActionCoverageComplete: boolean;
   marketTransitionDetected: boolean;
   observedMarkets: CompanyMarket[];
+  corporateActions: CorporateActionEvent[];
   officialChangeMarkers: OfficialChangeMarker[];
+  unmatchedOfficialChangeMarkers: OfficialChangeMarker[];
   reasons: Array<
-    | "raw_prices_not_adjusted"
-    | "official_change_marker_present"
+    | "corporate_action_coverage_incomplete"
+    | "corporate_action_adjustment_unavailable"
+    | "corporate_action_prior_close_mismatch"
+    | "unmatched_official_change_marker_present"
     | "market_transition_or_historical_market_mismatch"
     | "multiple_observed_names"
     | "no_stock_data"
+    | "stock_data_unavailable"
   >;
 }
 
@@ -121,7 +164,8 @@ export interface CompanyReactionSignals {
   benchmarkCode: BenchmarkSource["benchmarkCode"];
   requestedAsOf: "latest" | string;
   resolvedAsOf: string;
-  stockDataStatus: "available" | "no_data";
+  stockDataStatus: ReactionStockDataStatus;
+  stockDataFailure: ReactionStockDataFailure | null;
   returns: ReturnReactionSignal[];
   liquidity: {
     averageVolume5SessionsShares: AverageWindowSignal;
@@ -143,6 +187,8 @@ export interface ReactionWorkBudget {
   benchmarkUnits: number;
   stockUnits: number;
   unitDefinition: "one_official_market_month_request";
+  corporateActionRequests: number;
+  corporateActionRequestDefinition: "one_official_range_or_detail_request";
 }
 
 export interface ReactionPagination {
@@ -166,6 +212,7 @@ export interface StockReactionSignalsResult {
   timezone: "Asia/Taipei";
   currency: "TWD";
   priceBasis: "raw_unadjusted";
+  returnBasis: "price_index_compatible_corporate_action_adjusted";
   benchmarkBasis: "price_index";
   asOf: {
     requested: "latest" | string;
@@ -174,6 +221,7 @@ export interface StockReactionSignalsResult {
   coverage: {
     selectionComplete: true;
     benchmarkHistoryComplete: true;
+    corporateActionHistoryComplete: boolean;
     dataQualityComplete: boolean;
     missingCompanyCodes: [];
   };
@@ -182,5 +230,6 @@ export interface StockReactionSignalsResult {
   companies: CompanyReactionSignals[];
   benchmarkSources: BenchmarkSource[];
   stockSources: PriceSource[];
+  corporateActionSources: CorporateActionSource[];
   warnings: string[];
 }

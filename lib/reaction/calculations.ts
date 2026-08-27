@@ -7,6 +7,7 @@ import type {
   PricePathSignal,
   RatioSignal,
   ReactionHorizon,
+  ReactionStockDataStatus,
   ReturnReactionSignal,
 } from "./types";
 
@@ -51,7 +52,9 @@ export function calculateReturnSignal(
   horizon: ReactionHorizon,
   benchmarkWindow: BenchmarkBar[],
   stockBarsByDate: Map<string, OhlcBar>,
-  noStockData: boolean,
+  stockDataStatus: ReactionStockDataStatus,
+  priceIndexCompatibleClosesByDate?: Map<string, number>,
+  corporateActionAdjustmentFactor = 1,
 ): ReturnReactionSignal {
   if (benchmarkWindow.length !== horizon + 1) {
     fail("benchmark 報酬視窗不是 exact N-session。", {
@@ -62,16 +65,21 @@ export function calculateReturnSignal(
   const start = benchmarkWindow[0];
   const end = benchmarkWindow.at(-1) as BenchmarkBar;
   const benchmarkReturnPercent = round((end.close / start.close - 1) * 100);
-  if (noStockData) {
+  if (stockDataStatus !== "available") {
+    const status = stockDataStatus === "no_data"
+      ? "no_stock_data" as const
+      : "stock_data_unavailable" as const;
     return {
       horizonSessions: horizon,
       startDate: start.date,
       endDate: end.date,
       stockReturnPercent: null,
+      priceIndexCompatibleStockReturnPercent: null,
+      corporateActionAdjustmentFactor: null,
       benchmarkReturnPercent,
       excessReturnPercentagePoints: null,
-      status: "no_stock_data",
-      excessReturnStatus: "no_stock_data",
+      status,
+      excessReturnStatus: status,
       excessReturnReasons: [],
     };
   }
@@ -82,6 +90,8 @@ export function calculateReturnSignal(
       startDate: start.date,
       endDate: end.date,
       stockReturnPercent: null,
+      priceIndexCompatibleStockReturnPercent: null,
+      corporateActionAdjustmentFactor: null,
       benchmarkReturnPercent,
       excessReturnPercentagePoints: null,
       status: "missing_stock_start_close",
@@ -96,6 +106,8 @@ export function calculateReturnSignal(
       startDate: start.date,
       endDate: end.date,
       stockReturnPercent: null,
+      priceIndexCompatibleStockReturnPercent: null,
+      corporateActionAdjustmentFactor: null,
       benchmarkReturnPercent,
       excessReturnPercentagePoints: null,
       status: "missing_stock_end_close",
@@ -104,13 +116,24 @@ export function calculateReturnSignal(
     };
   }
   const stockReturnPercent = round((endClose / startClose - 1) * 100);
+  const compatibleStartClose =
+    priceIndexCompatibleClosesByDate?.get(start.date) ?? startClose;
+  const compatibleEndClose =
+    priceIndexCompatibleClosesByDate?.get(end.date) ?? endClose;
+  const priceIndexCompatibleStockReturnPercent = round(
+    (compatibleEndClose / compatibleStartClose - 1) * 100,
+  );
   return {
     horizonSessions: horizon,
     startDate: start.date,
     endDate: end.date,
     stockReturnPercent,
+    priceIndexCompatibleStockReturnPercent,
+    corporateActionAdjustmentFactor: round(corporateActionAdjustmentFactor),
     benchmarkReturnPercent,
-    excessReturnPercentagePoints: round(stockReturnPercent - benchmarkReturnPercent),
+    excessReturnPercentagePoints: round(
+      priceIndexCompatibleStockReturnPercent - benchmarkReturnPercent,
+    ),
     status: "available",
     excessReturnStatus: "available",
     excessReturnReasons: [],
@@ -122,7 +145,7 @@ export function calculateAverageWindowSignal(
   benchmarkWindow: BenchmarkBar[],
   stockBarsByDate: Map<string, OhlcBar>,
   field: "volumeShares" | "turnoverTwd",
-  noStockData: boolean,
+  stockDataStatus: ReactionStockDataStatus,
 ): AverageWindowSignal {
   if (benchmarkWindow.length !== windowSessions) {
     fail("流動性視窗不是 exact N-session。", {
@@ -140,8 +163,14 @@ export function calculateAverageWindowSignal(
     expectedObservationCount: windowSessions,
     observationCount: values.length,
   } as const;
-  if (noStockData) {
-    return { ...common, value: null, status: "no_stock_data" };
+  if (stockDataStatus !== "available") {
+    return {
+      ...common,
+      value: null,
+      status: stockDataStatus === "no_data"
+        ? "no_stock_data"
+        : "stock_data_unavailable",
+    };
   }
   if (values.length !== windowSessions) {
     return { ...common, value: null, status: "incomplete_stock_window" };
@@ -165,6 +194,22 @@ export function calculateRatioSignal(
     return { ...common, value: null, status: "no_stock_data" };
   }
   if (
+    numerator.status === "stock_data_unavailable" ||
+    denominator.status === "stock_data_unavailable"
+  ) {
+    return { ...common, value: null, status: "stock_data_unavailable" };
+  }
+  if (
+    numerator.status === "not_comparable_corporate_action" ||
+    denominator.status === "not_comparable_corporate_action"
+  ) {
+    return {
+      ...common,
+      value: null,
+      status: "not_comparable_corporate_action",
+    };
+  }
+  if (
     numerator.status !== "available" ||
     denominator.status !== "available" ||
     numerator.value === null ||
@@ -186,7 +231,8 @@ export function calculatePricePathSignal(
   horizon: ReactionHorizon,
   benchmarkWindow: BenchmarkBar[],
   stockBarsByDate: Map<string, OhlcBar>,
-  noStockData: boolean,
+  stockDataStatus: ReactionStockDataStatus,
+  priceIndexCompatibleClosesByDate?: Map<string, number>,
 ): PricePathSignal {
   if (benchmarkWindow.length !== horizon + 1) {
     fail("價格路徑視窗不是 exact N-session。", {
@@ -195,7 +241,10 @@ export function calculatePricePathSignal(
     });
   }
   const closes = benchmarkWindow
-    .map((benchmark) => numericBarValue(stockBarsByDate, benchmark.date, "close"))
+    .map((benchmark) =>
+      priceIndexCompatibleClosesByDate?.get(benchmark.date) ??
+      numericBarValue(stockBarsByDate, benchmark.date, "close"),
+    )
     .filter((value): value is number => value !== null && value > 0);
   const common = {
     horizonSessions: horizon,
@@ -203,13 +252,16 @@ export function calculatePricePathSignal(
     endDate: (benchmarkWindow.at(-1) as BenchmarkBar).date,
     expectedObservationCount: horizon + 1,
     observationCount: closes.length,
+    priceBasis: "price_index_compatible_corporate_action_adjusted",
   } as const;
-  if (noStockData) {
+  if (stockDataStatus !== "available") {
     return {
       ...common,
       maximumDrawdownPercent: null,
       distanceBelowWindowHighPercent: null,
-      status: "no_stock_data",
+      status: stockDataStatus === "no_data"
+        ? "no_stock_data"
+        : "stock_data_unavailable",
     };
   }
   if (closes.length !== horizon + 1) {

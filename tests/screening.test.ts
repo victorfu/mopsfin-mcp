@@ -220,17 +220,31 @@ function trend(code: string, latestYoy = 12): MonthlyRevenueTrendCompany {
 
 function reaction(
   code: string,
-  options: { excess20?: number; turnover?: number; comparable?: boolean } = {},
+  options: {
+    excess20?: number;
+    turnover?: number;
+    rawStockReturn20?: number;
+    adjustedStockReturn20?: number;
+    comparabilityStatus?: CompanyReactionSignals["comparability"]["status"];
+    corporateActionCoverageComplete?: boolean;
+    stockDataUnavailable?: boolean;
+  } = {},
 ): CompanyReactionSignals {
   const excess20 = options.excess20 ?? 2;
+  const comparabilityStatus = options.comparabilityStatus ??
+    (options.stockDataUnavailable ? "unavailable" : "price_index_compatible");
+  const corporateActionCoverageComplete =
+    options.corporateActionCoverageComplete ?? true;
   const average = (windowSessions: 5 | 20 | 60, value: number) => ({
     windowSessions,
     startDate: "2026-05-01",
     endDate: "2026-07-31",
     expectedObservationCount: windowSessions,
-    observationCount: windowSessions,
-    value,
-    status: "available" as const,
+    observationCount: options.stockDataUnavailable ? 0 : windowSessions,
+    value: options.stockDataUnavailable ? null : value,
+    status: options.stockDataUnavailable
+      ? "stock_data_unavailable" as const
+      : "available" as const,
   });
   return {
     companyCode: code,
@@ -239,17 +253,56 @@ function reaction(
     benchmarkCode: "TAIEX",
     requestedAsOf: "latest",
     resolvedAsOf: "2026-07-31",
-    stockDataStatus: "available",
+    stockDataStatus: options.stockDataUnavailable ? "unavailable" : "available",
+    stockDataFailure: options.stockDataUnavailable
+      ? {
+          code: "UPSTREAM_TIMEOUT",
+          reason: "UPSTREAM_REQUEST_TIMEOUT",
+          message: `OHLC unavailable for ${code}`,
+          retryable: true,
+          retryAfterMs: null,
+          action: "retry",
+        }
+      : null,
     returns: ([5, 20, 60] as const).map((horizonSessions) => ({
       horizonSessions,
       startDate: "2026-05-01",
       endDate: "2026-07-31",
-      stockReturnPercent: horizonSessions === 20 ? excess20 + 1 : 2,
+      stockReturnPercent: options.stockDataUnavailable
+        ? null
+        : horizonSessions === 20
+          ? options.rawStockReturn20 ?? excess20 + 1
+          : 2,
+      priceIndexCompatibleStockReturnPercent: options.stockDataUnavailable
+        ? null
+        : horizonSessions === 20
+          ? options.adjustedStockReturn20 ?? excess20 + 1
+          : 2,
+      corporateActionAdjustmentFactor:
+        corporateActionCoverageComplete && !options.stockDataUnavailable ? 1 : null,
       benchmarkReturnPercent: 1,
-      excessReturnPercentagePoints: horizonSessions === 20 ? excess20 : 1,
-      status: "available",
-      excessReturnStatus: "available",
-      excessReturnReasons: [],
+      excessReturnPercentagePoints:
+        comparabilityStatus === "price_index_compatible" &&
+        !options.stockDataUnavailable
+          ? horizonSessions === 20
+            ? excess20
+            : 1
+          : null,
+      status: options.stockDataUnavailable
+        ? "stock_data_unavailable" as const
+        : corporateActionCoverageComplete
+          ? "available" as const
+          : "not_comparable_corporate_action" as const,
+      excessReturnStatus: options.stockDataUnavailable
+        ? "stock_data_unavailable" as const
+        : comparabilityStatus === "price_index_compatible"
+          ? "available" as const
+          : "not_comparable" as const,
+      excessReturnReasons: comparabilityStatus === "price_index_compatible"
+        ? []
+        : options.stockDataUnavailable
+          ? []
+          : ["corporate_action_coverage_incomplete" as const],
     })),
     liquidity: {
       averageVolume5SessionsShares: average(5, 100_000),
@@ -257,16 +310,20 @@ function reaction(
       volume5To20Ratio: {
         numeratorWindowSessions: 5,
         denominatorWindowSessions: 20,
-        value: 1,
-        status: "available",
+        value: options.stockDataUnavailable ? null : 1,
+        status: options.stockDataUnavailable
+          ? "stock_data_unavailable"
+          : "available",
       },
       averageTurnover20SessionsTwd: average(20, options.turnover ?? 10_000_000),
       averageTurnover60SessionsTwd: average(60, 10_000_000),
       turnover20To60Ratio: {
         numeratorWindowSessions: 20,
         denominatorWindowSessions: 60,
-        value: 1,
-        status: "available",
+        value: options.stockDataUnavailable ? null : 1,
+        status: options.stockDataUnavailable
+          ? "stock_data_unavailable"
+          : "available",
       },
     },
     pricePath: {
@@ -274,24 +331,39 @@ function reaction(
       startDate: "2026-05-01",
       endDate: "2026-07-31",
       expectedObservationCount: 60,
-      observationCount: 60,
-      maximumDrawdownPercent: -10,
-      distanceBelowWindowHighPercent: 10,
-      status: "available",
+      observationCount: options.stockDataUnavailable ? 0 : 60,
+      maximumDrawdownPercent: options.stockDataUnavailable ? null : -10,
+      distanceBelowWindowHighPercent: options.stockDataUnavailable ? null : 10,
+      priceBasis: "price_index_compatible_corporate_action_adjusted",
+      status: options.stockDataUnavailable
+        ? "stock_data_unavailable"
+        : corporateActionCoverageComplete
+          ? "available"
+          : "not_comparable_corporate_action",
     },
     comparability: {
-      status: options.comparable === false ? "not_comparable" : "provisional_raw",
-      priceBasis: "raw_unadjusted",
-      corporateActionAdjustment: "not_applied",
-      corporateActionEvidence: "none_observed",
+      status: comparabilityStatus,
+      rawPriceBasis: "raw_unadjusted",
+      returnBasis: "price_index_compatible_corporate_action_adjusted",
+      corporateActionAdjustment: corporateActionCoverageComplete
+        ? "not_required"
+        : "incomplete",
+      corporateActionEvidence: corporateActionCoverageComplete
+        ? "official_history_verified_no_event"
+        : "official_history_incomplete",
+      corporateActionCoverageComplete,
       marketTransitionDetected: false,
       observedMarkets: ["listed"],
+      corporateActions: [],
       officialChangeMarkers: [],
-      reasons: options.comparable === false
-        ? ["multiple_observed_names"]
-        : ["raw_prices_not_adjusted"],
+      unmatchedOfficialChangeMarkers: [],
+      reasons: comparabilityStatus === "price_index_compatible"
+        ? []
+        : options.stockDataUnavailable
+          ? ["stock_data_unavailable"]
+          : ["corporate_action_coverage_incomplete"],
     },
-    dataQualityComplete: true,
+    dataQualityComplete: comparabilityStatus === "price_index_compatible",
     warnings: [],
   };
 }
@@ -492,9 +564,52 @@ describe("Taiwan stock screen calculations", () => {
       value: null,
     });
 
-    expect(buildMarketUnderreactionPillar(reaction("1301")).status).toBe("pass");
+    const verifiedAdjusted = buildMarketUnderreactionPillar(
+      reaction("1301", {
+        rawStockReturn20: 51,
+        adjustedStockReturn20: 3,
+        excess20: 2,
+      }),
+    );
+    expect(verifiedAdjusted.status).toBe("pass");
+    expect(
+      verifiedAdjusted.criteria.find((item) => item.code === "excess_return_20"),
+    ).toMatchObject({
+      value: 2,
+      context: {
+        rawStockReturnPercent: 51,
+        priceIndexCompatibleStockReturnPercent: 3,
+        benchmarkReturnPercent: 1,
+      },
+    });
     expect(buildMarketUnderreactionPillar(reaction("1302", { excess20: 20 })).status).toBe("fail");
-    expect(buildMarketUnderreactionPillar(reaction("1303", { comparable: false })).status).toBe("unknown");
+
+    const incompleteCorporateActions = buildMarketUnderreactionPillar(
+      reaction("1303", {
+        excess20: 99,
+        comparabilityStatus: "not_comparable",
+        corporateActionCoverageComplete: false,
+      }),
+    );
+    expect(incompleteCorporateActions).toMatchObject({
+      status: "unknown",
+      score: null,
+      knownWeight: 0,
+      hardFailReasons: [],
+    });
+    expect(incompleteCorporateActions.criteria).toHaveLength(7);
+    expect(incompleteCorporateActions.criteria).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "unknown",
+          value: null,
+          reasonCodes: ["price_index_compatible_reaction_unavailable"],
+        }),
+      ]),
+    );
+    expect(
+      incompleteCorporateActions.criteria.every((item) => item.status === "unknown"),
+    ).toBe(true);
   });
 
   it("uses deterministic mid-rank percentiles and falls back from industry to market", () => {
@@ -845,7 +960,18 @@ function metricsResult(
   };
 }
 
-function reactionResult(codes: string[]) {
+function reactionResult(
+  codes: string[],
+  options: {
+    corporateActionIncompleteCompanyCode?: string;
+    stockDataUnavailableCompanyCode?: string;
+  } = {},
+) {
+  const corporateActionHistoryComplete =
+    options.corporateActionIncompleteCompanyCode === undefined;
+  const dataQualityComplete =
+    corporateActionHistoryComplete &&
+    options.stockDataUnavailableCompanyCode === undefined;
   return {
     query: {
       companyCodes: codes,
@@ -856,12 +982,14 @@ function reactionResult(codes: string[]) {
     timezone: "Asia/Taipei" as const,
     currency: "TWD" as const,
     priceBasis: "raw_unadjusted" as const,
+    returnBasis: "price_index_compatible_corporate_action_adjusted" as const,
     benchmarkBasis: "price_index" as const,
     asOf: { requested: "latest" as const, resolvedByMarket: [{ market: "listed" as const, date: "2026-07-31" }] },
     coverage: {
       selectionComplete: true as const,
       benchmarkHistoryComplete: true as const,
-      dataQualityComplete: true,
+      corporateActionHistoryComplete,
+      dataQualityComplete,
       missingCompanyCodes: [] as [],
     },
     pagination: {
@@ -880,10 +1008,43 @@ function reactionResult(codes: string[]) {
       benchmarkUnits: 1,
       stockUnits: codes.length,
       unitDefinition: "one_official_market_month_request" as const,
+      corporateActionRequests: 3,
+      corporateActionRequestDefinition:
+        "one_official_range_or_detail_request" as const,
     },
-    companies: [...codes].reverse().map((code) => reaction(code)),
+    companies: [...codes].reverse().map((code) =>
+      reaction(
+        code,
+        code === options.corporateActionIncompleteCompanyCode
+          ? {
+              comparabilityStatus: "not_comparable",
+              corporateActionCoverageComplete: false,
+            }
+          : code === options.stockDataUnavailableCompanyCode
+            ? { stockDataUnavailable: true }
+          : {},
+      ),
+    ),
     benchmarkSources: [],
     stockSources: [],
+    corporateActionSources: [{
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      family: "ex_right_dividend" as const,
+      scope: "range_summary" as const,
+      sourceName: "TWSE 除權除息計算結果表",
+      sourceUrl: "https://example.test/corporate-actions",
+      retrievedAt: "2026-08-01T00:00:00.000Z",
+      supportedFrom: "2003-05-05",
+      queryStart: "2026-05-01",
+      queryEnd: "2026-07-31",
+      responseStart: null,
+      responseEnd: null,
+      rawRowCount: 0,
+      companyEventCount: 0,
+      officialDeclaredRowCount: 0,
+      officialDeclaredRowCountAvailable: true,
+    }],
     warnings: [],
   };
 }
@@ -893,9 +1054,12 @@ function screenClientFixture(
     metricsFailure?: Error;
     metricsPartialCompanyCode?: string;
     metricsPartialMetricCompanyCode?: string;
+    reactionCorporateActionIncompleteCompanyCode?: string;
+    reactionStockDataUnavailableCompanyCode?: string;
+    companyCount?: number;
   } = {},
 ) {
-  const companies = Array.from({ length: 12 }, (_, index) =>
+  const companies = Array.from({ length: options.companyCount ?? 12 }, (_, index) =>
     company(String(1001 + index)),
   );
   const getMonthlyRevenueTrend = vi.fn(async (query: { companyCodes: string[] }) =>
@@ -910,7 +1074,12 @@ function screenClientFixture(
         }),
       );
   const getStockReactionSignals = vi.fn(async (query: { companyCodes: string[] }) =>
-    reactionResult(query.companyCodes),
+    reactionResult(query.companyCodes, {
+      corporateActionIncompleteCompanyCode:
+        options.reactionCorporateActionIncompleteCompanyCode,
+      stockDataUnavailableCompanyCode:
+        options.reactionStockDataUnavailableCompanyCode,
+    }),
   );
   const client = new TaiwanStockScreenClient(
     {
@@ -957,6 +1126,22 @@ describe("TaiwanStockScreenClient", () => {
     expect(result.notDeepScored.map((item) => item.companyCode)).toEqual(["1011", "1012"]);
     expect(result.notReactionScored).toHaveLength(8);
     expect(result.candidates.map((item) => item.companyCode)).toEqual(["1001", "1002"]);
+    expect(result.query.preset).toBe("balanced_non_financial_v2");
+    expect(result.screenDefinition).toMatchObject({
+      id: "taiwan_stock_screen.v2",
+      preset: "balanced_non_financial_v2",
+      evidencePolicies: {
+        reactionPriceBasis:
+          "price_index_compatible_corporate_action_adjusted_vs_price_index",
+      },
+    });
+    expect(result.workBudget.reactionCorporateActionRequests).toBe(3);
+    expect(result.sources).toContainEqual(
+      expect.objectContaining({
+        kind: "reaction_corporate_action",
+        sourceName: "TWSE 除權除息計算結果表",
+      }),
+    );
     expect(fixture.getMonthlyRevenueTrend).toHaveBeenCalledWith(
       expect.objectContaining({ companyCodes: Array.from({ length: 10 }, (_, index) => String(1001 + index)) }),
     );
@@ -1064,5 +1249,113 @@ describe("TaiwanStockScreenClient", () => {
       }),
     );
     expect(result.coverage.deepEvidenceComplete).toBe(false);
+  });
+
+  it("isolates incomplete corporate-action evidence without turning unknown into fail or blocking peers", async () => {
+    const fixture = screenClientFixture({
+      reactionCorporateActionIncompleteCompanyCode: "1001",
+      companyCount: 21,
+    });
+    const result = await fixture.client.screenTaiwanStockCandidates(SCREEN_QUERY);
+
+    expect(result.funnel).toMatchObject({
+      reactionSelected: 2,
+      reactionScored: 2,
+      returned: 2,
+    });
+    expect(result.dependencyStatus).toContainEqual(
+      expect.objectContaining({
+        dependency: "stock_reaction_signals",
+        status: "partial",
+        affectedCompanyCodes: ["1001"],
+      }),
+    );
+    const incomplete = result.candidates.find(
+      (item) => item.companyCode === "1001",
+    );
+    expect(incomplete).toMatchObject({
+      bucket: "insufficient_data",
+      overallScore: null,
+      pillars: {
+        marketUnderreactionProxy: {
+          status: "unknown",
+          score: null,
+          knownWeight: 0,
+          hardFailReasons: [],
+        },
+      },
+    });
+    expect(
+      incomplete?.pillars.marketUnderreactionProxy.criteria.every(
+        (item) =>
+          item.status === "unknown" &&
+          item.value === null &&
+          item.reasonCodes.includes("price_index_compatible_reaction_unavailable"),
+      ),
+    ).toBe(true);
+    expect(incomplete?.firstRejectionReasons).toEqual([]);
+
+    const unaffected = result.candidates.find(
+      (item) => item.companyCode === "1002",
+    );
+    expect(unaffected).toMatchObject({
+      bucket: "research_candidate",
+      pillars: { marketUnderreactionProxy: { status: "pass" } },
+    });
+    expect(result.candidates.map((item) => item.companyCode)).toEqual(["1002", "1001"]);
+    expect(result.coverage).toMatchObject({
+      reactionEvidenceComplete: false,
+      sourceComplete: false,
+    });
+  });
+
+  it("isolates an unavailable company OHLC dependency without blocking reaction peers", async () => {
+    const fixture = screenClientFixture({
+      reactionStockDataUnavailableCompanyCode: "1001",
+      companyCount: 21,
+    });
+    const result = await fixture.client.screenTaiwanStockCandidates(SCREEN_QUERY);
+
+    expect(result.dependencyStatus).toContainEqual(
+      expect.objectContaining({
+        dependency: "stock_reaction_signals",
+        status: "partial",
+        affectedCompanyCodes: ["1001"],
+      }),
+    );
+    const unavailable = result.candidates.find(
+      (item) => item.companyCode === "1001",
+    );
+    expect(unavailable).toMatchObject({
+      bucket: "insufficient_data",
+      overallScore: null,
+      pillars: {
+        marketUnderreactionProxy: {
+          status: "unknown",
+          score: null,
+          knownWeight: 0,
+          hardFailReasons: [],
+        },
+      },
+    });
+    expect(
+      unavailable?.pillars.marketUnderreactionProxy.criteria.every(
+        (item) =>
+          item.status === "unknown" &&
+          item.value === null &&
+          item.reasonCodes.includes("price_index_compatible_reaction_unavailable"),
+      ),
+    ).toBe(true);
+    expect(unavailable?.firstRejectionReasons).toEqual([]);
+
+    expect(result.candidates.find((item) => item.companyCode === "1002")).toMatchObject({
+      bucket: "research_candidate",
+      pillars: { marketUnderreactionProxy: { status: "pass" } },
+    });
+    expect(result.candidates.map((item) => item.companyCode)).toEqual(["1002", "1001"]);
+    expect(result.coverage).toMatchObject({
+      reactionEvidenceComplete: false,
+      sourceComplete: false,
+    });
   });
 });

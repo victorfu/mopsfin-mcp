@@ -5,12 +5,12 @@ import { MopsfinError } from "@/lib/mopsfin/errors";
 
 import type { ReactionHorizon } from "./types";
 
-const CURSOR_PREFIX = "reaction1.";
+const CURSOR_PREFIX = "reaction2.";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
 export interface ReactionCursorPayload {
-  version: 1;
+  version: 2;
   queryHash: string;
   nextIndex: number;
   masterSnapshotId: string;
@@ -19,6 +19,7 @@ export interface ReactionCursorPayload {
   rangeEnd: string;
   resolvedByMarket: Array<{ market: CompanyMarket; date: string }>;
   benchmarkFingerprint: string;
+  corporateActionFingerprint: string;
 }
 
 function invalid(message: string, details?: Record<string, unknown>): never {
@@ -69,7 +70,7 @@ export function benchmarkFingerprint(
 export function encodeReactionCursor(payload: ReactionCursorPayload): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const checksum = createHash("sha256")
-    .update(`mopsfin-reaction-cursor-v1:${body}`)
+    .update(`mopsfin-reaction-cursor-v2:${body}`)
     .digest("base64url")
     .slice(0, 16);
   return `${CURSOR_PREFIX}${body}.${checksum}`;
@@ -83,7 +84,7 @@ export function decodeReactionCursor(cursor: string): ReactionCursorPayload {
     const encoded = cursor.slice(CURSOR_PREFIX.length);
     const [body, checksum, ...extra] = encoded.split(".");
     const expected = createHash("sha256")
-      .update(`mopsfin-reaction-cursor-v1:${body}`)
+      .update(`mopsfin-reaction-cursor-v2:${body}`)
       .digest("base64url")
       .slice(0, 16);
     if (!body || !checksum || extra.length > 0 || checksum !== expected) {
@@ -94,7 +95,7 @@ export function decodeReactionCursor(cursor: string): ReactionCursorPayload {
     ) as Partial<ReactionCursorPayload>;
     const resolved = parsed.resolvedByMarket;
     if (
-      parsed.version !== 1 ||
+      parsed.version !== 2 ||
       typeof parsed.queryHash !== "string" ||
       !SHA256_HEX.test(parsed.queryHash) ||
       !Number.isSafeInteger(parsed.nextIndex) ||
@@ -120,7 +121,9 @@ export function decodeReactionCursor(cursor: string): ReactionCursorPayload {
       ) ||
       new Set(resolved.map((item) => item.market)).size !== resolved.length ||
       typeof parsed.benchmarkFingerprint !== "string" ||
-      !SHA256_HEX.test(parsed.benchmarkFingerprint)
+      !SHA256_HEX.test(parsed.benchmarkFingerprint) ||
+      typeof parsed.corporateActionFingerprint !== "string" ||
+      !SHA256_HEX.test(parsed.corporateActionFingerprint)
     ) {
       invalid("cursor 內容格式錯誤。");
     }

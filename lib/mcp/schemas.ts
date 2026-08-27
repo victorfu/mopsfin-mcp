@@ -510,7 +510,7 @@ export const stockReactionSignalsInputSchema = z
       .string()
       .max(1000)
       .optional()
-      .describe("上一頁回傳的 query/master/benchmark-snapshot-bound reaction cursor"),
+      .describe("上一頁回傳的 v2 reaction cursor；綁定 query、目前 master、benchmark、公司行動 range summary 與整個 requested-company TWSE 權息 detail evidence"),
   })
   .strict()
   .superRefine((value, context) => {
@@ -1833,12 +1833,33 @@ const reactionSignalStatusSchema = z
   .enum([
     "available",
     "no_stock_data",
+    "stock_data_unavailable",
     "missing_stock_start_close",
     "missing_stock_end_close",
     "incomplete_stock_window",
     "invalid_denominator",
+    "not_comparable_corporate_action",
   ])
-  .describe("raw signal 的可計算狀態；非 available 時相關個股或衍生值為 null");
+  .describe("signal 的可計算狀態；no_stock_data 是官方查無資料，stock_data_unavailable 是該公司 OHLC dependency 失敗，not_comparable_corporate_action 表示公司行動 actual-result 證據不足；非 available 時相關值為 null，不能回退 raw 或補 0");
+
+const reactionStockDataFailureSchema = z
+  .object({
+    code: z.enum([
+      "INVALID_ARGUMENT",
+      "NOT_FOUND",
+      "INCOMPLETE_COVERAGE",
+      "UPSTREAM_TIMEOUT",
+      "UPSTREAM_RATE_LIMITED",
+      "UPSTREAM_BAD_RESPONSE",
+    ]).describe("被隔離至此公司的穩定 OHLC dependency 錯誤代號"),
+    reason: z.string().nullable().describe("更精確的穩定 failure reason；未提供時為 null"),
+    message: z.string().describe("此公司 OHLC dependency 的失敗說明，不代表其他公司也失敗"),
+    retryable: z.boolean().describe("是否適合稍後以相同條件重試此公司"),
+    retryAfterMs: z.number().int().nonnegative().nullable().describe("建議至少等待的毫秒數；未提供時為 null"),
+    action: z.enum(["fix_input", "change_query", "retry", "restart_pagination", "none"]).describe("呼叫端針對此公司 failure 建議採取的下一步"),
+  })
+  .strict()
+  .describe("stockDataStatus=unavailable 時的逐公司 OHLC failure；官方正常回應但無資料時為 null");
 
 const averageWindowSignalSchema = z
   .object({
@@ -1875,6 +1896,72 @@ const benchmarkSourceSchema = z
   })
   .strict();
 
+const corporateActionEventSchema = z
+  .object({
+    companyCode: z.string().describe("公司行動對應的四碼公司股票代號"),
+    name: z.string().describe("官方 actual-result 列中的公司名稱"),
+    market: z.enum(["listed", "otc"]).describe("公司行動所屬市場"),
+    effectiveDate: calendarDateSchema.describe("公司行動實際生效交易日"),
+    kind: z
+      .enum([
+        "cash_dividend",
+        "stock_rights",
+        "rights_and_dividend",
+        "capital_reduction",
+        "par_value_change",
+      ])
+      .describe("由 TWSE／TPEx actual-result 正規化的公司行動種類"),
+    priorCloseTwd: z.number().nullable().describe("官方 actual-result 前收盤價 TWD；來源缺值時為 null"),
+    referencePriceTwd: z.number().nullable().describe("官方 actual-result 參考價 TWD；來源缺值時為 null"),
+    cashDividendPerShareTwd: z.number().nullable().describe("官方每股現金股利 TWD；非現金事件或來源缺值時為 null"),
+    priceIndexAdjustmentFactor: z
+      .number()
+      .positive()
+      .nullable()
+      .describe("由官方 actual-result 可重算的 price-index-compatible factor；證據不足時為 null，現金股利效果不由此消除"),
+    shareCountChanged: z.boolean().describe("事件是否改變每股股數口徑；為 true 時未調整成交股數不可直接跨事件比較"),
+    adjustmentStatus: z.enum(["available", "unavailable"]).describe("actual-result 是否足以形成可靠 factor"),
+    adjustmentReason: z
+      .enum([
+        "cash_only_price_index_factor_is_one",
+        "official_reference_price_divided_by_prior_close",
+        "official_reference_price_divided_by_prior_close_less_cash_dividend",
+        "missing_required_official_value",
+        "twse_combined_event_detail_not_requested",
+        "twse_combined_event_detail_failed",
+      ])
+      .describe("factor 可用或不可用的穩定公式／證據原因"),
+    sourceFamily: z
+      .enum(["ex_right_dividend", "capital_reduction", "par_value_change"])
+      .describe("提供此 actual-result 的官方公司行動資料族群"),
+    sourceUrl: z.string().url().describe("此事件實際來源的 TWSE／TPEx official actual-result URL"),
+    rawType: z.string().describe("官方原始事件類型文字，供稽核正規化結果"),
+  })
+  .strict();
+
+const corporateActionSourceSchema = z
+  .object({
+    market: z.enum(["listed", "otc"]).describe("官方公司行動來源市場"),
+    exchange: z.enum(["TWSE", "TPEx"]).describe("發布 actual-result 的官方機構"),
+    family: z
+      .enum(["ex_right_dividend", "capital_reduction", "par_value_change"])
+      .describe("官方公司行動資料族群"),
+    scope: z.enum(["range_summary", "event_detail"]).describe("區間摘要或特定 combined-event 詳情請求"),
+    sourceName: z.string().describe("官方 actual-result 資料集名稱"),
+    sourceUrl: z.string().url().describe("本次實際請求的官方 URL"),
+    retrievedAt: z.string().describe("本服務取得官方回應的 ISO 8601 時間"),
+    supportedFrom: calendarDateSchema.describe("此官方資料族群可驗證的最早日期"),
+    queryStart: calendarDateSchema.describe("本次 actual-result 查詢起日"),
+    queryEnd: calendarDateSchema.describe("本次 actual-result 查詢迄日"),
+    responseStart: calendarDateSchema.nullable().describe("官方回應回顯的查詢起日；不提供 range identity 的 event detail 為 null"),
+    responseEnd: calendarDateSchema.nullable().describe("官方回應回顯的查詢迄日；不提供 range identity 的 event detail 為 null"),
+    rawRowCount: z.number().int().nonnegative().describe("官方回應原始資料列數"),
+    companyEventCount: z.number().int().nonnegative().describe("此來源正規化後的普通股公司事件數；range summary 為全市場、event detail 為單一事件"),
+    officialDeclaredRowCount: z.number().int().nonnegative().nullable().describe("官方宣告列數；未提供時為 null"),
+    officialDeclaredRowCountAvailable: z.boolean().describe("官方回應是否提供可核對的 declared row count"),
+  })
+  .strict();
+
 export const stockReactionSignalsOutputSchema = z
   .object({
     ...successResultShape,
@@ -1889,7 +1976,10 @@ export const stockReactionSignalsOutputSchema = z
       .describe("正規化後且由 cursor 綁定的 reaction 查詢條件"),
     timezone: z.literal("Asia/Taipei").describe("日期與 latest 解析時區"),
     currency: z.literal("TWD").describe("成交金額與個股價格幣別"),
-    priceBasis: z.literal("raw_unadjusted").describe("個股報酬使用原始未還原權值收盤價"),
+    priceBasis: z.literal("raw_unadjusted").describe("保留供稽核的官方原始未還原權值收盤價口徑"),
+    returnBasis: z
+      .literal("price_index_compatible_corporate_action_adjusted")
+      .describe("excess return 使用 official actual-result factor 移除股數變動機械斷點；現金股利價格效果保留，非 adjusted close 或 total return"),
     benchmarkBasis: z.literal("price_index").describe("benchmark 使用價格指數，不含股息再投資"),
     asOf: z
       .object({
@@ -1911,7 +2001,8 @@ export const stockReactionSignalsOutputSchema = z
       .object({
         selectionComplete: z.literal(true).describe("所有 requested 公司都已由目前 company master 唯一解析"),
         benchmarkHistoryComplete: z.literal(true).describe("每個 requested 市場都有足以形成最長視窗的 benchmark history"),
-        dataQualityComplete: z.boolean().describe("本頁所有 raw 個股 signals 是否完整；不代表公司行動可比性成立"),
+        corporateActionHistoryComplete: z.boolean().describe("每個 requested 市場的 official actual-result 歷史是否完整涵蓋 evidence 視窗，且整個 requested company scope 的 events 是否都有可用 adjustment factor"),
+        dataQualityComplete: z.boolean().describe("本頁所有 exact-session signals、公司行動 adjustment 與 comparability 是否完整"),
         missingCompanyCodes: z.array(z.string()).length(0).describe("成功時固定空陣列；找不到任何代號會整個工具報 NOT_FOUND"),
       })
       .strict()
@@ -1920,7 +2011,7 @@ export const stockReactionSignalsOutputSchema = z
       .object({
         snapshotId: z
           .string()
-          .describe("跨頁固定的 query/current-master/benchmark scope 指紋；不包含尚未查詢公司的個股 OHLC 值"),
+          .describe("跨頁固定的 query/current-master/benchmark/corporate-action scope 指紋；不包含尚未查詢公司的個股 OHLC 值"),
         requestedCompanyCount: z.number().int().describe("完整 requested 公司數"),
         requestedPageSize: z.number().int().describe("query 綁定的 requested page size"),
         pageStartIndex: z.number().int().describe("本頁第一家公司在 caller 順序中的零起算位置"),
@@ -1938,6 +2029,8 @@ export const stockReactionSignalsOutputSchema = z
         benchmarkUnits: z.number().int().describe("benchmark 市場 × 月份請求單位"),
         stockUnits: z.number().int().describe("個股市場 × 月份請求單位，含必要轉板探測"),
         unitDefinition: z.literal("one_official_market_month_request").describe("一單位等於一個官方市場的一個月份請求"),
+        corporateActionRequests: z.number().int().nonnegative().describe("本頁載入的 official actual-result 區間／詳情來源請求數；另列、不併入 48 個市場月份 consumed"),
+        corporateActionRequestDefinition: z.literal("one_official_range_or_detail_request").describe("一筆公司行動 request 等於一個官方區間摘要或事件詳情請求"),
       })
       .strict()
       .describe("限制單頁上游請求量的透明工作預算"),
@@ -1951,7 +2044,10 @@ export const stockReactionSignalsOutputSchema = z
             benchmarkCode: z.enum(["TAIEX", "TPEX_PRICE_INDEX"]).describe("依目前市場配對的官方價格指數"),
             requestedAsOf: z.union([z.literal("latest"), calendarDateSchema]).describe("本公司沿用的 requested as-of"),
             resolvedAsOf: calendarDateSchema.describe("本公司 benchmark exact session 終點"),
-            stockDataStatus: z.enum(["available", "no_data"]).describe("requested benchmark 視窗是否找到任何個股官方 OHLC"),
+            stockDataStatus: z.enum(["available", "no_data", "unavailable"]).describe("available=OHLC dependency 完成、no_data=官方正常回應但查無資料、unavailable=此公司 dependency 失敗且已隔離"),
+            stockDataFailure: reactionStockDataFailureSchema
+              .nullable()
+              .describe("unavailable 的結構化逐公司 failure；available／no_data 時為 null"),
             returns: z
               .array(
                 z
@@ -1959,20 +2055,32 @@ export const stockReactionSignalsOutputSchema = z
                     horizonSessions: z.union([z.literal(5), z.literal(20), z.literal(60), z.literal(120)]).describe("此報酬的 exact benchmark session 數"),
                     startDate: calendarDateSchema.describe("此 horizon 的 exact benchmark 起始交易日"),
                     endDate: calendarDateSchema.describe("此 horizon 的 exact benchmark 終止交易日"),
-                    stockReturnPercent: z.number().nullable().describe("raw unadjusted 個股收盤價報酬百分比；資料不足時為 null"),
+                    stockReturnPercent: z.number().nullable().describe("raw unadjusted 個股收盤價報酬百分比，只供稽核；資料不足時為 null"),
+                    priceIndexCompatibleStockReturnPercent: z
+                      .number()
+                      .nullable()
+                      .describe("套用 official actual-result factor、只移除股數變動機械斷點後的個股報酬；現金股利價格效果保留，證據不足時為 null，非 total return"),
+                    corporateActionAdjustmentFactor: z
+                      .number()
+                      .positive()
+                      .nullable()
+                      .describe("此 horizon 由 official actual-result 事件連乘的 adjustment factor；不需要調整時為 1，證據不足時為 null"),
                     benchmarkReturnPercent: z.number().describe("官方 price index 同一 exact session 起訖的報酬百分比"),
-                    excessReturnPercentagePoints: z.number().nullable().describe("個股報酬減 benchmark 報酬的 percentage points；不可比或 raw 不可用時為 null"),
-                    status: reactionSignalStatusSchema.describe("raw 個股報酬資料狀態；不代表 excess 可比較"),
-                    excessReturnStatus: z.union([reactionSignalStatusSchema, z.literal("not_comparable")]).describe("excess return 的獨立狀態；not_comparable 時不得使用 raw 差值"),
+                    excessReturnPercentagePoints: z.number().nullable().describe("price-index-compatible 個股報酬減 benchmark 報酬的 percentage points；證據不足或不可比時為 null"),
+                    status: reactionSignalStatusSchema.describe("raw 個股 anchor／報酬資料可用狀態；公司行動 adjustment 與 excess 是否可比較須另看 excessReturnStatus 及 excessReturnReasons"),
+                    excessReturnStatus: z.union([reactionSignalStatusSchema, z.literal("not_comparable")]).describe("excess return 的獨立狀態；not_comparable 時不得使用 raw 差值或猜測 factor"),
                     excessReturnReasons: z
                       .array(
                         z.enum([
-                          "official_change_marker_within_horizon",
+                          "corporate_action_coverage_incomplete",
+                          "corporate_action_adjustment_unavailable",
+                          "corporate_action_prior_close_mismatch",
+                          "unmatched_official_change_marker_within_horizon",
                           "market_transition_or_historical_market_mismatch_within_horizon",
                           "multiple_observed_names",
                         ]),
                       )
-                      .describe("使該 horizon excess return 不可比較的可程式判讀原因"),
+                      .describe("使該 horizon price-index-compatible excess return 不可比較的穩定證據原因"),
                   })
                   .strict(),
               )
@@ -1997,18 +2105,24 @@ export const stockReactionSignalsOutputSchema = z
                 observationCount: z.number().int().describe("實際取得完整個股收盤價的觀察數"),
                 maximumDrawdownPercent: z.number().max(0).nullable().describe("視窗內由先前高點到後續低點的最大回撤百分比，值小於等於 0；資料不完整時為 null"),
                 distanceBelowWindowHighPercent: z.number().min(0).nullable().describe("終點收盤價低於視窗高點的百分比，值大於等於 0；資料不完整時為 null"),
+                priceBasis: z
+                  .literal("price_index_compatible_corporate_action_adjusted")
+                  .describe("路徑使用 official actual-result factor 移除股數變動機械斷點；不是 raw path、adjusted close 或 total return"),
                 status: reactionSignalStatusSchema.describe("價格路徑計算的資料完整性狀態"),
               })
               .strict()
-              .describe("最長 requested horizon 的 raw 價格路徑代理"),
+              .describe("最長 requested horizon 的 price-index-compatible 價格路徑代理"),
             comparability: z
               .object({
-                status: z.enum(["provisional_raw", "not_comparable", "unavailable"]).describe("公司層 raw-price 可比性摘要；provisional_raw 仍非 adjusted-return 驗證"),
-                priceBasis: z.literal("raw_unadjusted").describe("公司可比性判斷所依據的個股價格口徑"),
-                corporateActionAdjustment: z.literal("not_applied").describe("本工具未套用除權息或公司行動調整"),
-                corporateActionEvidence: z.enum(["official_marker_present", "none_observed"]).describe("是否在已取得 OHLC 看到官方 change marker；none_observed 不是無公司行動證明"),
+                status: z.enum(["price_index_compatible", "not_comparable", "unavailable"]).describe("公司層 adjustment 可比性；只有 price_index_compatible 可用於 excess return 與 screening，證據不足為 not_comparable／unavailable"),
+                rawPriceBasis: z.literal("raw_unadjusted").describe("保留供稽核的原始個股價格口徑"),
+                returnBasis: z.literal("price_index_compatible_corporate_action_adjusted").describe("以 official actual-result factor 移除股數變動機械斷點的報酬口徑；保留現金股利價格效果且非 total return"),
+                corporateActionAdjustment: z.enum(["applied", "not_required", "incomplete"]).describe("視窗內 adjustment 已套用、官方完整證明不需要，或證據不完整"),
+                corporateActionEvidence: z.enum(["official_history_verified_no_event", "official_history_verified_events", "official_history_incomplete"]).describe("官方 actual-result 公司行動歷史覆蓋與事件證據摘要"),
+                corporateActionCoverageComplete: z.boolean().describe("官方 actual-result 歷史是否完整涵蓋本公司最長 requested 視窗"),
                 marketTransitionDetected: z.boolean().describe("requested 視窗是否觀察到跨市場或歷史市場與目前 master 不符"),
                 observedMarkets: z.array(z.enum(["listed", "otc"])).describe("requested 視窗個股 OHLC 實際來源市場"),
+                corporateActions: z.array(corporateActionEventSchema).describe("本公司 requested 視窗內實際匹配的 official actual-result events；不從 marker 猜測"),
                 officialChangeMarkers: z
                   .array(
                     z
@@ -2019,28 +2133,55 @@ export const stockReactionSignalsOutputSchema = z
                       .strict(),
                   )
                   .describe("視窗內非單純正負號的官方 change markers"),
+                unmatchedOfficialChangeMarkers: z
+                  .array(
+                    z
+                      .object({
+                        date: calendarDateSchema.describe("無法和 actual-result event 核對的 marker 日期"),
+                        marker: z.string().describe("無法核對的官方 marker 原文"),
+                      })
+                      .strict(),
+                  )
+                  .describe("無匹配 actual-result event 的 markers；非空時 adjustment 證據不足"),
                 reasons: z
                   .array(
                     z.enum([
-                      "raw_prices_not_adjusted",
-                      "official_change_marker_present",
+                      "corporate_action_coverage_incomplete",
+                      "corporate_action_adjustment_unavailable",
+                      "corporate_action_prior_close_mismatch",
+                      "unmatched_official_change_marker_present",
                       "market_transition_or_historical_market_mismatch",
                       "multiple_observed_names",
                       "no_stock_data",
+                      "stock_data_unavailable",
                     ]),
                   )
-                  .describe("公司層 raw-price 可比性限制；一定保留 raw_prices_not_adjusted，無個股資料時另含 no_stock_data"),
+                  .describe("公司層 adjustment、identity 與市場可比性限制；空陣列才表示 price_index_compatible"),
               })
               .strict()
-              .describe("公司行動、轉板與 identity 對 raw excess return 的限制"),
-            dataQualityComplete: z.boolean().describe("本公司所有 raw signals 是否 available；與 comparability.status 分開判讀"),
+              .describe("official actual-result 公司行動、轉板與 identity 對 excess return 的限制"),
+            dataQualityComplete: z.boolean().describe("本公司所有 signal available 且 comparability=price_index_compatible；不足時不得把 raw 結果當成完整"),
             warnings: z.array(z.string()).describe("此公司資料缺口或不可比原因的人類可讀提示"),
           })
-          .strict(),
+          .strict()
+          .superRefine((company, context) => {
+            if (
+              (company.stockDataStatus === "unavailable") !==
+              (company.stockDataFailure !== null)
+            ) {
+              context.addIssue({
+                code: "custom",
+                path: ["stockDataFailure"],
+                message:
+                  "stockDataFailure 必須且只能在 stockDataStatus=unavailable 時提供。",
+              });
+            }
+          }),
       )
-      .describe("本頁按 caller 順序回傳的公司 reaction signals；不含主觀分數或錯價結論"),
+      .describe("本頁按 caller 順序回傳的公司 reaction signals；只有 actual-result 證據完整才提供 price-index-compatible excess，不含主觀分數或錯價結論"),
     benchmarkSources: z.array(benchmarkSourceSchema).describe("本頁載入並 fingerprint 的 TAIEX／TPEx 官方價格指數月份來源"),
     stockSources: z.array(priceSourceSchema).describe("本頁各公司實際使用的官方 raw OHLC 月份來源"),
+    corporateActionSources: z.array(corporateActionSourceSchema).describe("本頁載入並納入 source cutoffs 的 TWSE／TPEx official actual-result 來源；cursor fingerprint 同時綁定 full-market range summaries、排序後 selected-company scope 與 selected TWSE combined-event detail 的成功／失敗正規化證據，retrievedAt 不參與 fingerprint"),
     ...warningShape,
   })
   .strict();
@@ -2636,7 +2777,7 @@ export const screenTaiwanStockCandidatesInputSchema = z
     include_ky: z
       .boolean()
       .default(true)
-      .describe("是否保留 KY 公司；金融保險業不受此欄位影響，v1 固定排除"),
+      .describe("是否保留 KY 公司；金融保險業不受此欄位影響，v2 固定排除"),
     candidate_limit: z
       .number()
       .int()
@@ -2647,10 +2788,10 @@ export const screenTaiwanStockCandidatesInputSchema = z
         "最多進入 reaction 階段並回傳完整四柱結果的公司數，預設及上限 5；粗篩後深篩仍固定最多 10 家",
       ),
     preset: z
-      .literal("balanced_non_financial_v1")
-      .default("balanced_non_financial_v1")
+      .literal("balanced_non_financial_v2")
+      .default("balanced_non_financial_v2")
       .describe(
-        "固定透明規則版本；目前只支援 balanced_non_financial_v1，不能用總分抵銷任何四柱 hard gate",
+        "固定透明規則版本；v2 第四柱只接受 official actual-result 證據完整的 price-index-compatible reaction，不能用總分抵銷任何四柱 hard gate",
       ),
   })
   .strict()
@@ -2765,6 +2906,7 @@ const screenSourceSchema = z
         "company_metrics",
         "reaction_benchmark",
         "reaction_stock",
+        "reaction_corporate_action",
       ])
       .describe("來源在篩選 pipeline 中提供的資料角色"),
     sourceName: z.string().describe("官方資料來源名稱"),
@@ -2820,7 +2962,7 @@ export const screenTaiwanStockCandidatesOutputSchema = z
         includeKy: z.boolean().describe("本次是否保留 KY 公司"),
         candidateLimit: z.number().int().describe("最多進入 reaction 並回傳的公司數"),
         preset: z
-          .literal("balanced_non_financial_v1")
+          .literal("balanced_non_financial_v2")
           .describe("本次使用的固定透明規則版本"),
       })
       .strict()
@@ -2829,9 +2971,9 @@ export const screenTaiwanStockCandidatesOutputSchema = z
     timezone: z.literal("Asia/Taipei").describe("latest 與交易日期使用的時區"),
     screenDefinition: z
       .object({
-        id: z.literal("taiwan_stock_screen.v1").describe("穩定的篩選定義版本"),
+        id: z.literal("taiwan_stock_screen.v2").describe("使用 corporate-action-aware reaction 的穩定篩選定義版本"),
         preset: z
-          .literal("balanced_non_financial_v1")
+          .literal("balanced_non_financial_v2")
           .describe("四柱規則 preset"),
         posture: z
           .literal("research_triage_not_recommendation")
@@ -2907,8 +3049,8 @@ export const screenTaiwanStockCandidatesOutputSchema = z
               .array(z.union([z.literal(5), z.literal(20), z.literal(60)]))
               .describe("第四柱固定使用的 benchmark session horizons"),
             reactionPriceBasis: z
-              .literal("raw_unadjusted_vs_price_index")
-              .describe("第四柱的個股與 benchmark 價格口徑"),
+              .literal("price_index_compatible_corporate_action_adjusted_vs_price_index")
+              .describe("第四柱只使用 official actual-result factor 移除股數變動機械斷點後的個股報酬與 price index；現金股利效果保留，非 total return"),
           })
           .strict()
           .describe("深度財務、估值同業與 reaction 的固定證據政策"),
@@ -3004,6 +3146,7 @@ export const screenTaiwanStockCandidatesOutputSchema = z
         reactionCompaniesRequested: z.number().int().describe("本次要求 reaction 的公司數"),
         reactionOfficialMonthUnits: z.number().int().describe("本次 reaction 實際消耗的官方市場月份 units"),
         reactionOfficialMonthUnitLimit: z.literal(48).describe("reaction dependency 的官方月份 unit 上限"),
+        reactionCorporateActionRequests: z.number().int().nonnegative().describe("本次 reaction 另行載入的 official actual-result 公司行動區間／詳情 requests"),
       })
       .strict()
       .describe("52 秒 request deadline 下的 bounded coarse／deep／reaction 工作量"),
@@ -3044,7 +3187,7 @@ export const screenTaiwanStockCandidatesOutputSchema = z
                 companyQuality: screenPillarSchema.describe("好公司柱"),
                 fundamentalImprovement: screenPillarSchema.describe("基本面改善柱"),
                 reasonableValuation: screenPillarSchema.describe("估值合理柱"),
-                marketUnderreactionProxy: screenPillarSchema.describe("市場尚未充分反應的 raw-price proxy 柱"),
+                marketUnderreactionProxy: screenPillarSchema.describe("市場尚未充分反應的 corporate-action-aware、price-index-compatible proxy 柱；actual-result 證據不足時為 unknown"),
               })
               .strict()
               .describe("好公司、基本面改善、估值合理與市場反應 proxy 四柱"),

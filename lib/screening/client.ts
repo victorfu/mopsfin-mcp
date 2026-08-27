@@ -126,7 +126,7 @@ export const TAIWAN_STOCK_SCREEN_DEFINITION_VALUE: TaiwanStockScreenDefinition =
       stage: "reaction",
       maximumCompanies: REACTION_COMPANY_LIMIT,
       description:
-        "依前三柱排序與 candidate_limit，最多對 5 家計算 5／20／60 個 benchmark sessions 的 raw-price reaction proxy。",
+        "依前三柱排序與 candidate_limit，最多對 5 家計算 5／20／60 個 benchmark sessions 的 price-index-compatible corporate-action-aware reaction proxy。",
     },
   ],
   coarseRanking: {
@@ -153,7 +153,8 @@ export const TAIWAN_STOCK_SCREEN_DEFINITION_VALUE: TaiwanStockScreenDefinition =
     valuationPeerMinimum: 20,
     valuationPeerFallback: "same_industry_then_same_market",
     reactionHorizons: [5, 20, 60],
-    reactionPriceBasis: "raw_unadjusted_vs_price_index",
+    reactionPriceBasis:
+      "price_index_compatible_corporate_action_adjusted_vs_price_index",
   },
   decisionPolicy: {
     researchCandidate: "四柱全部 pass 才是 research_candidate。",
@@ -167,7 +168,7 @@ export const TAIWAN_STOCK_SCREEN_DEFINITION_VALUE: TaiwanStockScreenDefinition =
   limitations: [
     "這是研究候選分流，不是買賣建議、完整盡職調查或已證明的錯價。",
     "使用各官方來源當下可取得的 latest 資料，時間點可能不同，不是 point-in-time snapshot，也不適合直接回測。",
-    "個股價格為 raw unadjusted、benchmark 為 price index；沒有完整公司行動調整或股息再投資。",
+    "個股原始價格保留 raw unadjusted；reaction 只用 TWSE／TPEx actual-result 證據移除股數變動的機械斷點，再與 price index 比較。現金股利價格效果保留，且沒有股息再投資，因此不是 total-return 分析。",
     "不含市場共識、盈餘預估修正、法人持股／籌碼、新聞與催化劑資料。",
     "一般公司指標不適用金融業，因此產業代號 17 固定排除。",
   ],
@@ -610,24 +611,35 @@ export class TaiwanStockScreenClient {
           horizons: [5, 20, 60],
           pageSize: reactionSelected.length,
         });
+        const affectedReactionCodes = reactionSelected
+          .map(({ company }) => company.code)
+          .filter((code) => {
+            const reaction = reactionResult?.companies.find(
+              (company) => company.companyCode === code,
+            );
+            return (
+              !reaction ||
+              !reaction.dataQualityComplete ||
+              reaction.comparability.status !== "price_index_compatible"
+            );
+          });
         dependencyStatus.push(
           dependency({
             stage: "reaction",
             dependency: "stock_reaction_signals",
             status:
-              !reactionResult.pagination.hasMore && reactionResult.coverage.dataQualityComplete
+              !reactionResult.pagination.hasMore &&
+              reactionResult.coverage.dataQualityComplete &&
+              reactionResult.coverage.corporateActionHistoryComplete
                 ? "complete"
                 : "partial",
-            affectedCompanyCodes: reactionSelected
-              .map(({ company }) => company.code)
-              .filter(
-                (code) => !reactionResult?.companies.some((company) => company.companyCode === code),
-              ),
+            affectedCompanyCodes: affectedReactionCodes,
             message: reactionResult.pagination.hasMore
               ? "48 work-unit 上限使部分公司未在本次 screen 完成；不自動跨頁。"
-              : reactionResult.coverage.dataQualityComplete
+              : reactionResult.coverage.dataQualityComplete &&
+                  reactionResult.coverage.corporateActionHistoryComplete
                 ? null
-                : "部分 exact-session reaction signals 缺值或不可比較。",
+                : "部分 exact-session OHLC 或公司行動調整證據缺值／不可比較；受影響公司維持 unknown。",
           }),
         );
       } catch (error) {
@@ -841,6 +853,17 @@ export class TaiwanStockScreenClient {
               : "mixed",
         }),
       ),
+      ...(reactionResult?.corporateActionSources ?? []).map(
+        (source): ScreenSource => ({
+          kind: "reaction_corporate_action",
+          sourceName: source.sourceName,
+          sourceUrl: source.sourceUrl,
+          retrievedAt: source.retrievedAt,
+          market: source.market,
+          asOf: source.queryEnd,
+          asOfGranularity: "date",
+        }),
+      ),
     ];
     const reactionScored = candidates.length;
     const bucketCounts = {
@@ -939,6 +962,8 @@ export class TaiwanStockScreenClient {
         reactionCompaniesRequested: reactionSelected.length,
         reactionOfficialMonthUnits: reactionResult?.workBudget.consumed ?? 0,
         reactionOfficialMonthUnitLimit: 48,
+        reactionCorporateActionRequests:
+          reactionResult?.workBudget.corporateActionRequests ?? 0,
       },
       candidates,
       summaryLimits: {

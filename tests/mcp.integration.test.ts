@@ -933,6 +933,7 @@ const stockReactionSignals = {
   timezone: "Asia/Taipei" as const,
   currency: "TWD" as const,
   priceBasis: "raw_unadjusted" as const,
+  returnBasis: "price_index_compatible_corporate_action_adjusted" as const,
   benchmarkBasis: "price_index" as const,
   asOf: {
     requested: "latest" as const,
@@ -941,6 +942,7 @@ const stockReactionSignals = {
   coverage: {
     selectionComplete: true as const,
     benchmarkHistoryComplete: true as const,
+    corporateActionHistoryComplete: true,
     dataQualityComplete: true,
     missingCompanyCodes: [] as [],
   },
@@ -960,6 +962,9 @@ const stockReactionSignals = {
     benchmarkUnits: 2,
     stockUnits: 2,
     unitDefinition: "one_official_market_month_request" as const,
+    corporateActionRequests: 3,
+    corporateActionRequestDefinition:
+      "one_official_range_or_detail_request" as const,
   },
   companies: [
     {
@@ -970,12 +975,15 @@ const stockReactionSignals = {
       requestedAsOf: "latest" as const,
       resolvedAsOf: "2026-08-24",
       stockDataStatus: "available" as const,
+      stockDataFailure: null,
       returns: [
         {
           horizonSessions: 5 as const,
           startDate: "2026-08-18",
           endDate: "2026-08-24",
           stockReturnPercent: 3,
+          priceIndexCompatibleStockReturnPercent: 3,
+          corporateActionAdjustmentFactor: 1,
           benchmarkReturnPercent: 1,
           excessReturnPercentagePoints: 2,
           status: "available" as const,
@@ -1041,17 +1049,25 @@ const stockReactionSignals = {
         observationCount: 6,
         maximumDrawdownPercent: -1.5,
         distanceBelowWindowHighPercent: 0.5,
+        priceBasis:
+          "price_index_compatible_corporate_action_adjusted" as const,
         status: "available" as const,
       },
       comparability: {
-        status: "provisional_raw" as const,
-        priceBasis: "raw_unadjusted" as const,
-        corporateActionAdjustment: "not_applied" as const,
-        corporateActionEvidence: "none_observed" as const,
+        status: "price_index_compatible" as const,
+        rawPriceBasis: "raw_unadjusted" as const,
+        returnBasis:
+          "price_index_compatible_corporate_action_adjusted" as const,
+        corporateActionAdjustment: "not_required" as const,
+        corporateActionEvidence:
+          "official_history_verified_no_event" as const,
+        corporateActionCoverageComplete: true,
         marketTransitionDetected: false,
         observedMarkets: ["listed" as const],
+        corporateActions: [],
         officialChangeMarkers: [],
-        reasons: ["raw_prices_not_adjusted" as const],
+        unmatchedOfficialChangeMarkers: [],
+        reasons: [],
       },
       dataQualityComplete: true,
       warnings: [],
@@ -1071,8 +1087,170 @@ const stockReactionSignals = {
     },
   ],
   stockSources: stockOhlc.sources,
+  corporateActionSources: [
+    {
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      family: "ex_right_dividend" as const,
+      scope: "range_summary" as const,
+      sourceName: "臺灣證券交易所－除權除息計算結果表",
+      sourceUrl: "https://www.twse.com.tw/rwd/zh/exRight/TWT49U",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      supportedFrom: "2003-05-05",
+      queryStart: "2026-01-01",
+      queryEnd: "2026-08-24",
+      responseStart: "2026-01-01",
+      responseEnd: "2026-08-24",
+      rawRowCount: 0,
+      companyEventCount: 0,
+      officialDeclaredRowCount: 0,
+      officialDeclaredRowCountAvailable: true,
+    },
+  ],
   warnings: [],
 } satisfies StockReactionSignalsResult;
+
+function stockUnavailableReactionSignals(): StockReactionSignalsResult {
+  const company = stockReactionSignals.companies[0];
+  const unavailableAverage = <T extends { observationCount: number; value: number | null }>(
+    signal: T,
+  ) => ({
+    ...signal,
+    observationCount: 0,
+    value: null,
+    status: "stock_data_unavailable" as const,
+  });
+  return {
+    ...stockReactionSignals,
+    coverage: {
+      ...stockReactionSignals.coverage,
+      dataQualityComplete: false,
+    },
+    companies: [
+      {
+        ...company,
+        stockDataStatus: "unavailable",
+        stockDataFailure: {
+          code: "UPSTREAM_TIMEOUT",
+          reason: "UPSTREAM_REQUEST_TIMEOUT",
+          message: "fixture stock timeout",
+          retryable: true,
+          retryAfterMs: 250,
+          action: "retry",
+        },
+        returns: company.returns.map((signal) => ({
+          ...signal,
+          stockReturnPercent: null,
+          priceIndexCompatibleStockReturnPercent: null,
+          corporateActionAdjustmentFactor: null,
+          excessReturnPercentagePoints: null,
+          status: "stock_data_unavailable" as const,
+          excessReturnStatus: "stock_data_unavailable" as const,
+          excessReturnReasons: [],
+        })),
+        liquidity: {
+          averageVolume5SessionsShares: unavailableAverage(
+            company.liquidity.averageVolume5SessionsShares,
+          ),
+          averageVolume20SessionsShares: unavailableAverage(
+            company.liquidity.averageVolume20SessionsShares,
+          ),
+          volume5To20Ratio: {
+            ...company.liquidity.volume5To20Ratio,
+            value: null,
+            status: "stock_data_unavailable",
+          },
+          averageTurnover20SessionsTwd: unavailableAverage(
+            company.liquidity.averageTurnover20SessionsTwd,
+          ),
+          averageTurnover60SessionsTwd: unavailableAverage(
+            company.liquidity.averageTurnover60SessionsTwd,
+          ),
+          turnover20To60Ratio: {
+            ...company.liquidity.turnover20To60Ratio,
+            value: null,
+            status: "stock_data_unavailable",
+          },
+        },
+        pricePath: {
+          ...company.pricePath,
+          observationCount: 0,
+          maximumDrawdownPercent: null,
+          distanceBelowWindowHighPercent: null,
+          status: "stock_data_unavailable",
+        },
+        comparability: {
+          ...company.comparability,
+          status: "unavailable",
+          reasons: ["stock_data_unavailable"],
+        },
+        dataQualityComplete: false,
+        warnings: ["fixture OHLC dependency unavailable"],
+      },
+    ],
+  };
+}
+
+function unavailableCorporateActionReactionSignals(): StockReactionSignalsResult {
+  const company = stockReactionSignals.companies[0];
+  return {
+    ...stockReactionSignals,
+    coverage: {
+      ...stockReactionSignals.coverage,
+      corporateActionHistoryComplete: false,
+      dataQualityComplete: false,
+    },
+    companies: [
+      {
+        ...company,
+        returns: company.returns.map((signal) => ({
+          ...signal,
+          priceIndexCompatibleStockReturnPercent: null,
+          corporateActionAdjustmentFactor: null,
+          excessReturnPercentagePoints: null,
+          excessReturnStatus: "not_comparable" as const,
+          excessReturnReasons: [
+            "corporate_action_adjustment_unavailable" as const,
+          ],
+        })),
+        pricePath: {
+          ...company.pricePath,
+          maximumDrawdownPercent: null,
+          distanceBelowWindowHighPercent: null,
+          status: "not_comparable_corporate_action",
+        },
+        comparability: {
+          ...company.comparability,
+          status: "not_comparable",
+          corporateActionAdjustment: "incomplete",
+          corporateActionEvidence: "official_history_verified_events",
+          corporateActions: [
+            {
+              companyCode: "2330",
+              name: "台積電",
+              market: "listed",
+              effectiveDate: "2026-08-20",
+              kind: "rights_and_dividend",
+              priorCloseTwd: null,
+              referencePriceTwd: null,
+              cashDividendPerShareTwd: null,
+              priceIndexAdjustmentFactor: null,
+              shareCountChanged: true,
+              adjustmentStatus: "unavailable",
+              adjustmentReason: "twse_combined_event_detail_failed",
+              sourceFamily: "ex_right_dividend",
+              sourceUrl: "https://www.twse.com.tw/rwd/zh/exRight/TWT49UDetail",
+              rawType: "權息",
+            },
+          ],
+          reasons: ["corporate_action_adjustment_unavailable"],
+        },
+        dataQualityComplete: false,
+      },
+    ],
+    warnings: ["fixture selected corporate action factor unavailable"],
+  };
+}
 
 interface JsonSchemaNode {
   description?: string;
@@ -1196,7 +1374,7 @@ describe("MCP protocol integration", () => {
       market: "all",
       include_ky: true,
       candidate_limit: 5,
-      preset: "balanced_non_financial_v1",
+      preset: "balanced_non_financial_v2",
     });
     expect(
       screenTaiwanStockCandidatesInputSchema.safeParse({
@@ -1279,7 +1457,7 @@ describe("MCP protocol integration", () => {
           comparability: {
             ...company.comparability,
             status: "unavailable" as const,
-            reasons: ["raw_prices_not_adjusted", "no_stock_data"] as const,
+            reasons: ["no_stock_data"] as const,
           },
           dataQualityComplete: false,
         },
@@ -1289,6 +1467,38 @@ describe("MCP protocol integration", () => {
     expect(
       stockReactionSignalsOutputSchema.safeParse(successEnvelope(result)).success,
     ).toBe(true);
+  });
+
+  it("requires a structured failure only for upstream-unavailable stock data", () => {
+    const unavailable = stockUnavailableReactionSignals();
+    expect(
+      stockReactionSignalsOutputSchema.safeParse(successEnvelope(unavailable)).success,
+    ).toBe(true);
+
+    expect(
+      stockReactionSignalsOutputSchema.safeParse(
+        successEnvelope({
+          ...unavailable,
+          companies: unavailable.companies.map((company) => ({
+            ...company,
+            stockDataFailure: null,
+          })),
+        }),
+      ).success,
+    ).toBe(false);
+
+    const noDataWithFailure = {
+      ...unavailable,
+      companies: unavailable.companies.map((company) => ({
+        ...company,
+        stockDataStatus: "no_data" as const,
+      })),
+    };
+    expect(
+      stockReactionSignalsOutputSchema.safeParse(
+        successEnvelope(noDataWithFailure),
+      ).success,
+    ).toBe(false);
   });
 
   it("accepts official pre-2013 OHLC source months", () => {
@@ -1342,9 +1552,9 @@ describe("MCP protocol integration", () => {
       monthlyRevenueClient,
       "getMonthlyRevenueTrend",
     ).mockResolvedValue(monthlyRevenueTrend);
-    vi.spyOn(reactionClient, "getStockReactionSignals").mockResolvedValue(
-      stockReactionSignals,
-    );
+    const reactionSpy = vi
+      .spyOn(reactionClient, "getStockReactionSignals")
+      .mockResolvedValue(stockReactionSignals);
     vi.spyOn(mopsfinClient, "findCompanies").mockResolvedValue([
       { code: "2330", name: "台積電", displayName: "2330 台積電" },
     ]);
@@ -1427,7 +1637,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.4.1" },
+      { name: "mopsfin-test", version: "0.5.0" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -1591,6 +1801,8 @@ describe("MCP protocol integration", () => {
       (tool) => tool.name === "get_stock_reaction_signals",
     );
     expect(reactionTool?.description).toContain("raw_unadjusted");
+    expect(reactionTool?.description).toContain("actual-result");
+    expect(reactionTool?.description).toContain("total return");
     expect(reactionTool?.description).toContain("benchmark");
     expect(reactionTool?.inputSchema.properties?.horizons).toHaveProperty(
       "description",
@@ -1606,7 +1818,7 @@ describe("MCP protocol integration", () => {
     expect(screenTool?.description).toContain("24 comparison units");
     expect(screenTool?.description).toContain("company_metrics_unavailable");
     expect(screenTool?.description).toContain("notReactionScored");
-    expect(screenTool?.description).toContain("raw_unadjusted");
+    expect(screenTool?.description).toContain("price-index-compatible");
     expect(screenTool?.description).toContain("mixed as-of");
     expect(screenTool?.description).toContain("不是投資建議");
     expect(screenTool?.inputSchema.properties?.market).toMatchObject({
@@ -1621,8 +1833,8 @@ describe("MCP protocol integration", () => {
       maximum: 5,
     });
     expect(screenTool?.inputSchema.properties?.preset).toMatchObject({
-      default: "balanced_non_financial_v1",
-      const: "balanced_non_financial_v1",
+      default: "balanced_non_financial_v2",
+      const: "balanced_non_financial_v2",
     });
     const batchTool = listed.tools.find(
       (tool) => tool.name === "get_company_metrics_batch",
@@ -1970,7 +2182,9 @@ describe("MCP protocol integration", () => {
       if (name === "get_stock_reaction_signals") {
         const structured = result.structuredContent as {
           priceBasis: string;
+          returnBasis: string;
           benchmarkBasis: string;
+          coverage: { corporateActionHistoryComplete: boolean };
           pagination: { hasMore: boolean; nextCursor: string | null };
           companies: Array<{
             companyCode: string;
@@ -1978,19 +2192,23 @@ describe("MCP protocol integration", () => {
             returns: Array<{
               horizonSessions: number;
               status: string;
+              priceIndexCompatibleStockReturnPercent: number | null;
               excessReturnPercentagePoints: number | null;
             }>;
           }>;
         };
         expect(structured).toMatchObject({
           priceBasis: "raw_unadjusted",
+          returnBasis: "price_index_compatible_corporate_action_adjusted",
           benchmarkBasis: "price_index",
+          coverage: { corporateActionHistoryComplete: true },
           pagination: { hasMore: false, nextCursor: null },
           companies: [{ companyCode: "2330", dataQualityComplete: true }],
         });
         expect(structured.companies[0].returns[0]).toMatchObject({
           horizonSessions: 5,
           status: "available",
+          priceIndexCompatibleStockReturnPercent: 3,
           excessReturnPercentagePoints: 2,
         });
       }
@@ -2182,6 +2400,99 @@ describe("MCP protocol integration", () => {
         ]);
       }
     }
+
+    reactionSpy.mockResolvedValueOnce(stockUnavailableReactionSignals());
+    const unavailableReactionPage = await client.callTool({
+      name: "get_stock_reaction_signals",
+      arguments: { company_codes: ["2330"], horizons: [5] },
+    });
+    expect(unavailableReactionPage.isError).not.toBe(true);
+    const unavailableReactionData = unavailableReactionPage.structuredContent as {
+      meta: {
+        quality: {
+          status: string;
+          source: string;
+          values: string;
+          issues: Array<{
+            code: string;
+            refs: { companyCodes: string[]; fields: string[] };
+          }>;
+        };
+      };
+      companies: Array<{
+        companyCode: string;
+        stockDataStatus: string;
+        stockDataFailure: { code: string; retryable: boolean } | null;
+        returns: Array<{
+          status: string;
+          excessReturnStatus: string;
+          stockReturnPercent: number | null;
+        }>;
+      }>;
+    };
+    expect(unavailableReactionData.meta.quality).toMatchObject({
+      status: "partial",
+      source: "partial",
+      values: "partial",
+    });
+    expect(unavailableReactionData.meta.quality.issues).toContainEqual(
+      expect.objectContaining({
+        code: "STOCK_DATA_UPSTREAM_UNAVAILABLE",
+        refs: expect.objectContaining({
+          companyCodes: ["2330"],
+          fields: ["stockDataStatus", "stockDataFailure"],
+        }),
+      }),
+    );
+    expect(unavailableReactionData.companies[0]).toMatchObject({
+      companyCode: "2330",
+      stockDataStatus: "unavailable",
+      stockDataFailure: { code: "UPSTREAM_TIMEOUT", retryable: true },
+      returns: [
+        {
+          status: "stock_data_unavailable",
+          excessReturnStatus: "stock_data_unavailable",
+          stockReturnPercent: null,
+        },
+      ],
+    });
+
+    reactionSpy.mockResolvedValueOnce(unavailableCorporateActionReactionSignals());
+    const incompleteActionPage = await client.callTool({
+      name: "get_stock_reaction_signals",
+      arguments: { company_codes: ["2330"], horizons: [5] },
+    });
+    expect(incompleteActionPage.isError).not.toBe(true);
+    const incompleteActionData = incompleteActionPage.structuredContent as {
+      meta: {
+        quality: {
+          source: string;
+          values: string;
+          issues: Array<{
+            code: string;
+            refs: { companyCodes: string[]; fields: string[] };
+          }>;
+        };
+      };
+      coverage: { corporateActionHistoryComplete: boolean };
+    };
+    expect(incompleteActionData.coverage.corporateActionHistoryComplete).toBe(false);
+    expect(incompleteActionData.meta.quality).toMatchObject({
+      source: "partial",
+      values: "partial",
+    });
+    expect(incompleteActionData.meta.quality.issues).toContainEqual(
+      expect.objectContaining({
+        code: "CORPORATE_ACTION_HISTORY_INCOMPLETE",
+        refs: expect.objectContaining({
+          companyCodes: ["2330"],
+          fields: expect.arrayContaining([
+            "coverage.corporateActionHistoryComplete",
+            "comparability.corporateActions.adjustmentStatus",
+          ]),
+        }),
+      }),
+    );
 
     companyMetricsBatchSpy.mockResolvedValueOnce(partialCompanyMetricsBatch);
     const partialBatchPage = await client.callTool({

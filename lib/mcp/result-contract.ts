@@ -324,10 +324,15 @@ function inferSourceCutoffs(
 ): ResultMeta["asOf"]["sourceCutoffs"] {
   const rawSources = Array.isArray(data.sources)
     ? data.sources
-    : Array.isArray(data.benchmarkSources) || Array.isArray(data.stockSources)
+    : Array.isArray(data.benchmarkSources) ||
+        Array.isArray(data.stockSources) ||
+        Array.isArray(data.corporateActionSources)
       ? [
           ...(Array.isArray(data.benchmarkSources) ? data.benchmarkSources : []),
           ...(Array.isArray(data.stockSources) ? data.stockSources : []),
+          ...(Array.isArray(data.corporateActionSources)
+            ? data.corporateActionSources
+            : []),
         ]
       : data.sourceUrl
         ? [data]
@@ -343,6 +348,8 @@ function inferSourceCutoffs(
       readString(raw, "reportDate") ??
       readString(raw, "sourceReportDate") ??
       readString(raw, "asOf");
+    const rangeFrom = readString(raw, "queryStart");
+    const rangeThrough = readString(raw, "queryEnd");
     const declaredGranularity = readString(raw, "asOfGranularity");
     const granularity: ResultAsOfGranularity = declaredGranularity &&
       ["instant", "date", "month", "quarter", "mixed", "none"].includes(
@@ -361,6 +368,12 @@ function inferSourceCutoffs(
         sourceUrl,
         resolved: snapshotIdentity === "unverified_empty"
           ? { granularity: "none" as const, from: null, through: null }
+          : rangeFrom && rangeThrough
+          ? {
+              granularity: "date" as const,
+              from: rangeFrom,
+              through: rangeThrough,
+            }
           : value
           ? { granularity, from: value, through: value }
           : { ...fallback },

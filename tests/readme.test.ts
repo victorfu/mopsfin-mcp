@@ -18,8 +18,8 @@ const verifiedExamplePrompts = [
   "查台積電 2025-01 月營收，標示目前修訂後 archive、來源產業名稱與資料出表日。",
   "查台積電截至 2026-07 的最近 12 個月營收趨勢，列出 3／6 月 YoY 與加速度。",
   "查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。",
-  "比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始報酬與量能訊號。",
-  "用 balanced_non_financial_v1 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。",
+  "比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始與 price-index-compatible 報酬、公司行動證據及量能訊號。",
+  "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。",
   "列出全部上市公司代號，不要包含上櫃公司。",
   "列出全部上市與上櫃公司，排除金融業與 KY 公司。",
   "比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。",
@@ -40,7 +40,7 @@ describe("README example prompts", () => {
     expect(readme).not.toContain("列出最近完成交易日全部上市櫃公司的 OHLC");
   });
 
-  it("documents the v0.4.1 sixteen-tool contract and official sources", () => {
+  it("documents the v0.5.0 sixteen-tool contract and official sources", () => {
     const tools = [
       "find_companies",
       "get_stock_ohlc",
@@ -59,7 +59,7 @@ describe("README example prompts", () => {
       "get_industry_data",
       "get_financial_institution_metric",
     ];
-    expect(readme).toContain("目前版本 `0.4.1`");
+    expect(readme).toContain("目前版本 `0.5.0`");
     expect(readme).toContain("十六個工具");
     for (const tool of tools) expect(readme).toContain(`\`${tool}\``);
     expect(readme).toContain("meta.contractVersion=mopsfin.result.v1");
@@ -85,6 +85,18 @@ describe("README example prompts", () => {
     );
     expect(readme).toContain("不是當時發布內容的 vintage snapshot");
     expect(readme).toContain("不是 total-return index");
+    expect(readme).toContain("price_index_compatible_corporate_action_adjusted");
+    expect(readme).toContain("不是 adjusted close");
+    expect(readme).toContain("現金股利造成的價格效果會保留");
+    expect(readme).toContain("reaction cursor v2");
+    expect(readme).toContain("整個 requested company scope 的 TWSE 權息 detail fingerprint");
+    expect(readme).toContain("affected volume signal");
+    expect(readme).toContain("https://www.twse.com.tw/zh/announcement/ex-right/twt49u.html");
+    expect(readme).toContain("https://www.twse.com.tw/zh/announcement/reduction/twtauu.html");
+    expect(readme).toContain("https://www.twse.com.tw/zh/announcement/change/twtb8u.html");
+    expect(readme).toContain("https://www.tpex.org.tw/www/zh-tw/bulletin/exDailyQ");
+    expect(readme).toContain("https://www.tpex.org.tw/www/zh-tw/bulletin/revivt");
+    expect(readme).toContain("https://www.tpex.org.tw/www/zh-tw/bulletin/pvChgRslt");
     expect(readme).toContain("sourceCoverage");
     expect(readme).toContain("STATELESS_PAGE_VALUES_NOT_PINNED");
     expect(readme).toContain("comparability=needs_review");
@@ -95,8 +107,8 @@ describe("README example prompts", () => {
     expect(readme).toContain("Retry-After");
     expect(readme).toContain("不記錄 tool arguments");
     expect(readme).toContain("每週一次");
-    expect(readme).toContain("balanced_non_financial_v1");
-    expect(readme).toContain("taiwan_stock_screen.v1");
+    expect(readme).toContain("balanced_non_financial_v2");
+    expect(readme).toContain("taiwan_stock_screen.v2");
     expect(readme).toContain("coarseRanking");
     expect(readme).toContain("evidencePolicies");
     expect(readme).toContain("companyQuality");

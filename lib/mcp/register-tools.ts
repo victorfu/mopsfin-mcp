@@ -283,7 +283,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "比較台股與市場 benchmark 的 reaction signals",
       description:
-        "比較 1–50 家目前上市櫃公司與其官方市場價格指數在 5／20／60／120 個 benchmark 交易日視窗的原始報酬，並回傳 excess return、平均成交股數、平均成交金額、短長窗量能比、最大回撤及距區間高點。個股固定使用 raw_unadjusted 收盤價，benchmark 固定使用 TAIEX／櫃買 price index，不含股息再投資，也不把日曆日或前一成交日代填 exact session。官方 change marker、轉板／歷史市場不符或多個 observed names 會保留 raw stock 與 benchmark return，但 excessReturnPercentagePoints=null 並列明不可比原因；個股 no-data response 若缺少月份 identity，stockSources 與 meta.quality 會明示 unverified。每頁最多 10 家且受 48 個官方市場月份請求單位限制；cursor 與 meta snapshotId 綁定 query、目前 master 與 benchmark，不會把尚未查詢公司的個股 OHLC 值冒充 point-in-time 快照。這些是可重算的市場反應代理，不是主觀 score，也不能單獨證明市場尚未反應或股票錯價；回答前須檢查 comparability、status、meta.quality 與 meta.page。",
+        "比較 1–50 家目前上市櫃公司與 TAIEX／櫃買 price index 在 5／20／60／120 個 exact benchmark sessions 的 reaction signals。stockReturnPercent 保留 raw_unadjusted close-to-close 稽核值；excessReturnPercentagePoints 只使用 TWSE／TPEx official actual-result 公司行動資料可重算的 factor，移除股數變動造成的機械價格斷點。現金股利價格效果刻意保留，因此 returnBasis=price_index_compatible_corporate_action_adjusted 不是 adjusted close、股息再投資或 total return（也不是 total shareholder return）。公司行動 coverage、factor、prior close 或 marker reconciliation 任一不足，相關 return／path／share-volume signal 回 null、not_comparable 或 unknown 語意，絕不猜測、補 0 或退回 raw 差值。個別公司 OHLC 的 MopsfinError 會隔離成 stockDataStatus=unavailable 與結構化 stockDataFailure，所有該公司 stock-derived signals 為 stock_data_unavailable；官方正常查無資料則另以 no_data／no_stock_data 表示，兩者不混用，其他公司繼續。轉板、歷史市場不符與多個 observed names 仍不可比。每頁最多 10 家且受 48 個官方市場月份 units 限制；公司行動 range/detail requests 另列於 workBudget。v2 cursor 與 snapshotId 綁定 query、目前 master、benchmark 及公司行動 fingerprint，尚未查詢公司的個股 OHLC 仍非 point-in-time snapshot。這些是研究代理，不是錯價證明或投資建議；回答前須檢查 returnBasis、stockDataStatus、stockDataFailure、comparability、corporateActionHistoryComplete、status、meta.quality 與 meta.page。",
       inputSchema: stockReactionSignalsInputSchema,
       outputSchema: stockReactionSignalsOutputSchema,
       annotations,
@@ -301,10 +301,24 @@ export function registerMopsfinTools(server: McpServer): void {
           .map((item) => item.date)
           .sort();
         const notComparableCodes = data.companies
-          .filter((company) => company.comparability.status !== "provisional_raw")
+          .filter((company) => company.comparability.status !== "price_index_compatible")
+          .map((company) => company.companyCode);
+        const incompleteCorporateActionCodes = data.companies
+          .filter(
+            (company) =>
+              !company.comparability.corporateActionCoverageComplete ||
+              company.comparability.reasons.includes(
+                "corporate_action_adjustment_unavailable",
+              ),
+          )
+          .map((company) => company.companyCode);
+        const unavailableStockCodes = data.companies
+          .filter((company) => company.stockDataStatus === "unavailable")
           .map((company) => company.companyCode);
         const valuesComplete =
-          data.coverage.dataQualityComplete && notComparableCodes.length === 0;
+          data.coverage.dataQualityComplete &&
+          data.coverage.corporateActionHistoryComplete &&
+          notComparableCodes.length === 0;
         const unverifiedStockSources = data.stockSources.filter(
           (item) => item.snapshotIdentity === "unverified_empty",
         );
@@ -330,24 +344,80 @@ export function registerMopsfinTools(server: McpServer): void {
             },
             page,
             snapshotId: data.pagination.snapshotId,
-            source: unverifiedStockSources.length > 0 ? "partial" : "complete",
+            source:
+              unverifiedStockSources.length > 0 ||
+              !data.coverage.corporateActionHistoryComplete ||
+              unavailableStockCodes.length > 0
+                ? "partial"
+                : "complete",
             universe: "verified",
             selection: "complete",
             values: valuesComplete ? "complete" : "partial",
             freshness: as_of === "latest" ? "within_expected_window" : "not_applicable",
             issues: [
               {
-                code: "RAW_UNADJUSTED_PRICE_BASIS",
+                code: "PRICE_INDEX_COMPATIBLE_RETURN_BASIS",
                 severity: "info",
                 scope: "value",
-                message: "個股為 raw unadjusted、benchmark 為 price index；結果不是 total shareholder return。",
+                message: "excess return 只使用 official actual-result factor 移除股數變動機械斷點；現金股利價格效果保留，結果不是 adjusted close 或 total shareholder return。",
                 refs: {
                   companyCodes: data.companies.map((company) => company.companyCode),
-                  fields: ["returns", "pricePath", "comparability"],
+                  fields: [
+                    "returnBasis",
+                    "returns.priceIndexCompatibleStockReturnPercent",
+                    "returns.corporateActionAdjustmentFactor",
+                    "pricePath.priceBasis",
+                    "comparability",
+                  ],
                   periods: resolvedDates,
-                  sourceUrls: [],
+                  sourceUrls: data.corporateActionSources.map(
+                    (item) => item.sourceUrl,
+                  ),
                 },
               },
+              ...(!data.coverage.corporateActionHistoryComplete
+                ? [
+                    {
+                      code: "CORPORATE_ACTION_HISTORY_INCOMPLETE",
+                      severity: "warning" as const,
+                      scope: "source" as const,
+                      message:
+                        "至少一個 requested 市場的 official actual-result 歷史未完整涵蓋視窗，或 requested-company event 缺少可用 adjustment factor；受影響 signals 保持 null／not_comparable，不使用 raw fallback。",
+                      refs: {
+                        companyCodes: incompleteCorporateActionCodes,
+                        fields: [
+                          "coverage.corporateActionHistoryComplete",
+                          "comparability.corporateActionCoverageComplete",
+                          "comparability.corporateActions.adjustmentStatus",
+                          "corporateActionSources",
+                        ],
+                        periods: resolvedDates,
+                        sourceUrls: data.corporateActionSources.map(
+                          (item) => item.sourceUrl,
+                        ),
+                      },
+                    },
+                  ]
+                : []),
+              ...(unavailableStockCodes.length > 0
+                ? [
+                    {
+                      code: "STOCK_DATA_UPSTREAM_UNAVAILABLE",
+                      severity: "warning" as const,
+                      scope: "source" as const,
+                      message:
+                        "部分公司的官方 OHLC dependency 失敗並已逐公司隔離；該公司 signals 保持 stock_data_unavailable，其他公司不受阻斷。",
+                      refs: {
+                        companyCodes: unavailableStockCodes,
+                        fields: ["stockDataStatus", "stockDataFailure"],
+                        periods: resolvedDates,
+                        sourceUrls: data.stockSources.map(
+                          (item) => item.sourceUrl,
+                        ),
+                      },
+                    },
+                  ]
+                : []),
               ...(unverifiedStockSources.length > 0
                 ? [
                     {
@@ -376,12 +446,15 @@ export function registerMopsfinTools(server: McpServer): void {
                 code: "STATELESS_PAGE_VALUES_NOT_PINNED",
                 severity: "info",
                 scope: "page",
-                message: "無狀態 cursor 固定 query、目前 master 與 benchmark；各頁個股 OHLC 於該頁即時取得，不保證跨頁 point-in-time 一致。",
+                message: "無狀態 v2 cursor 固定 query、目前 master、benchmark、full-market 公司行動 range summary 與整個 requested-company TWSE 權息 detail evidence；各頁個股 OHLC 仍於該頁即時取得，不保證跨頁 point-in-time 一致。",
                 refs: {
                   companyCodes: data.companies.map((company) => company.companyCode),
-                  fields: ["companies", "stockSources"],
+                  fields: ["companies", "stockSources", "corporateActionSources"],
                   periods: resolvedDates,
-                  sourceUrls: data.stockSources.map((item) => item.sourceUrl),
+                  sourceUrls: [
+                    ...data.stockSources.map((item) => item.sourceUrl),
+                    ...data.corporateActionSources.map((item) => item.sourceUrl),
+                  ],
                 },
               },
               ...(notComparableCodes.length > 0
@@ -390,12 +463,14 @@ export function registerMopsfinTools(server: McpServer): void {
                       code: "REACTION_EXCESS_NOT_COMPARABLE",
                       severity: "warning" as const,
                       scope: "value" as const,
-                      message: "部分公司因官方 marker、轉板或 identity 風險而不能使用 excess return。",
+                      message: "部分公司因 official actual-result coverage／factor／marker 核對、轉板或 identity 證據不足，不能使用 price-index-compatible excess return。",
                       refs: {
                         companyCodes: notComparableCodes,
                         fields: ["excessReturnPercentagePoints"],
                         periods: resolvedDates,
-                        sourceUrls: [],
+                        sourceUrls: data.corporateActionSources.map(
+                          (item) => item.sourceUrl,
+                        ),
                       },
                     },
                   ]
@@ -414,7 +489,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "篩選台股研究候選",
       description:
-        "以各官方來源當下可取得的 latest 資料，對目前上市櫃非金融公司執行固定 balanced_non_financial_v1 研究分流：先用最新月營收與官方估值做全母體或指定 company_codes 的 coarse 粗篩，再對前 10 家做六個月營收趨勢與七項季度財務指標 deep 深篩，最後依 candidate_limit 對最多 5 家計算 5／20／60 個 benchmark sessions 的 reaction proxy。deep batch 逐公司解析 identity，並在總計 24 comparison units 內嘗試隔離 metric failure；受影響代號以 dependencyStatus.affectedCompanyCodes 與 notReactionScored.reasonCodes=company_metrics_unavailable 標示 unavailable／unknown，其他 deepSelected 公司繼續，但不從 top-10 外遞補；共享 chunk 無法精確隔離時會保守標記整個 chunk。金融保險業固定排除；好公司、基本面改善、估值合理、市場尚未充分反應 proxy 是四個 hard gates，任何 fail 或 unknown 都不能被 overallScore 或其他柱補償，unknown 也不等於 0 分。只有完成 reaction 的 candidates 才有 bucket；deep evidence unavailable 者留在 notReactionScored。結果使用 raw_unadjusted 個股價格與 price-index benchmark，且公司母體、月營收、估值、季度財報及市場反應是 mixed as-of，不是單一 point-in-time snapshot。本工具只供 research triage，不是投資建議、完整盡調、股票錯價證明或可直接使用的 point-in-time 回測；回答前必須檢查 bucket、逐柱 criteria、dependencyStatus、coverage、meta.quality 與限制。",
+        "以各官方來源當下可取得的 latest 資料，對目前上市櫃非金融公司執行固定 balanced_non_financial_v2 研究分流：先以最新月營收與估值粗篩，再對前 10 家做六個月營收趨勢及七項季度財務深篩，最後依 candidate_limit 對最多 5 家計算 5／20／60 benchmark-session reaction。deep batch 在 24 comparison units 內隔離 metric failure；受影響代號以 company_metrics_unavailable 留在 notReactionScored，其他 deepSelected 公司繼續但不從 top-10 外遞補。v2 第四柱只使用 TWSE／TPEx official actual-result factor 移除股數變動機械斷點後的 price-index-compatible 報酬與 path；現金股利價格效果保留，因此不是 adjusted close、股息再投資或 total return。公司行動 coverage、factor、prior close、marker reconciliation 或 identity 證據不足時第四柱為 unknown，不猜測、不補 0、也不以 raw 報酬判 pass／fail；unknown 也不等於 0。金融業固定排除；四柱皆為 hard gates，overallScore 不可抵銷 fail 或 unknown。只有完成 reaction 的 candidates 才有 bucket，其餘留在 notReactionScored。各來源是 mixed as-of、不是 point-in-time snapshot；本工具只供 research triage，不是投資建議、完整盡調、錯價證明或可直接回測結果。",
       inputSchema: screenTaiwanStockCandidatesInputSchema,
       outputSchema: screenTaiwanStockCandidatesOutputSchema,
       annotations,
@@ -545,11 +620,11 @@ export function registerMopsfinTools(server: McpServer): void {
                 },
               },
               {
-                code: "RAW_UNADJUSTED_REACTION_PROXY",
+                code: "CORPORATE_ACTION_AWARE_REACTION_PROXY",
                 severity: "info",
                 scope: "value",
                 message:
-                  "第四柱使用 raw unadjusted 個股價格與 price-index benchmark，只是市場反應 proxy，不是 total shareholder return 或錯價證明。",
+                  "第四柱只使用 official actual-result 證據完整的 price-index-compatible 個股報酬；現金股利價格效果保留，仍不是 adjusted close、total shareholder return 或錯價證明。",
                 refs: {
                   companyCodes: data.candidates.map((item) => item.companyCode),
                   fields: [
@@ -561,7 +636,8 @@ export function registerMopsfinTools(server: McpServer): void {
                     .filter(
                       (item) =>
                         item.kind === "reaction_benchmark" ||
-                        item.kind === "reaction_stock",
+                        item.kind === "reaction_stock" ||
+                        item.kind === "reaction_corporate_action",
                     )
                     .map((item) => item.sourceUrl),
                 },

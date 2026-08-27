@@ -13,7 +13,7 @@ describe("health route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toMatchObject({
       status: "ok",
-      version: "0.4.1",
+      version: "0.5.0",
       toolCount: 16,
       readiness: {
         status: "ready",
@@ -35,6 +35,20 @@ describe("health route", () => {
           maximumConcurrency: 8,
           maximumQueue: 32,
         },
+      },
+      sourceUrls: {
+        twseExRightDividend:
+          "https://www.twse.com.tw/rwd/zh/exRight/TWT49U",
+        twseCapitalReduction:
+          "https://www.twse.com.tw/rwd/zh/reducation/TWTAUU",
+        twseParValueChange:
+          "https://www.twse.com.tw/rwd/zh/change/TWTB8U",
+        tpexExRightDividend:
+          "https://www.tpex.org.tw/www/zh-tw/bulletin/exDailyQ",
+        tpexCapitalReduction:
+          "https://www.tpex.org.tw/www/zh-tw/bulletin/revivt",
+        tpexParValueChange:
+          "https://www.tpex.org.tw/www/zh-tw/bulletin/pvChgRslt",
       },
     });
     expect(fetchSpy).not.toHaveBeenCalled();
