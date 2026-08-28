@@ -220,7 +220,10 @@ export interface ValuationModelInputsResult {
     valuationDependencyCalls: {
       actual: 0 | 1;
       maximum: 1;
-      internalCurrentMasterPolicy: "strict_current_master";
+      internalCurrentMasterPolicy: "compatible";
+      minimumCurrentMasterMatchRatio: 0.95;
+      selectedCompanyIdentityPolicy:
+        "outer_market_all_master_plus_official_row_exact";
     };
   };
   warnings: string[];

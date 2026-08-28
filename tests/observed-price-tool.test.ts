@@ -3,11 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { analyzeObservedPriceOutputSchema } from "@/lib/mcp/schema/observed-price";
 import { observedPriceMetaContract } from "@/lib/mcp/observed-price-meta-contract";
 import { analyzeObservedPriceTool } from "@/lib/mcp/tools/observed-price";
+import { completedSessionResolver } from "@/lib/freshness/completed-session-resolver";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { observedPriceClient } from "@/lib/observed-price/client";
 import type { ObservedPriceAnalysisResult } from "@/lib/observed-price/types";
+import { completedSessionEvidenceFixture } from "@/tests/fixtures/completed-session";
 
 const SERVED_AT = "2026-08-28T06:05:00.000Z";
+
+function resolverEvidence() {
+  return completedSessionEvidenceFixture({ status: "unresolved" });
+}
 
 function fixture(): ObservedPriceAnalysisResult {
   const listedMaster = {
@@ -223,6 +229,9 @@ describe("analyze_observed_price public MCP tool", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(SERVED_AT));
+    vi.spyOn(completedSessionResolver, "resolve").mockResolvedValue(
+      resolverEvidence(),
+    );
   });
 
   afterEach(() => {
@@ -340,7 +349,7 @@ describe("analyze_observed_price public MCP tool", () => {
 
     expect(envelope.meta.quality.freshness).toBe("stale");
     expect(envelope.meta.quality.freshnessDetails).toEqual(
-      observedPriceMetaContract(data).freshnessDetails,
+      observedPriceMetaContract(data, resolverEvidence()).freshnessDetails,
     );
     expect(envelope.meta.quality.issues.map((issue) => issue.code)).toEqual(
       expect.arrayContaining(["DATA_STALE", "FRESHNESS_UNVERIFIED"]),

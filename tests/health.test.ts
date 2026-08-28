@@ -49,6 +49,10 @@ describe("health route", () => {
         },
       },
       sourceUrls: {
+        twseTradingCalendar:
+          "https://www.twse.com.tw/holidaySchedule/holidaySchedule",
+        tpexTradingCalendar:
+          "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate",
         twseExRightDividend:
           "https://www.twse.com.tw/rwd/zh/exRight/TWT49U",
         twseExRightDividendDetail:

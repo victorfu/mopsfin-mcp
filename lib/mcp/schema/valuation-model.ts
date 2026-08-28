@@ -340,7 +340,9 @@ const valuationModelInputsDataObjectSchema = z
           .object({
             actual: z.union([z.literal(0), z.literal(1)]).describe("本次官方 latest 估值／close dependency 呼叫數"),
             maximum: z.literal(1).describe("估值 dependency 的 orchestration 呼叫硬上限"),
-            internalCurrentMasterPolicy: z.literal("strict_current_master").describe("latest close 必須依目前 company master 嚴格核對"),
+            internalCurrentMasterPolicy: z.literal("compatible").describe("latest close 的全市場 dependency 使用 compatible；matchRatio 低於 95% 仍 fail closed"),
+            minimumCurrentMasterMatchRatio: z.literal(0.95).describe("compatible 全市場 reconciliation 的最低防截斷吻合率"),
+            selectedCompanyIdentityPolicy: z.literal("outer_market_all_master_plus_official_row_exact").describe("單一公司仍須由外層 market=all current master 與官方 selected row 精確核對 code／name／market"),
           })
           .strict()
           .describe("官方市場 close dependency 的 bounded 工作量與 identity policy"),

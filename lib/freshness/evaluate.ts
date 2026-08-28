@@ -60,6 +60,9 @@ function result(
     observedAsOf: input.observedAsOf,
     expectedAsOf: input.expectedAsOf,
     sourceUrls: uniqueSourceUrls(input.sourceUrls),
+    ...(input.resolverEvidence
+      ? { resolverEvidence: input.resolverEvidence }
+      : {}),
   };
 }
 
@@ -145,7 +148,9 @@ export function evaluateFreshness(
         status: "stale",
         lag: null,
         reasonCode: "BEHIND_EXPECTED_AS_OF",
-        reason: "observed as-of 落後 expected as-of；缺少權威交易日曆，未猜測 session lag。",
+        reason: input.resolverEvidence
+          ? "observed as-of 落後 authoritative resolver 的 expected as-of；未額外量化 trading-session lag。"
+          : "observed as-of 落後 expected as-of；缺少權威交易日曆，未猜測 session lag。",
       });
     }
     return unknown(

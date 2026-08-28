@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { completedSessionResolver } from "@/lib/freshness/completed-session-resolver";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { reverseDcfOutputSchema } from "@/lib/mcp/schema/reverse-dcf";
 import { runReverseDcfTool } from "@/lib/mcp/tools/reverse-dcf";
@@ -21,6 +22,7 @@ import type {
   ValuationModelInputsResult,
   ValuationModelUnit,
 } from "@/lib/valuation-model/types";
+import { completedSessionEvidenceFixture } from "@/tests/fixtures/completed-session";
 
 const SERVED_AT = "2026-08-28T02:05:00.000Z";
 const GENERATED_AT = "2026-08-28T02:00:00.000Z";
@@ -447,7 +449,10 @@ function valuationInputs(closePriceTwd: number): ValuationModelInputsResult {
       valuationDependencyCalls: {
         actual: 1,
         maximum: 1,
-        internalCurrentMasterPolicy: "strict_current_master",
+        internalCurrentMasterPolicy: "compatible",
+        minimumCurrentMasterMatchRatio: 0.95,
+        selectedCompanyIdentityPolicy:
+          "outer_market_all_master_plus_official_row_exact",
       },
     },
     warnings: [
@@ -474,6 +479,9 @@ describe("run_reverse_dcf public MCP tool", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(SERVED_AT));
+    vi.spyOn(completedSessionResolver, "resolve").mockResolvedValue(
+      completedSessionEvidenceFixture({ status: "unresolved" }),
+    );
   });
 
   afterEach(() => {

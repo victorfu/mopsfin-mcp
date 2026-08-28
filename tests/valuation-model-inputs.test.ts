@@ -49,11 +49,17 @@ function readFixture(): FixtureShape {
   ) as FixtureShape;
 }
 
-function masterResult(company: MasterCompany): CompanyMasterResult {
+function masterResult(
+  company: MasterCompany,
+  companies: MasterCompany[] = [company],
+): CompanyMasterResult {
+  const marketCompanyCount = companies.filter(
+    (candidate) => candidate.market === company.market,
+  ).length;
   return {
     query: { market: "all", includeFinancial: true, includeKy: true },
     generatedAt: "2026-08-28T01:00:00.000Z",
-    snapshotId: "listed-2026-08-28",
+    snapshotId: `${company.market}-2026-08-28`,
     coverageVerification: {
       status: "heuristic",
       method: "required_sources_schema_single_report_date_minimum_count",
@@ -64,36 +70,60 @@ function masterResult(company: MasterCompany): CompanyMasterResult {
       {
         market: company.market,
         exchange: company.exchange,
-        sourceName: "TWSE company master fixture",
-        sourceUrl: "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+        sourceName: `${company.exchange} company master fixture`,
+        sourceUrl:
+          company.market === "listed"
+            ? "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+            : "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
         reportDate: "2026-08-28",
         retrievedAt: "2026-08-28T01:00:00.000Z",
-        rawCount: 1,
+        rawCount: marketCompanyCount,
         excludedTdrCount: 0,
-        companyCount: 1,
+        companyCount: marketCompanyCount,
         minimumExpectedCount: 1,
       },
     ],
     counts: {
-      raw: 1,
+      raw: companies.length,
       excludedTdr: 0,
-      eligible: 1,
+      eligible: companies.length,
       excludedFinancial: 0,
       excludedKy: 0,
-      listed: company.market === "listed" ? 1 : 0,
-      otc: company.market === "otc" ? 1 : 0,
-      returned: 1,
+      listed: companies.filter((candidate) => candidate.market === "listed")
+        .length,
+      otc: companies.filter((candidate) => candidate.market === "otc").length,
+      returned: companies.length,
     },
     profileCoverage: {
-      incorporationDate: { reported: 1, missing: 0, invalid: 0 },
-      paidInCapitalTwd: { reported: 1, missing: 0, invalid: 0 },
-      issuedCommonShares: { reported: 1, missing: 0, invalid: 0 },
-      parValueText: { reported: 1, missing: 0, invalid: 0 },
-      financialReportTypeCode: { reported: 1, missing: 0, invalid: 0 },
+      incorporationDate: { reported: companies.length, missing: 0, invalid: 0 },
+      paidInCapitalTwd: { reported: companies.length, missing: 0, invalid: 0 },
+      issuedCommonShares: { reported: companies.length, missing: 0, invalid: 0 },
+      parValueText: { reported: companies.length, missing: 0, invalid: 0 },
+      financialReportTypeCode: {
+        reported: companies.length,
+        missing: 0,
+        invalid: 0,
+      },
     },
-    companies: [company],
+    companies,
     warnings: [],
   };
+}
+
+function currentMasterCompanies(
+  selected: MasterCompany,
+  count: number,
+): MasterCompany[] {
+  return [
+    selected,
+    ...Array.from({ length: count - 1 }, (_, index) => ({
+      ...selected,
+      code: String(3001 + index),
+      name: `測試公司 ${index + 1} 股份有限公司`,
+      shortName: `測試${index + 1}`,
+      issuedCommonShares: 1_000_000 + index,
+    })),
+  ];
 }
 
 function statementResult(
@@ -102,6 +132,7 @@ function statementResult(
   period: string,
   fixture: StatementFixture,
 ): FinancialStatementResultLike {
+  const marketLabel = company.market === "listed" ? "上市" : "上櫃";
   return {
     sourceName: "Mopsfin statement fixture",
     sourceUrl: "https://mopsfin.twse.com.tw/",
@@ -116,7 +147,7 @@ function statementResult(
     unit: "新台幣仟元",
     unitSource: "response_html",
     period,
-    reportNames: [`${company.code} ${company.shortName} (上市半導體業)`],
+    reportNames: [`${company.code} ${company.shortName} (${marketLabel}半導體業)`],
     tables: [
       {
         title: "會計科目",
@@ -125,7 +156,10 @@ function statementResult(
       },
       {
         title: "公司數值",
-        headers: [["合併"], [`${company.code} ${company.shortName}(上市半導體業)`]],
+        headers: [
+          ["合併"],
+          [`${company.code} ${company.shortName}(${marketLabel}半導體業)`],
+        ],
         rows: fixture.values.map((value) => [value]),
       },
     ],
@@ -143,21 +177,52 @@ function valuationResult(
   company: MasterCompany,
   fixture: FixtureShape["latestValuation"],
 ): DailyMarketValuationResult {
+  const latestSource =
+    company.market === "listed"
+      ? {
+          name: "TWSE latest valuation discovery fixture",
+          url: "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL",
+        }
+      : {
+          name: "TPEx latest valuation discovery fixture",
+          url: "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis",
+        };
+  const exactSource =
+    company.market === "listed"
+      ? {
+          name: "TWSE exact-day valuation fixture",
+          url: "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d",
+        }
+      : {
+          name: "TPEx exact-day valuation fixture",
+          url: "https://www.tpex.org.tw/www/zh-tw/afterTrading/peQryDate",
+        };
   return {
     query: {
       market: company.market,
       date: "latest",
       companyCodes: [company.code],
-      universePolicy: "strict_current_master",
+      universePolicy: "compatible",
     },
     dataDate: fixture.dataDate,
     currency: "TWD",
-    classificationPolicy: "current_master_strict",
+    classificationPolicy: "current_master_with_code_fallback",
     coverageComplete: true,
     universeCoverageVerified: true,
     selectionComplete: true,
     missingCompanyCodes: [],
-    reconciliation: [],
+    reconciliation: [
+      {
+        market: company.market,
+        masterCount: 1,
+        sourceRowCount: 1,
+        matchedCount: 1,
+        marketOnlyCodes: [],
+        masterMissingCodes: [],
+        matchRatio: 1,
+        coverageComplete: true,
+      },
+    ],
     counts: {
       raw: 1,
       returned: 1,
@@ -205,8 +270,8 @@ function valuationResult(
       {
         market: company.market,
         exchange: company.exchange,
-        sourceName: "TWSE latest valuation discovery fixture",
-        sourceUrl: "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL",
+        sourceName: latestSource.name,
+        sourceUrl: latestSource.url,
         retrievedAt: "2026-08-28T01:02:59.000Z",
         dataDate: fixture.dataDate,
         rawCount: 1,
@@ -215,8 +280,8 @@ function valuationResult(
       {
         market: company.market,
         exchange: company.exchange,
-        sourceName: "TWSE exact-day valuation fixture",
-        sourceUrl: "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d",
+        sourceName: exactSource.name,
+        sourceUrl: exactSource.url,
         retrievedAt: "2026-08-28T01:03:00.000Z",
         dataDate: fixture.dataDate,
         rawCount: 1,
@@ -274,6 +339,16 @@ function dependencies(options: {
       : vi.fn(async () => valuationResult(fixture.company, fixture.latestValuation)),
   };
   return { fixture, master, mopsfin, valuation };
+}
+
+type ValuationInputsResult = Awaited<
+  ReturnType<ValuationModelInputsClient["getValuationModelInputs"]>
+>;
+
+function latestCloseLineage(result: ValuationInputsResult) {
+  return result.lineage.find(
+    (entry) => entry.role === "latest_completed_official_close",
+  );
 }
 
 describe("ValuationModelInputsClient", () => {
@@ -341,7 +416,10 @@ describe("ValuationModelInputsClient", () => {
       valuationDependencyCalls: {
         actual: 1,
         maximum: 1,
-        internalCurrentMasterPolicy: "strict_current_master",
+        internalCurrentMasterPolicy: "compatible",
+        minimumCurrentMasterMatchRatio: 0.95,
+        selectedCompanyIdentityPolicy:
+          "outer_market_all_master_plus_official_row_exact",
       },
     });
     expect(result.lineage.some((entry) => entry.rowLabel === "營業收入合計")).toBe(
@@ -370,7 +448,7 @@ describe("ValuationModelInputsClient", () => {
       market: "listed",
       date: "latest",
       companyCodes: ["2330"],
-      universePolicy: "strict_current_master",
+      universePolicy: "compatible",
     });
     const meta = buildResultMeta(
       result,
@@ -398,6 +476,486 @@ describe("ValuationModelInputsClient", () => {
       valuationModelInputsOutputSchema.safeParse(inconsistentOutput).success,
     ).toBe(false);
   });
+
+  it("keeps a valid selected close when unrelated current-master codes differ above the compatible 95% gate", async () => {
+    const deps = dependencies();
+    const companies = currentMasterCompanies(deps.fixture.company, 20);
+    const unrelatedMissingCode = companies.at(-1)?.code as string;
+    deps.master.listCompanies.mockResolvedValue(
+      masterResult(deps.fixture.company, companies),
+    );
+    const compatible = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    compatible.universeCoverageVerified = false;
+    compatible.reconciliation = [
+      {
+        market: deps.fixture.company.market,
+        masterCount: 20,
+        sourceRowCount: 19,
+        matchedCount: 19,
+        marketOnlyCodes: [],
+        masterMissingCodes: [unrelatedMissingCode],
+        matchRatio: 0.95,
+        coverageComplete: false,
+      },
+    ];
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(compatible);
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(result.fields.latestOfficialClose).toMatchObject({
+      status: "reported",
+      value: 2_000,
+      evidenceClass: "OFFICIAL_MARKET_RAW",
+    });
+    expect(latestCloseLineage(result)?.status).toBe("resolved");
+    expect(result.quality.calculationComplete).toBe(true);
+    expect(result.warnings.join(" ")).toContain(
+      "通過 compatible 95% 防截斷門檻",
+    );
+    expect(valuationModelInputsDataSchema.safeParse(result).success).toBe(true);
+  });
+
+  it("fails latest close closed when compatible full-market coverage is below 95%", async () => {
+    const deps = dependencies();
+    const companies = currentMasterCompanies(deps.fixture.company, 20);
+    deps.master.listCompanies.mockResolvedValue(
+      masterResult(deps.fixture.company, companies),
+    );
+    const truncated = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    truncated.universeCoverageVerified = false;
+    truncated.reconciliation = [
+      {
+        market: deps.fixture.company.market,
+        masterCount: 20,
+        sourceRowCount: 18,
+        matchedCount: 18,
+        marketOnlyCodes: [],
+        masterMissingCodes: companies.slice(-2).map((company) => company.code),
+        matchRatio: 0.9,
+        coverageComplete: false,
+      },
+    ];
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(truncated);
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(result.fields.latestOfficialClose).toMatchObject({
+      status: "data_gap",
+      value: null,
+      dataGapReason: "VALUATION_VALUE_UNAVAILABLE",
+    });
+    expect(result.fields.marketCapitalization.status).toBe("data_gap");
+    expect(result.fields.enterpriseValue.status).toBe("data_gap");
+    expect(result.warnings.join(" ")).toContain(
+      "未通過 composite identity／reconciliation 契約",
+    );
+  });
+
+  it("fails latest close closed when reconciliation marks the selected company missing", async () => {
+    const deps = dependencies();
+    const companies = currentMasterCompanies(deps.fixture.company, 20);
+    deps.master.listCompanies.mockResolvedValue(
+      masterResult(deps.fixture.company, companies),
+    );
+    const inconsistent = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    inconsistent.universeCoverageVerified = false;
+    inconsistent.reconciliation = [
+      {
+        market: deps.fixture.company.market,
+        masterCount: 20,
+        sourceRowCount: 19,
+        matchedCount: 19,
+        marketOnlyCodes: [],
+        masterMissingCodes: [deps.fixture.company.code],
+        matchRatio: 0.95,
+        coverageComplete: false,
+      },
+    ];
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(inconsistent);
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+    expect(
+      result.lineage.find(
+        (entry) => entry.role === "latest_completed_official_close",
+      )?.status,
+    ).toBe("invalid");
+  });
+
+  it("fails latest close closed when the selected official row identity differs from outer current master", async () => {
+    const deps = dependencies();
+    const mismatched = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    mismatched.rows[0].name = "另一家公司";
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(mismatched);
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+    expect(
+      result.lineage.find(
+        (entry) => entry.role === "latest_completed_official_close",
+      )?.status,
+    ).toBe("invalid");
+  });
+
+  it("accepts a fully reconciled OTC selected close with TPEx source identity", async () => {
+    const fixture = readFixture();
+    Object.assign(fixture.company, {
+      code: "6488",
+      name: "環球晶圓股份有限公司",
+      shortName: "環球晶",
+      market: "otc" as const,
+      exchange: "TPEx" as const,
+      issuedCommonShares: 436_250_000,
+    });
+    const deps = dependencies({ fixture });
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "6488" });
+
+    expect(result.company).toMatchObject({
+      code: "6488",
+      market: "otc",
+      exchange: "TPEx",
+    });
+    expect(result.fields.latestOfficialClose).toMatchObject({
+      status: "reported",
+      value: 2_000,
+      evidenceClass: "OFFICIAL_MARKET_RAW",
+    });
+    expect(latestCloseLineage(result)).toMatchObject({
+      status: "resolved",
+      sourceId: "market_valuation:otc:2026-08-27:2",
+    });
+    expect(deps.valuation.getDailyMarketValuation).toHaveBeenCalledWith({
+      market: "otc",
+      date: "latest",
+      companyCodes: ["6488"],
+      universePolicy: "compatible",
+    });
+    expect(valuationModelInputsDataSchema.safeParse(result).success).toBe(true);
+  });
+
+  it.each([
+    "missing_or_not_meaningful",
+    "not_provided_by_source",
+  ] as const)(
+    "classifies a contract-valid official %s close as missing",
+    async (valueStatus) => {
+      const deps = dependencies();
+      const missing = valuationResult(
+        deps.fixture.company,
+        deps.fixture.latestValuation,
+      );
+      missing.rows[0].closePriceTwd = null;
+      missing.rows[0].rawValue.closePriceTwd =
+        valueStatus === "missing_or_not_meaningful" ? "-" : null;
+      missing.rows[0].valueStatus.closePriceTwd = valueStatus;
+      missing.counts.withClosePrice = 0;
+      deps.valuation.getDailyMarketValuation.mockResolvedValue(missing);
+      const client = new ValuationModelInputsClient(
+        deps.mopsfin,
+        deps.master,
+        deps.valuation,
+      );
+
+      const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+      expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+      expect(latestCloseLineage(result)).toMatchObject({
+        status: "missing",
+        rawValue: valueStatus === "missing_or_not_meaningful" ? "-" : null,
+        normalizedValue: null,
+      });
+      expect(result.warnings.join(" ")).toContain(valueStatus);
+    },
+  );
+
+  it("classifies an invalid_upstream selected close as invalid", async () => {
+    const deps = dependencies();
+    const invalid = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    invalid.rows[0].closePriceTwd = null;
+    invalid.rows[0].rawValue.closePriceTwd = "not-a-price";
+    invalid.rows[0].valueStatus.closePriceTwd = "invalid_upstream";
+    invalid.counts.withClosePrice = 0;
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(invalid);
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+    expect(latestCloseLineage(result)?.status).toBe("invalid");
+  });
+
+  it("classifies an internally inconsistent official missing status as invalid", async () => {
+    const deps = dependencies();
+    const inconsistent = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    inconsistent.rows[0].closePriceTwd = null;
+    inconsistent.rows[0].rawValue.closePriceTwd = "2,000.00";
+    inconsistent.rows[0].valueStatus.closePriceTwd =
+      "missing_or_not_meaningful";
+    inconsistent.counts.withClosePrice = 0;
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(inconsistent);
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+    expect(latestCloseLineage(result)?.status).toBe("invalid");
+  });
+
+  it("classifies duplicate selected official rows as invalid", async () => {
+    const deps = dependencies();
+    const duplicate = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    duplicate.rows.push(structuredClone(duplicate.rows[0]));
+    duplicate.counts.returned = 2;
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(duplicate);
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+    expect(latestCloseLineage(result)?.status).toBe("invalid");
+  });
+
+  it("classifies an absent selected official row as missing", async () => {
+    const deps = dependencies();
+    const companies = currentMasterCompanies(deps.fixture.company, 20);
+    deps.master.listCompanies.mockResolvedValue(
+      masterResult(deps.fixture.company, companies),
+    );
+    const missing = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    missing.rows = [];
+    missing.counts.returned = 0;
+    missing.counts.withClosePrice = 0;
+    missing.coverageComplete = false;
+    missing.selectionComplete = false;
+    missing.missingCompanyCodes = [deps.fixture.company.code];
+    missing.universeCoverageVerified = false;
+    missing.reconciliation = [
+      {
+        market: deps.fixture.company.market,
+        masterCount: 20,
+        sourceRowCount: 19,
+        matchedCount: 19,
+        marketOnlyCodes: [],
+        masterMissingCodes: [deps.fixture.company.code],
+        matchRatio: 0.95,
+        coverageComplete: false,
+      },
+    ];
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(missing);
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+    expect(latestCloseLineage(result)).toMatchObject({
+      status: "missing",
+      rawValue: null,
+      normalizedValue: null,
+    });
+  });
+
+  it("keeps the inner full-market master count tied to the outer per-market master", async () => {
+    const deps = dependencies();
+    const companies = currentMasterCompanies(deps.fixture.company, 20);
+    deps.master.listCompanies.mockResolvedValue(
+      masterResult(deps.fixture.company, companies),
+    );
+    const selectedOnlyReconciliation = valuationResult(
+      deps.fixture.company,
+      deps.fixture.latestValuation,
+    );
+    deps.valuation.getDailyMarketValuation.mockResolvedValue(
+      selectedOnlyReconciliation,
+    );
+    const client = new ValuationModelInputsClient(
+      deps.mopsfin,
+      deps.master,
+      deps.valuation,
+    );
+
+    const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+    expect(selectedOnlyReconciliation.reconciliation[0].masterCount).toBe(1);
+    expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+    expect(latestCloseLineage(result)?.status).toBe("invalid");
+  });
+
+  it.each([
+    [
+      "query company code",
+      (value: DailyMarketValuationResult) => {
+        value.query.companyCodes = ["2454"];
+      },
+    ],
+    [
+      "query market",
+      (value: DailyMarketValuationResult) => {
+        value.query.market = "otc";
+      },
+    ],
+    [
+      "query universe policy",
+      (value: DailyMarketValuationResult) => {
+        value.query.universePolicy = "strict_current_master";
+      },
+    ],
+    [
+      "classification policy",
+      (value: DailyMarketValuationResult) => {
+        value.classificationPolicy = "historical_code_rule";
+      },
+    ],
+    [
+      "source exchange",
+      (value: DailyMarketValuationResult) => {
+        value.sources[1].exchange = "TPEx";
+      },
+    ],
+    [
+      "source data date",
+      (value: DailyMarketValuationResult) => {
+        value.sources[1].dataDate = "2026-08-26";
+      },
+    ],
+    [
+      "raw close",
+      (value: DailyMarketValuationResult) => {
+        value.rows[0].rawValue.closePriceTwd = "1,999.00";
+      },
+    ],
+  ] as const)(
+    "classifies a selected row with mismatched %s evidence as invalid",
+    async (_label, mutate) => {
+      const deps = dependencies();
+      const inconsistent = valuationResult(
+        deps.fixture.company,
+        deps.fixture.latestValuation,
+      );
+      mutate(inconsistent);
+      deps.valuation.getDailyMarketValuation.mockResolvedValue(inconsistent);
+      const client = new ValuationModelInputsClient(
+        deps.mopsfin,
+        deps.master,
+        deps.valuation,
+      );
+
+      const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+      expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+      expect(latestCloseLineage(result)?.status).toBe("invalid");
+    },
+  );
+
+  it.each([
+    [
+      "source-row arithmetic",
+      (value: DailyMarketValuationResult) => {
+        value.reconciliation[0].sourceRowCount = 2;
+      },
+    ],
+    [
+      "matched-count arithmetic",
+      (value: DailyMarketValuationResult) => {
+        value.reconciliation[0].matchedCount = 0;
+        value.reconciliation[0].matchRatio = 0;
+      },
+    ],
+    [
+      "match-ratio arithmetic",
+      (value: DailyMarketValuationResult) => {
+        value.reconciliation[0].matchRatio = 0.99;
+      },
+    ],
+  ] as const)(
+    "classifies a selected row with invalid reconciliation %s as invalid",
+    async (_label, mutate) => {
+      const deps = dependencies();
+      const inconsistent = valuationResult(
+        deps.fixture.company,
+        deps.fixture.latestValuation,
+      );
+      mutate(inconsistent);
+      deps.valuation.getDailyMarketValuation.mockResolvedValue(inconsistent);
+      const client = new ValuationModelInputsClient(
+        deps.mopsfin,
+        deps.master,
+        deps.valuation,
+      );
+
+      const result = await client.getValuationModelInputs({ companyCode: "2330" });
+
+      expect(result.fields.latestOfficialClose.status).toBe("data_gap");
+      expect(latestCloseLineage(result)?.status).toBe("invalid");
+    },
+  );
 
   it("uses a Q4 annual statement directly without fetching historical TTM bridge periods", async () => {
     const fixture = readFixture();
@@ -467,6 +1025,7 @@ describe("ValuationModelInputsClient", () => {
     expect(result.fields.latestOfficialClose.status).toBe("data_gap");
     expect(result.fields.marketCapitalization.status).toBe("data_gap");
     expect(result.fields.enterpriseValue.status).toBe("data_gap");
+    expect(latestCloseLineage(result)?.status).toBe("missing");
     for (const field of Object.values(result.fields).filter(
       (candidate) => candidate.status === "data_gap",
     )) {

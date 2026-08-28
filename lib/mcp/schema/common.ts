@@ -47,6 +47,327 @@ export const sourceCacheObservationSchema = z
   })
   .strict();
 
+const completedSessionResolverReasonCodeSchema = z.enum([
+  "COMPLETED_SESSION_RESOLVED",
+  "CALENDAR_SOURCE_UNAVAILABLE",
+  "CALENDAR_CONTRACT_MISMATCH",
+  "CALENDAR_YEAR_IDENTITY_MISMATCH",
+  "SCHEDULED_SESSION_UNRESOLVED",
+  "SESSION_MARKER_UNAVAILABLE",
+  "SESSION_MARKER_NOT_CONFIRMED",
+  "CROSS_MARKET_EXPECTED_AS_OF_MISMATCH",
+]);
+
+const completedSessionResolverSourceSchema = z
+  .object({
+    role: z
+      .enum(["calendar", "session_marker"])
+      .describe("官方來源在 completed-session resolver 的角色"),
+    market: z.enum(["listed", "otc"]).describe("此 resolver source 的台股市場"),
+    exchange: z.enum(["TWSE", "TPEx"]).describe("此 resolver source 的官方市場機構"),
+    sourceName: z.string().min(1).describe("官方 resolver source 名稱"),
+    sourceUrl: z.string().url().describe("官方 resolver source URL"),
+    retrievedAt: z
+      .string()
+      .datetime({ offset: true })
+      .describe("真正向官方 resolver source 取得資料的時間"),
+    cache: sourceCacheObservationSchema.describe("resolver source 的 caller-specific cache provenance"),
+    asOf: z.string().min(1).describe("官方 resolver source 的年度或月份 snapshot identity"),
+    asOfGranularity: z.enum(["year", "month"]).describe("resolver source asOf 的時間粒度"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const expectedExchange = value.market === "listed" ? "TWSE" : "TPEx";
+    if (value.exchange !== expectedExchange) {
+      context.addIssue({
+        code: "custom",
+        path: ["exchange"],
+        message: "resolver source exchange 必須符合 market。",
+      });
+    }
+    const validAsOf =
+      value.asOfGranularity === "year"
+        ? /^\d{4}$/.test(value.asOf)
+        : /^\d{4}-(0[1-9]|1[0-2])$/.test(value.asOf);
+    if (!validAsOf) {
+      context.addIssue({
+        code: "custom",
+        path: ["asOf"],
+        message: "resolver source asOf 必須符合宣告的 year／month granularity。",
+      });
+    }
+    if (
+      (value.role === "calendar") !==
+      (value.asOfGranularity === "year")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["asOfGranularity"],
+        message: "calendar 必須是 year，session_marker 必須是 month。",
+      });
+    }
+  });
+
+const completedSessionWorkUnit = z.literal(
+  "one logical load of one official market source; transport retries do not add units",
+);
+
+const completedSessionMarketResolutionSchema = z
+  .object({
+    market: z.enum(["listed", "otc"]).describe("逐市場 completed-session resolution 的市場"),
+    status: z.enum(["resolved", "unresolved"]).describe("此市場是否安全解析 completed session"),
+    scheduledCandidate: z.string().nullable().describe("年度日曆解析的候選 session；跨年 fallback 時為 null"),
+    expectedAsOf: z.string().nullable().describe("由 exact benchmark marker 確認的 completed session；未解析時為 null"),
+    reasonCode: completedSessionResolverReasonCodeSchema.exclude([
+      "CROSS_MARKET_EXPECTED_AS_OF_MISMATCH",
+    ]).describe("逐市場 resolver 的穩定原因代碼"),
+    reason: z.string().min(1).describe("逐市場 resolver 判斷說明"),
+    sources: z.array(completedSessionResolverSourceSchema).max(2).describe("此市場實際取得的 calendar／session-marker evidence"),
+    workBudget: z
+      .object({
+        unitDefinition: completedSessionWorkUnit.describe("logical source-load unit 的精確定義"),
+        calendarLogicalLoads: z.number().int().min(1).max(1).describe("實際 calendar logical loads"),
+        sessionMarkerLogicalLoads: z.number().int().min(0).max(1).describe("實際 exact benchmark marker logical loads"),
+        actualTotal: z.number().int().min(1).max(2).describe("此市場實際 resolver logical loads 合計"),
+        maximumTotal: z.literal(2).describe("此市場 resolver 最大 logical loads"),
+      })
+      .strict()
+      .describe("獨立於 domain orchestration 的逐市場 freshness meta-layer budget"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const isIsoDate = (candidate: string | null): candidate is string => {
+      if (!candidate || !/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return false;
+      return new Date(`${candidate}T00:00:00.000Z`).toISOString().slice(0, 10) === candidate;
+    };
+    for (const field of ["scheduledCandidate", "expectedAsOf"] as const) {
+      if (value[field] !== null && !isIsoDate(value[field])) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} 必須是有效 ISO date 或 null。`,
+        });
+      }
+    }
+    if (
+      value.workBudget.actualTotal !==
+      value.workBudget.calendarLogicalLoads +
+        value.workBudget.sessionMarkerLogicalLoads
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["workBudget", "actualTotal"],
+        message: "resolver market workBudget actualTotal 必須可重算。",
+      });
+    }
+    const roles = value.sources.map((source) => source.role);
+    if (new Set(roles).size !== roles.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["sources"],
+        message: "同一 market 的 resolver source role 不得重複。",
+      });
+    }
+    for (const [index, source] of value.sources.entries()) {
+      if (source.market !== value.market) {
+        context.addIssue({
+          code: "custom",
+          path: ["sources", index, "market"],
+          message: "resolver source market 必須符合 market resolution。",
+        });
+      }
+    }
+    if (value.status === "resolved") {
+      if (
+        !isIsoDate(value.expectedAsOf) ||
+        value.reasonCode !== "COMPLETED_SESSION_RESOLVED"
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["status"],
+          message: "resolved market 必須有有效 expectedAsOf 與 RESOLVED reason。",
+        });
+      }
+      if (
+        value.scheduledCandidate !== null &&
+        value.scheduledCandidate !== value.expectedAsOf
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["scheduledCandidate"],
+          message: "非跨年 fallback 的 scheduledCandidate 必須等於 expectedAsOf。",
+        });
+      }
+      if (
+        roles.filter((role) => role === "calendar").length !== 1 ||
+        roles.filter((role) => role === "session_marker").length !== 1
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["sources"],
+          message: "resolved market 必須各有一筆 calendar 與 session_marker 證據。",
+        });
+      }
+      const marker = value.sources.find(
+        (source) => source.role === "session_marker",
+      );
+      if (marker && value.expectedAsOf && marker.asOf !== value.expectedAsOf.slice(0, 7)) {
+        context.addIssue({
+          code: "custom",
+          path: ["sources"],
+          message: "session_marker month 必須涵蓋 resolved expectedAsOf。",
+        });
+      }
+    } else if (
+      value.expectedAsOf !== null ||
+      value.reasonCode === "COMPLETED_SESSION_RESOLVED"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "unresolved market 不得宣告 expectedAsOf 或 RESOLVED reason。",
+      });
+    }
+  });
+
+export const completedSessionResolverEvidenceSchema = z
+  .object({
+    resolverId: z.literal("taiwan-equity.completed-session.v1").describe("authoritative completed-session resolver 版本"),
+    status: z.enum(["resolved", "unresolved"]).describe("所有 requested markets 是否形成共同 completed session"),
+    evaluatedAt: z.string().datetime({ offset: true }).describe("resolver 判斷使用的實際 instant"),
+    timezone: z.literal("Asia/Taipei").describe("calendar 與 completion guard 固定使用的市場時區"),
+    completionGuardTaipei: z.literal("13:33:00").describe("regular session 含暫緩收盤的保守完成 guard"),
+    markets: z.array(z.enum(["listed", "otc"])).min(1).max(2).describe("依 canonical order 解析的 requested markets"),
+    expectedAsOf: z.string().nullable().describe("所有 requested markets 共同的 completed session；未解析時為 null"),
+    reasonCode: completedSessionResolverReasonCodeSchema.describe("top-level resolver 的穩定原因代碼"),
+    reason: z.string().min(1).describe("top-level resolver 判斷說明"),
+    marketResolutions: z
+      .array(completedSessionMarketResolutionSchema)
+      .min(1)
+      .max(2)
+      .describe("與 markets 精確一對一的逐市場 resolution"),
+    workBudget: z
+      .object({
+        scope: z.literal("freshness_meta_layer").describe("此 budget 不混入 domain orchestration budget"),
+        unitDefinition: completedSessionWorkUnit.describe("logical source-load unit 的精確定義"),
+        marketCount: z.number().int().min(1).max(2).describe("本次 resolver requested market 數"),
+        calendarLogicalLoads: z.number().int().min(1).max(2).describe("本次實際 calendar logical loads"),
+        sessionMarkerLogicalLoads: z.number().int().min(0).max(2).describe("本次實際 exact benchmark marker logical loads"),
+        actualTotal: z.number().int().min(1).max(4).describe("本次實際 resolver logical loads 合計"),
+        maximumTotal: z.number().int().min(2).max(4).describe("依 requested markets 計算的 resolver logical-load 上限"),
+      })
+      .strict()
+      .describe("freshness meta-layer 的實際與最大 upstream work budget"),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const canonicalMarkets =
+      value.markets.length === 2 ? ["listed", "otc"] : value.markets;
+    if (
+      new Set(value.markets).size !== value.markets.length ||
+      value.markets.some((market, index) => market !== canonicalMarkets[index])
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["markets"],
+        message: "resolver markets 必須唯一且依 listed、otc canonical order。",
+      });
+    }
+    if (
+      value.marketResolutions.length !== value.markets.length ||
+      value.marketResolutions.some(
+        (resolution, index) => resolution.market !== value.markets[index],
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["marketResolutions"],
+        message: "marketResolutions 必須與 markets 精確一對一且同序。",
+      });
+    }
+    const calendarLoads = value.marketResolutions.reduce(
+      (total, resolution) => total + resolution.workBudget.calendarLogicalLoads,
+      0,
+    );
+    const markerLoads = value.marketResolutions.reduce(
+      (total, resolution) =>
+        total + resolution.workBudget.sessionMarkerLogicalLoads,
+      0,
+    );
+    const budget = value.workBudget;
+    if (
+      budget.marketCount !== value.markets.length ||
+      budget.calendarLogicalLoads !== calendarLoads ||
+      budget.sessionMarkerLogicalLoads !== markerLoads ||
+      budget.actualTotal !== calendarLoads + markerLoads ||
+      budget.maximumTotal !== value.markets.length * 2
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["workBudget"],
+        message: "resolver top-level workBudget 必須由逐市場 budget 精確重算。",
+      });
+    }
+    const resolvedDates = value.marketResolutions.flatMap((resolution) =>
+      resolution.expectedAsOf ? [resolution.expectedAsOf] : [],
+    );
+    if (value.status === "resolved") {
+      if (
+        value.reasonCode !== "COMPLETED_SESSION_RESOLVED" ||
+        !value.expectedAsOf ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(value.expectedAsOf) ||
+        value.marketResolutions.some(
+          (resolution) =>
+            resolution.status !== "resolved" ||
+            resolution.expectedAsOf !== value.expectedAsOf,
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["status"],
+          message: "resolved evidence 必須由所有市場共同的非 null expectedAsOf 支持。",
+        });
+      }
+      return;
+    }
+    if (
+      value.expectedAsOf !== null ||
+      value.reasonCode === "COMPLETED_SESSION_RESOLVED"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "unresolved evidence 不得宣告 expectedAsOf 或 RESOLVED reason。",
+      });
+    }
+    if (value.reasonCode === "CROSS_MARKET_EXPECTED_AS_OF_MISMATCH") {
+      if (
+        value.markets.length !== 2 ||
+        value.marketResolutions.some(
+          (resolution) => resolution.status !== "resolved",
+        ) ||
+        new Set(resolvedDates).size !== 2
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["reasonCode"],
+          message: "cross-market mismatch 必須是兩個各自 resolved 但日期不同的市場。",
+        });
+      }
+    } else {
+      const firstFailure = value.marketResolutions.find(
+        (resolution) => resolution.status === "unresolved",
+      );
+      if (!firstFailure || firstFailure.reasonCode !== value.reasonCode) {
+        context.addIssue({
+          code: "custom",
+          path: ["reasonCode"],
+          message: "unresolved top-level reason 必須符合第一個 unresolved market。",
+        });
+      }
+    }
+  });
+
 export const freshnessEvaluationSchema = z
   .object({
     status: z.enum([
@@ -71,6 +392,9 @@ export const freshnessEvaluationSchema = z
     reasonCode: z.string().min(1).describe("freshness 判斷的穩定原因代碼"),
     reason: z.string().min(1).describe("freshness 判斷說明"),
     sourceUrls: z.array(z.string().url()).describe("此 freshness 判斷涵蓋的官方來源"),
+    resolverEvidence: completedSessionResolverEvidenceSchema
+      .optional()
+      .describe("latest completed-session 判斷使用的官方 calendar 與 exact benchmark 證據"),
   })
   .strict();
 

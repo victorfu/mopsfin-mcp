@@ -12,6 +12,7 @@ import {
   analyzeObservedPriceOutputSchema,
 } from "@/lib/mcp/schema/observed-price";
 import type { ObservedPriceAnalysisResult } from "@/lib/observed-price/types";
+import { completedSessionEvidenceFixture } from "@/tests/fixtures/completed-session";
 
 function validData(): ObservedPriceAnalysisResult {
   return {
@@ -213,8 +214,11 @@ function validData(): ObservedPriceAnalysisResult {
   };
 }
 
-function validEnvelope(data = validData()) {
-  const contract = observedPriceMetaContract(data);
+function validEnvelope(
+  data = validData(),
+  resolverEvidence = completedSessionEvidenceFixture({ status: "unresolved" }),
+) {
+  const contract = observedPriceMetaContract(data, resolverEvidence);
   return {
     ok: true as const,
     meta: buildResultMeta(
@@ -368,6 +372,40 @@ describe("analyze observed price MCP schemas", () => {
     badEnvelopeFormula.changeFromOfficialClosePercent = 99;
     expect(
       analyzeObservedPriceOutputSchema.safeParse(badEnvelopeFormula).success,
+    ).toBe(false);
+  });
+
+  it("accepts resolver-confirmed fresh official close and rejects resolver mutations", () => {
+    const envelope = validEnvelope(
+      validData(),
+      completedSessionEvidenceFixture({
+        status: "resolved",
+        expectedAsOf: "2026-08-27",
+      }),
+    );
+    const parsed = analyzeObservedPriceOutputSchema.safeParse(envelope);
+    expect(
+      parsed.success,
+      parsed.success ? "" : JSON.stringify(parsed.error.issues),
+    ).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.meta.quality.freshness).toBe(
+      "within_expected_window",
+    );
+    expect(
+      parsed.data.meta.quality.issues.some(
+        (issue) => issue.code === "FRESHNESS_UNVERIFIED",
+      ),
+    ).toBe(false);
+
+    const wrongMarket = structuredClone(envelope);
+    const detail = wrongMarket.meta.quality.freshnessDetails.find(
+      (item) => item.policyId === "official.completed-session.v1",
+    );
+    if (!detail?.resolverEvidence) throw new Error("fixture evidence missing");
+    detail.resolverEvidence.markets = ["otc"];
+    expect(
+      analyzeObservedPriceOutputSchema.safeParse(wrongMarket).success,
     ).toBe(false);
   });
 

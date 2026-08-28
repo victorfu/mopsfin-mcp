@@ -1,4 +1,5 @@
 import { defineTool } from "./definition";
+import { buildScreenFreshnessDetails } from "./screen-freshness";
 import type { ResultMetaHints } from "./shared";
 import {
   FRESHNESS_POLICIES,
@@ -9,7 +10,6 @@ import {
   screenTaiwanStockCandidatesInputSchema,
   screenTaiwanStockCandidatesOutputSchema,
   success,
-  taipeiDate,
   taiwanStockScreenClient,
 } from "./shared";
 
@@ -45,45 +45,7 @@ export const screenTaiwanStockCandidatesTool = defineTool(
           candidates: data.candidates,
           sources: data.sources,
         });
-        const expectedScreenDate = taipeiDate(data.generatedAt);
-        const screenFreshnessDetails = data.sources.map((item) => {
-          if (item.kind === "company_master") {
-            return evaluateFreshness({
-              policy: FRESHNESS_POLICIES.currentSnapshotSevenDays,
-              observedAsOf: item.asOf,
-              expectedAsOf: expectedScreenDate,
-              sourceUrls: [item.sourceUrl],
-            });
-          }
-          if (item.kind === "monthly_revenue_latest") {
-            return evaluateFreshness({
-              policy: FRESHNESS_POLICIES.monthlyRevenueLatestCommon,
-              observedAsOf: item.asOf,
-              expectedAsOf: data.asOf.revenueMonth,
-              sourceUrls: [item.sourceUrl],
-            });
-          }
-          if (
-            item.kind === "monthly_revenue_history" ||
-            item.kind === "reaction_corporate_action"
-          ) {
-            return evaluateFreshness({
-              policy: FRESHNESS_POLICIES.historicalExact,
-              observedAsOf: item.asOf,
-              expectedAsOf: null,
-              sourceUrls: [item.sourceUrl],
-            });
-          }
-          return evaluateFreshness({
-            policy:
-              item.kind === "company_metrics"
-                ? FRESHNESS_POLICIES.mopsfinLatestUnverified
-                : FRESHNESS_POLICIES.completedOfficialSession,
-            observedAsOf: item.asOf === "mixed" ? null : item.asOf,
-            expectedAsOf: null,
-            sourceUrls: [item.sourceUrl],
-          });
-        });
+        const screenFreshnessDetails = await buildScreenFreshnessDetails(data);
         if (screenFreshnessDetails.length === 0) {
           screenFreshnessDetails.push(
             evaluateFreshness({

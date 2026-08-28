@@ -50,6 +50,12 @@ describe("LLM-facing official guidance", () => {
       "code、name、market 必須由外層 master 與官方行情列精確吻合",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "compatible 的 latest official valuation dependency",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "外層 market=all current master 與官方 selected row 精確吻合",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
       "一次只反解 revenue_cagr、fcff_cagr 或 terminal_operating_margin",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(

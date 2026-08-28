@@ -2,8 +2,10 @@ import {
   aggregateFreshness,
   evaluateFreshness,
 } from "@/lib/freshness/evaluate";
+import { completedSessionExpectedAsOfForMarket } from "@/lib/freshness/completed-session-resolver";
 import { FRESHNESS_POLICIES } from "@/lib/freshness/policies";
 import type {
+  CompletedSessionResolverEvidence,
   FreshnessEvaluation,
   FreshnessStatus,
 } from "@/lib/freshness/types";
@@ -29,7 +31,10 @@ type ObservedPriceMetaData = Pick<
 
 export interface ObservedPriceMetaContract {
   freshnessDetails: [FreshnessEvaluation, FreshnessEvaluation];
-  freshness: Extract<FreshnessStatus, "stale" | "unknown">;
+  freshness: Extract<
+    FreshnessStatus,
+    "within_expected_window" | "stale" | "unknown"
+  >;
   requiredFreshnessIssueCodes: Array<
     "DATA_STALE" | "FRESHNESS_UNVERIFIED"
   >;
@@ -186,12 +191,16 @@ export function observedPriceQualityIssues(
 
 export function observedPriceFreshnessDetails(
   data: ObservedPriceMetaData,
+  resolverEvidence?: CompletedSessionResolverEvidence,
 ): [FreshnessEvaluation, FreshnessEvaluation] {
   const masterSources = data.sources.filter(
     (source) => source.stage === "company_master",
   );
   const closeSources = data.sources.filter(
     (source) => source.stage === "latest_official_completed_close",
+  );
+  const marketResolution = resolverEvidence?.marketResolutions.find(
+    (resolution) => resolution.market === data.company.market,
   );
   return [
     evaluateFreshness({
@@ -203,8 +212,18 @@ export function observedPriceFreshnessDetails(
     evaluateFreshness({
       policy: FRESHNESS_POLICIES.completedOfficialSession,
       observedAsOf: data.latestOfficialCloseDate,
-      expectedAsOf: null,
-      sourceUrls: unique(closeSources.map((source) => source.sourceUrl)),
+      expectedAsOf:
+        resolverEvidence?.status === "resolved"
+          ? completedSessionExpectedAsOfForMarket(
+              resolverEvidence,
+              data.company.market,
+            )
+          : null,
+      sourceUrls: unique([
+        ...closeSources.map((source) => source.sourceUrl),
+        ...(marketResolution?.sources.map((source) => source.sourceUrl) ?? []),
+      ]),
+      ...(resolverEvidence ? { resolverEvidence } : {}),
     }),
   ];
 }
@@ -231,10 +250,17 @@ export function observedPriceFreshnessDetailsMatch(
 
 export function observedPriceMetaContract(
   data: ObservedPriceMetaData,
+  resolverEvidence?: CompletedSessionResolverEvidence,
 ): ObservedPriceMetaContract {
-  const freshnessDetails = observedPriceFreshnessDetails(data);
+  const freshnessDetails = observedPriceFreshnessDetails(
+    data,
+    resolverEvidence,
+  );
   const aggregated = aggregateFreshness(freshnessDetails);
-  const freshness = aggregated === "stale" ? "stale" : "unknown";
+  const freshness =
+    aggregated === "within_expected_window" || aggregated === "stale"
+      ? aggregated
+      : "unknown";
   const requiredFreshnessIssueCodes: ObservedPriceMetaContract["requiredFreshnessIssueCodes"] = [];
   if (freshnessDetails.some((detail) => detail.status === "stale")) {
     requiredFreshnessIssueCodes.push("DATA_STALE");

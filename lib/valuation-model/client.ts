@@ -11,7 +11,10 @@ import {
 } from "@/lib/mopsfin/client";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { valuationClient } from "@/lib/valuation/client";
-import type { DailyMarketValuationResult } from "@/lib/valuation/types";
+import type {
+  DailyMarketValuationResult,
+  ValuationValueStatus,
+} from "@/lib/valuation/types";
 
 import {
   canonicalStatementLabel,
@@ -59,7 +62,7 @@ interface ValuationLike {
     market: "listed" | "otc";
     date: "latest";
     companyCodes: string[];
-    universePolicy: "strict_current_master";
+    universePolicy: "compatible";
   }): Promise<DailyMarketValuationResult>;
 }
 
@@ -129,6 +132,36 @@ const DEBT_LIKE = /借款|公司債|短期票券|租賃負債|到期長期負債
 
 function canonicalIdentity(value: string): string {
   return value.normalize("NFKC").replace(/\s+/g, "").trim().toLowerCase();
+}
+
+function isSortedUniqueCompanyCodeList(values: unknown): values is string[] {
+  return (
+    Array.isArray(values) &&
+    values.every(
+      (value) => typeof value === "string" && /^[1-9]\d{3}$/.test(value),
+    ) &&
+    new Set(values).size === values.length &&
+    JSON.stringify(values) === JSON.stringify([...values].sort())
+  );
+}
+
+function isOfficialMissingValueStatus(
+  status: ValuationValueStatus | undefined,
+): boolean {
+  return (
+    status === "missing_or_not_meaningful" ||
+    status === "not_provided_by_source"
+  );
+}
+
+function officialMissingRawCloseIsConsistent(
+  status: ValuationValueStatus | undefined,
+  rawValue: string | null | undefined,
+): boolean {
+  if (status === "not_provided_by_source") return rawValue === null;
+  if (status !== "missing_or_not_meaningful") return false;
+  if (rawValue === null || rawValue === undefined) return true;
+  return /^(?:|-|--|---|—|－|N\/?A|null)$/i.test(rawValue.trim());
 }
 
 function errorMessage(error: unknown): string {
@@ -435,7 +468,10 @@ export class ValuationModelInputsClient {
           valuationDependencyCalls: {
             actual: 0,
             maximum: 1,
-            internalCurrentMasterPolicy: "strict_current_master",
+            internalCurrentMasterPolicy: "compatible",
+            minimumCurrentMasterMatchRatio: 0.95,
+            selectedCompanyIdentityPolicy:
+              "outer_market_all_master_plus_official_row_exact",
           },
         },
         warnings: [
@@ -841,9 +877,13 @@ export class ValuationModelInputsClient {
     sources.push(...valuationSources);
     const latestClose = this.latestClose(
       company,
+      master.companies.filter(
+        (candidate) => candidate.market === company.market,
+      ).length,
       valuationResult,
       valuationSources,
       lineage,
+      warnings,
     );
     const netDebt = debt.status !== "data_gap" &&
       debt.value !== null &&
@@ -1022,7 +1062,10 @@ export class ValuationModelInputsClient {
         valuationDependencyCalls: {
           actual: 1,
           maximum: 1,
-          internalCurrentMasterPolicy: "strict_current_master",
+          internalCurrentMasterPolicy: "compatible",
+          minimumCurrentMasterMatchRatio: 0.95,
+          selectedCompanyIdentityPolicy:
+            "outer_market_all_master_plus_official_row_exact",
         },
       },
       warnings,
@@ -1380,12 +1423,18 @@ export class ValuationModelInputsClient {
     warnings: string[],
   ): Promise<DailyMarketValuationResult | null> {
     try {
-      return await this.valuation.getDailyMarketValuation({
+      const result = await this.valuation.getDailyMarketValuation({
         market: company.market,
         date: "latest",
         companyCodes: [company.code],
-        universePolicy: "strict_current_master",
+        universePolicy: "compatible",
       });
+      warnings.push(
+        ...result.warnings.map(
+          (warning) => `latest official close dependency：${warning}`,
+        ),
+      );
+      return result;
     } catch (error) {
       warnings.push(
         `latest official close dependency 失敗（${errorReason(error) ?? "UNKNOWN"}）：${errorMessage(error)}`,
@@ -1417,11 +1466,15 @@ export class ValuationModelInputsClient {
 
   private latestClose(
     company: MasterCompany,
+    outerMasterMarketCount: number,
     valuation: DailyMarketValuationResult | null,
     sources: ValuationModelMarketSource[],
     lineage: ValuationModelLineageEntry[],
+    warnings: string[],
   ): ValuationModelInputField {
-    const row = valuation?.rows.find((candidate) => candidate.code === company.code);
+    const matchingRows =
+      valuation?.rows.filter((candidate) => candidate.code === company.code) ?? [];
+    const row = matchingRows.length === 1 ? matchingRows[0] : undefined;
     const identityValid =
       row !== undefined &&
       row.market === company.market &&
@@ -1429,22 +1482,128 @@ export class ValuationModelInputsClient {
     const source = sources
       .filter((candidate) => candidate.dataDate === valuation?.dataDate)
       .at(-1);
-    const valid =
-      identityValid &&
-      valuation?.selectionComplete === true &&
+    const queryCodes = valuation?.query.companyCodes ?? [];
+    const reconciliation = valuation?.reconciliation[0];
+    const differenceSetsValid =
+      reconciliation !== undefined &&
+      isSortedUniqueCompanyCodeList(reconciliation.marketOnlyCodes) &&
+      isSortedUniqueCompanyCodeList(reconciliation.masterMissingCodes) &&
+      reconciliation.marketOnlyCodes.every(
+        (code) => !reconciliation.masterMissingCodes.includes(code),
+      );
+    const reconciliationCountsValid =
+      reconciliation !== undefined &&
+      Number.isSafeInteger(reconciliation.masterCount) &&
+      reconciliation.masterCount >= 1 &&
+      reconciliation.masterCount === outerMasterMarketCount &&
+      Number.isSafeInteger(reconciliation.sourceRowCount) &&
+      reconciliation.sourceRowCount >= 0 &&
+      Number.isSafeInteger(reconciliation.matchedCount) &&
+      reconciliation.matchedCount >= 0 &&
+      reconciliation.matchedCount <= reconciliation.masterCount &&
+      reconciliation.matchedCount <= reconciliation.sourceRowCount &&
+      reconciliation.masterCount ===
+        reconciliation.matchedCount +
+          reconciliation.masterMissingCodes.length &&
+      reconciliation.sourceRowCount ===
+        reconciliation.matchedCount + reconciliation.marketOnlyCodes.length;
+    const expectedMatchRatio = reconciliationCountsValid
+      ? reconciliation.matchedCount / reconciliation.masterCount
+      : null;
+    const expectedExactCoverage =
+      reconciliation !== undefined &&
+      reconciliation.marketOnlyCodes.length === 0 &&
+      reconciliation.masterMissingCodes.length === 0;
+    const reconciliationValid =
+      valuation !== null &&
+      valuation.reconciliation.length === 1 &&
+      reconciliation !== undefined &&
+      reconciliation.market === company.market &&
+      differenceSetsValid &&
+      reconciliationCountsValid &&
+      expectedMatchRatio !== null &&
+      Number.isFinite(reconciliation.matchRatio) &&
+      Math.abs(reconciliation.matchRatio - expectedMatchRatio) <= 0.0000005 &&
+      reconciliation.matchRatio >= 0.95 &&
+      reconciliation.coverageComplete === expectedExactCoverage &&
+      valuation.universeCoverageVerified === expectedExactCoverage &&
+      !reconciliation.marketOnlyCodes.includes(company.code) &&
+      !reconciliation.masterMissingCodes.includes(company.code);
+    const selectedResultValid =
+      valuation !== null &&
+      valuation.query.market === company.market &&
+      valuation.query.date === "latest" &&
+      valuation.query.universePolicy === "compatible" &&
+      queryCodes.length === 1 &&
+      queryCodes[0] === company.code &&
+      valuation.classificationPolicy === "current_master_with_code_fallback" &&
       valuation.coverageComplete === true &&
-      valuation.universeCoverageVerified === true &&
-      valuation.classificationPolicy === "current_master_strict" &&
-      valuation.query.universePolicy === "strict_current_master" &&
+      valuation.selectionComplete === true &&
+      valuation.missingCompanyCodes.length === 0 &&
+      valuation.rows.length === 1 &&
+      matchingRows.length === 1 &&
+      valuation.currency === "TWD";
+    const sourcesValid =
+      valuation !== null &&
+      sources.length === valuation.sources.length &&
+      sources.length >= 1 &&
+      valuation.sources.every(
+        (candidate) =>
+          candidate.market === company.market &&
+          candidate.exchange === company.exchange &&
+          candidate.dataDate === valuation.dataDate,
+      ) &&
+      source !== undefined;
+    const rawClose = row?.rawValue.closePriceTwd
+      ? Number(row.rawValue.closePriceTwd.replace(/,/g, "").trim())
+      : null;
+    const contractValid =
+      identityValid &&
+      reconciliationValid &&
+      selectedResultValid &&
+      sourcesValid;
+    const reportedValueValid =
       row?.valueStatus.closePriceTwd === "reported" &&
       row.closePriceTwd !== null &&
+      Number.isFinite(row.closePriceTwd) &&
       row.closePriceTwd > 0 &&
-      source !== undefined;
+      rawClose !== null &&
+      Number.isFinite(rawClose) &&
+      rawClose === row.closePriceTwd;
+    const valid = contractValid && reportedValueValid;
+    const officialValueMissing =
+      contractValid &&
+      row !== undefined &&
+      isOfficialMissingValueStatus(row.valueStatus.closePriceTwd) &&
+      row.closePriceTwd === null &&
+      officialMissingRawCloseIsConsistent(
+        row.valueStatus.closePriceTwd,
+        row.rawValue.closePriceTwd,
+      );
+    if (valid && reconciliation?.coverageComplete === false) {
+      warnings.push(
+        `latest official close dependency 通過 compatible 95% 防截斷門檻（${company.market} matchRatio=${reconciliation.matchRatio}）；全市場集合未完全相等，但 ${company.code} 已由外層 current master 與官方 selected row 精確核對。`,
+      );
+    }
+    if (officialValueMissing) {
+      warnings.push(
+        `latest official close dependency 的官方 selected row 將收盤價標示為 ${row.valueStatus.closePriceTwd}；${company.code} 收盤價維持 data_gap。`,
+      );
+    } else if (valuation && !valid) {
+      warnings.push(
+        `latest official close dependency 未通過 composite identity／reconciliation 契約；${company.code} 收盤價維持 data_gap。`,
+      );
+    }
+    const lineageStatus: ValuationModelLineageEntry["status"] = valid
+      ? "resolved"
+      : valuation === null || matchingRows.length === 0 || officialValueMissing
+        ? "missing"
+        : "invalid";
     const lineageId = nextLineageId(lineage.length);
     lineage.push({
       lineageId,
       role: "latest_completed_official_close",
-      status: valid ? "resolved" : identityValid ? "missing" : "invalid",
+      status: lineageStatus,
       sourceId: source?.sourceId ?? null,
       statement: null,
       period: valuation?.dataDate ?? null,
@@ -1452,8 +1611,12 @@ export class ValuationModelInputsClient {
       rawValue: row?.rawValue.closePriceTwd ?? null,
       normalizedValue: row?.closePriceTwd ?? null,
       unit: "TWD_per_share",
-      candidateRowLabels: row ? ["closePriceTwd"] : [],
-      notes: ["官方最近完成估值日的收盤價；不是盤中價。"],
+      candidateRowLabels: matchingRows.map(() => "closePriceTwd"),
+      notes: [
+        "官方最近完成估值日的收盤價；不是盤中價。",
+        "全市場使用 compatible 95% 防截斷門檻；selected company 仍須與外層 current master 的 code、name、market 精確一致。",
+        `upstream closePriceTwd status=${row?.valueStatus.closePriceTwd ?? "row_missing"}`,
+      ],
     });
     return valid
       ? reportedField(

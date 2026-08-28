@@ -123,6 +123,8 @@ describe("README example prompts", () => {
     expect(readme).toContain("https://www.tpex.org.tw/www/zh-tw/bulletin/exDailyQ");
     expect(readme).toContain("https://www.tpex.org.tw/www/zh-tw/bulletin/revivt");
     expect(readme).toContain("https://www.tpex.org.tw/www/zh-tw/bulletin/pvChgRslt");
+    expect(readme).toContain("https://www.twse.com.tw/holidaySchedule/holidaySchedule");
+    expect(readme).toContain("https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate");
     expect(readme).toContain("sourceCoverage");
     expect(readme).toContain("STATELESS_PAGE_VALUES_NOT_PINNED");
     expect(readme).toContain("comparability=needs_review");
@@ -137,11 +139,12 @@ describe("README example prompts", () => {
     expect(readme).toContain("每週一次");
     expect(readme).toContain("npm run test:live:corporate-actions");
     expect(readme).toContain("npm run test:live:catalog-screen");
+    expect(readme).toContain("npm run test:live:completed-session");
     expect(readme).toContain("npm run test:live:observed-price");
     expect(readme).toContain("npm run test:live:valuation-model-inputs");
     expect(readme).toContain("完整 live suite");
     expect(readme).toContain(
-      "`suite` 可選 `catalog-screen`、`corporate-actions`、`catalysts`、`observed-price`、`valuation-model-inputs` 或 `all`",
+      "`suite` 可選 `catalog-screen`、`completed-session`、`corporate-actions`、`catalysts`、`observed-price`、`valuation-model-inputs` 或 `all`",
     );
     expect(readme).toContain("### `get_valuation_model_inputs` 可追溯估值模型資料層");
     expect(readme).toContain("### `run_reverse_dcf` 市場隱含 Reverse DCF");

@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - catalog-screen
+          - completed-session
           - corporate-actions
           - catalysts
           - observed-price
@@ -39,6 +40,9 @@ jobs:
       - name: Run the screening semantic catalog contract
         if: github.event_name == 'schedule' || inputs.suite == 'catalog-screen'
         run: npm run test:live:catalog-screen
+      - name: Run the authoritative completed-session contract
+        if: github.event_name == 'schedule' || inputs.suite == 'completed-session'
+        run: npm run test:live:completed-session
       - name: Run the focused corporate-action contracts
         if: github.event_name == 'schedule' || inputs.suite == 'corporate-actions'
         run: npm run test:live:corporate-actions

@@ -2,7 +2,14 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import packageMetadata from "../package.json" with { type: "json" };
+import {
+  assertDeploymentContract,
+  canonicalToolContractSha256,
+  LOCAL_PACKAGE_VERSION,
+  resolveSmokeTimeoutMs,
+  runWithOverallDeadline,
+  serverInstructionsSha256,
+} from "./test-client-contract.mjs";
 
 const endpoint = new URL(
   process.argv[2] ??
@@ -10,83 +17,75 @@ const endpoint = new URL(
     "http://localhost:3000/api/mcp",
 );
 const healthEndpoint = new URL("/api/health", endpoint);
-const client = new Client({
-  name: "mopsfin-smoke-test",
-  version: packageMetadata.version,
-});
+const timeoutMs = resolveSmokeTimeoutMs();
 
-try {
-  await client.connect(new StreamableHTTPClientTransport(endpoint));
-  const { tools } = await client.listTools();
-  const names = tools.map((tool) => tool.name);
-  const healthResponse = await fetch(healthEndpoint, {
-    headers: { Accept: "application/json" },
-  });
-  if (!healthResponse.ok) {
-    throw new Error(
-      `Health request failed (${healthResponse.status}) at ${healthEndpoint.href}`,
-    );
-  }
-  const health = await healthResponse.json();
-  const server = client.getServerVersion();
-  if (server?.name !== health.service || server?.version !== health.version) {
-    throw new Error(
-      `MCP initialize does not match health identity: ${JSON.stringify({ server, healthService: health.service, healthVersion: health.version })}`,
-    );
-  }
-  if (!Number.isInteger(health.toolCount) || names.length !== health.toolCount) {
-    throw new Error(
-      `tools/list returned ${names.length} tools but health reports ${String(health.toolCount)}: ${names.join(", ")}`,
-    );
-  }
-  const requiredReleaseTools = [
-    "get_stock_price_series",
-    "get_valuation_model_inputs",
-    "run_reverse_dcf",
-    "analyze_observed_price",
-  ];
-  const missingReleaseTools = requiredReleaseTools.filter(
-    (name) => !names.includes(name),
-  );
-  if (missingReleaseTools.length > 0) {
-    throw new Error(
-      `tools/list is missing required release contracts (${missingReleaseTools.join(", ")}): ${names.join(", ")}`,
-    );
-  }
-  if (health.mcpEndpoint !== endpoint.pathname) {
-    throw new Error(
-      `Health MCP endpoint ${String(health.mcpEndpoint)} does not match ${endpoint.pathname}`,
-    );
-  }
+await runWithOverallDeadline(
+  "MopsFin deployment contract smoke",
+  timeoutMs,
+  async (deadline) => {
+    const client = new Client({
+      name: "mopsfin-deployment-contract-smoke",
+      version: LOCAL_PACKAGE_VERSION,
+    });
 
-  const result = await client.callTool({
-    name: "find_companies",
-    arguments: { query: "2330", limit: 3 },
-  });
-  if (result.isError || result.structuredContent === undefined) {
-    throw new Error(`find_companies failed: ${JSON.stringify(result.content)}`);
-  }
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(endpoint),
+        deadline.requestOptions(),
+      );
+      const { tools } = await client.listTools(
+        undefined,
+        deadline.requestOptions(),
+      );
+      const healthResponse = await fetch(healthEndpoint, {
+        headers: { Accept: "application/json" },
+        signal: deadline.signal,
+      });
+      if (!healthResponse.ok) {
+        throw new Error(
+          `Health request failed (${healthResponse.status}) at ${healthEndpoint.href}`,
+        );
+      }
+      const health = await healthResponse.json();
+      const server = client.getServerVersion();
+      const serverInstructions = client.getInstructions();
 
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        endpoint: endpoint.href,
-        healthEndpoint: healthEndpoint.href,
+      assertDeploymentContract({
         server,
-        health: {
-          version: health.version,
-          toolCount: health.toolCount,
-          liveness: health.liveness,
-          applicationReadiness: health.applicationReadiness,
-          upstreamContracts: health.upstreamContracts,
-        },
-        tools: names,
-        findCompanies: result.structuredContent,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-} finally {
-  await client.close();
-}
+        serverInstructions,
+        health,
+        tools,
+        endpointPath: endpoint.pathname,
+      });
+
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            check: "deployment_contract",
+            endpoint: endpoint.href,
+            healthEndpoint: healthEndpoint.href,
+            timeoutMs,
+            server,
+            resultContractVersion: health.resultContractVersion,
+            health: {
+              status: health.status,
+              liveness: health.liveness,
+              applicationReadiness: health.applicationReadiness,
+              readiness: health.readiness,
+              upstreamContracts: health.upstreamContracts,
+              toolCount: health.toolCount,
+            },
+            toolNames: tools.map((tool) => tool.name),
+            toolContractSha256: canonicalToolContractSha256(tools),
+            serverInstructionsSha256:
+              serverInstructionsSha256(serverInstructions),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } finally {
+      await client.close();
+    }
+  },
+);

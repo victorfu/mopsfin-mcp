@@ -7,6 +7,7 @@ import { companyCatalystSnapshotClient } from "@/lib/catalyst/snapshot-client";
 import type { CompanyCatalystSnapshotsResult } from "@/lib/catalyst/snapshot-types";
 import type { CompanyCatalystEventsResult } from "@/lib/catalyst/types";
 import { companyMasterClient } from "@/lib/company-master/client";
+import { completedSessionResolver } from "@/lib/freshness/completed-session-resolver";
 import {
   companyMetricsBatchClient,
   type CompanyMetricsBatchResult,
@@ -50,6 +51,7 @@ import type {
   ValuationModelInputsResult,
   ValuationModelUnit,
 } from "@/lib/valuation-model/types";
+import { completedSessionEvidenceFixture } from "@/tests/fixtures/completed-session";
 
 const source = {
   sourceName: "公開資訊觀測站－財務比較 E 點通",
@@ -147,6 +149,20 @@ const valuationModelInputs: ValuationModelInputsResult = {
       candidateRowLabels: [],
       notes: ["fixture search attempt"],
     },
+    {
+      lineageId: "lineage:002",
+      role: "latest_completed_official_close",
+      status: "invalid",
+      sourceId: "market_valuation:listed:2026-08-27:1",
+      statement: null,
+      period: "2026-08-27",
+      rowLabel: "closePriceTwd",
+      rawValue: "1000",
+      normalizedValue: 1000,
+      unit: "TWD_per_share",
+      candidateRowLabels: ["closePriceTwd"],
+      notes: ["fixture rejected market dependency contract"],
+    },
   ],
   sources: [
     {
@@ -204,7 +220,10 @@ const valuationModelInputs: ValuationModelInputsResult = {
     valuationDependencyCalls: {
       actual: 1,
       maximum: 1,
-      internalCurrentMasterPolicy: "strict_current_master",
+      internalCurrentMasterPolicy: "compatible",
+      minimumCurrentMasterMatchRatio: 0.95,
+      selectedCompanyIdentityPolicy:
+        "outer_market_all_master_plus_official_row_exact",
     },
   },
   warnings: ["fixture contains deliberate data gaps"],
@@ -262,7 +281,10 @@ const financialValuationModelInputs: ValuationModelInputsResult = {
     valuationDependencyCalls: {
       actual: 0,
       maximum: 1,
-      internalCurrentMasterPolicy: "strict_current_master",
+      internalCurrentMasterPolicy: "compatible",
+      minimumCurrentMasterMatchRatio: 0.95,
+      selectedCompanyIdentityPolicy:
+        "outer_market_all_master_plus_official_row_exact",
     },
   },
   warnings: ["financial company is not applicable to FCFF DCF"],
@@ -2706,6 +2728,11 @@ describe("MCP protocol integration", () => {
   });
 
   it("initializes, lists all tools and calls each tool with structured output", async () => {
+    const completedSessionSpy = vi
+      .spyOn(completedSessionResolver, "resolve")
+      .mockImplementation(async ({ market }) =>
+        completedSessionEvidenceFixture({ market, status: "unresolved" }),
+      );
     const catalystSpy = vi
       .spyOn(catalystClient, "getCompanyCatalystEvents")
       .mockResolvedValue(catalystEvents);
@@ -3063,6 +3090,11 @@ describe("MCP protocol integration", () => {
     expect(valuationModelTool?.description).toContain("data_gap/null");
     expect(valuationModelTool?.description).toContain("point-in-time filing vintage");
     expect(valuationModelTool?.description).toContain("fully diluted shares");
+    expect(valuationModelTool?.description).toContain("compatible");
+    expect(valuationModelTool?.description).toContain("至少 95%");
+    expect(valuationModelTool?.description).toContain(
+      "外層 market=all current master",
+    );
     expect(valuationModelTool?.description).toContain("不執行 DCF");
     expect(valuationModelTool?.inputSchema).toMatchObject({
       type: "object",
@@ -3418,6 +3450,7 @@ describe("MCP protocol integration", () => {
     ] as const;
 
     for (const [name, args] of calls) {
+      const resolverCallsBeforeTool = completedSessionSpy.mock.calls.length;
       const result = await client.callTool({ name, arguments: args });
       const resultContext = `${name}: ${JSON.stringify(result)}`;
       expect(result.isError, resultContext).not.toBe(true);
@@ -3839,11 +3872,16 @@ describe("MCP protocol integration", () => {
               policyId: "mopsfin.latest-unverified.v1",
               status: "unknown",
             }),
-            expect.objectContaining({
-              policyId: "official.completed-session.v1",
-              status: "unknown",
-            }),
           ]),
+        );
+        expect(
+          structured.meta.quality.freshnessDetails.some(
+            (detail) =>
+              detail.policyId === "official.completed-session.v1",
+          ),
+        ).toBe(false);
+        expect(completedSessionSpy).toHaveBeenCalledTimes(
+          resolverCallsBeforeTool,
         );
         expect(structured.meta.quality.issues.map((issue) => issue.code)).toEqual(
           expect.arrayContaining([
@@ -4430,6 +4468,32 @@ describe("MCP protocol integration", () => {
         ]);
       }
     }
+
+    const resolverCallsAfterLatestTools = completedSessionSpy.mock.calls.length;
+    for (const [name, args] of [
+      [
+        "get_daily_market_ohlc",
+        { market: "all", date: "2026-08-24" },
+      ],
+      [
+        "get_daily_market_valuation",
+        { market: "all", date: "2026-08-24" },
+      ],
+    ] as const) {
+      const result = await client.callTool({ name, arguments: args });
+      expect(result.isError, `${name} explicit selector`).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        ok: true,
+        meta: {
+          quality: {
+            freshness: "not_applicable",
+          },
+        },
+      });
+    }
+    expect(completedSessionSpy).toHaveBeenCalledTimes(
+      resolverCallsAfterLatestTools,
+    );
 
     valuationModelInputsSpy.mockResolvedValueOnce(
       financialValuationModelInputs,

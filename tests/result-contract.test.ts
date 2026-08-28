@@ -5,6 +5,7 @@ import { FRESHNESS_POLICIES } from "@/lib/freshness/policies";
 import { paginateByCompany } from "@/lib/mcp/cursor";
 import { buildResultMeta, structuredError } from "@/lib/mcp/result-contract";
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import { completedSessionEvidenceFixture } from "@/tests/fixtures/completed-session";
 
 describe("mopsfin.result.v1", () => {
   it("builds a date as-of and keeps legitimate missing selections separate from sources", () => {
@@ -371,6 +372,60 @@ describe("mopsfin.result.v1", () => {
         (issue) => issue.code === "FRESHNESS_UNVERIFIED",
       ),
     ).toHaveLength(1);
+  });
+
+  it("adds resolver calendar and marker retrieval cutoffs without rewriting provenance", () => {
+    const resolverEvidence = completedSessionEvidenceFixture({
+      status: "resolved",
+      expectedAsOf: "2026-08-27",
+    });
+    const freshness = evaluateFreshness({
+      policy: FRESHNESS_POLICIES.completedOfficialSession,
+      observedAsOf: "2026-08-27",
+      expectedAsOf: "2026-08-27",
+      sourceUrls: ["https://example.test/market"],
+      resolverEvidence,
+    });
+    const meta = buildResultMeta(
+      {
+        dataDate: "2026-08-27",
+        sources: [
+          {
+            sourceUrl: "https://example.test/market",
+            dataDate: "2026-08-27",
+            retrievedAt: "2026-08-28T05:00:00.000Z",
+          },
+        ],
+      },
+      { freshnessDetails: [freshness] },
+      "2026-08-28T06:05:00.000Z",
+    );
+
+    expect(meta.asOf.sourceCutoffs).toHaveLength(3);
+    expect(meta.asOf.sourceCutoffs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceUrl:
+            "https://www.twse.com.tw/holidaySchedule/holidaySchedule?queryYear=115&response=json",
+          resolved: {
+            granularity: "date",
+            from: "2026-01-01",
+            through: "2026-12-31",
+          },
+          retrievedAt: "2026-08-28T06:01:00.000Z",
+          cache: resolverEvidence.marketResolutions[0]?.sources[0]?.cache,
+        }),
+        expect.objectContaining({
+          sourceUrl: expect.stringContaining("MI_5MINS_HIST"),
+          resolved: {
+            granularity: "month",
+            from: "2026-08",
+            through: "2026-08",
+          },
+          retrievedAt: "2026-08-28T06:01:00.000Z",
+        }),
+      ]),
+    );
   });
 
   it("keeps source retrieval in the fingerprint but excludes servedAt and cache caller state", () => {

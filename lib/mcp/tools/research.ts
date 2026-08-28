@@ -7,6 +7,7 @@ import {
   screenTaiwanStockCandidatesWithCatalystSnapshotsOutputSchema,
 } from "../schemas";
 import { defineTool } from "./definition";
+import { buildScreenFreshnessDetails } from "./screen-freshness";
 import {
   FRESHNESS_POLICIES,
   annotations,
@@ -17,50 +18,6 @@ import {
   taipeiDate,
   type ResultMetaHints,
 } from "./shared";
-
-function screenFreshnessDetails(
-  data: ScreenTaiwanStockCandidatesWithCatalystSnapshotsResult,
-): FreshnessEvaluation[] {
-  const expectedScreenDate = taipeiDate(data.screen.generatedAt);
-  return data.screen.sources.map((source) => {
-    if (source.kind === "company_master") {
-      return evaluateFreshness({
-        policy: FRESHNESS_POLICIES.currentSnapshotSevenDays,
-        observedAsOf: source.asOf,
-        expectedAsOf: expectedScreenDate,
-        sourceUrls: [source.sourceUrl],
-      });
-    }
-    if (source.kind === "monthly_revenue_latest") {
-      return evaluateFreshness({
-        policy: FRESHNESS_POLICIES.monthlyRevenueLatestCommon,
-        observedAsOf: source.asOf,
-        expectedAsOf: data.screen.asOf.revenueMonth,
-        sourceUrls: [source.sourceUrl],
-      });
-    }
-    if (
-      source.kind === "monthly_revenue_history" ||
-      source.kind === "reaction_corporate_action"
-    ) {
-      return evaluateFreshness({
-        policy: FRESHNESS_POLICIES.historicalExact,
-        observedAsOf: source.asOf,
-        expectedAsOf: null,
-        sourceUrls: [source.sourceUrl],
-      });
-    }
-    return evaluateFreshness({
-      policy:
-        source.kind === "company_metrics"
-          ? FRESHNESS_POLICIES.mopsfinLatestUnverified
-          : FRESHNESS_POLICIES.completedOfficialSession,
-      observedAsOf: source.asOf === "mixed" ? null : source.asOf,
-      expectedAsOf: null,
-      sourceUrls: [source.sourceUrl],
-    });
-  });
-}
 
 function catalystFreshnessDetails(
   data: ScreenTaiwanStockCandidatesWithCatalystSnapshotsResult,
@@ -355,7 +312,7 @@ export const screenTaiwanStockCandidatesWithCatalystSnapshotsTool = defineTool(
           },
         );
       const freshnessDetails = [
-        ...screenFreshnessDetails(data),
+        ...(await buildScreenFreshnessDetails(data.screen)),
         ...catalystFreshnessDetails(data),
       ];
       if (freshnessDetails.length === 0) {

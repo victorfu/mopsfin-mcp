@@ -17,6 +17,7 @@ import {
   evaluateFreshness,
   failure,
   fingerprint,
+  resolveOfficialCompletedSessionFreshness,
   success,
   taipeiDate,
 } from "./shared";
@@ -36,9 +37,9 @@ function latestAsOf(sources: ValuationModelSource[]): string | null {
   return sources.map((source) => source.asOf).sort().at(-1) ?? null;
 }
 
-function freshnessDetails(
+async function freshnessDetails(
   data: ReverseDcfOrchestrationResult,
-): FreshnessEvaluation[] {
+): Promise<FreshnessEvaluation[]> {
   const details: FreshnessEvaluation[] = [];
   const masterSources = sourcesByStage(data.sources, "company_master");
   if (masterSources.length > 0) {
@@ -67,12 +68,16 @@ function freshnessDetails(
   const marketSources = sourcesByStage(data.sources, "market_valuation");
   if (marketSources.length > 0) {
     details.push(
-      evaluateFreshness({
-        policy: FRESHNESS_POLICIES.completedOfficialSession,
-        observedAsOf: latestAsOf(marketSources),
-        expectedAsOf: null,
-        sourceUrls: unique(marketSources.map((source) => source.sourceUrl)),
-      }),
+      ...(await resolveOfficialCompletedSessionFreshness({
+        market: data.company.market,
+        observations: [
+          {
+            market: data.company.market,
+            observedAsOf: latestAsOf(marketSources),
+            sources: marketSources,
+          },
+        ],
+      })),
     );
   }
 
@@ -294,7 +299,7 @@ export const runReverseDcfTool = defineTool(
           universe: masterSourceCount === 1 ? "verified" : "unverified",
           selection: "complete",
           values: "complete",
-          freshnessDetails: freshnessDetails(data),
+          freshnessDetails: await freshnessDetails(data),
           issues: qualityIssues(data),
         },
       );

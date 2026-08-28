@@ -18,6 +18,7 @@ import {
   evaluateFreshness,
   failure,
   fingerprint,
+  resolveOfficialCompletedSessionFreshness,
   success,
   taipeiDate,
 } from "./shared";
@@ -37,9 +38,26 @@ function latestObservedAsOf(sources: ValuationModelSource[]): string | null {
   return sources.map((source) => source.asOf).sort().at(-1) ?? null;
 }
 
-function freshnessDetails(
+function latestCloseLineageStatus(
   data: ValuationModelInputsResult,
-): FreshnessEvaluation[] {
+): ValuationModelInputsResult["lineage"][number]["status"] | null {
+  return (
+    data.lineage.find(
+      (entry) => entry.role === "latest_completed_official_close",
+    )?.status ?? null
+  );
+}
+
+function latestCloseDependencyEvidenceAccepted(
+  data: ValuationModelInputsResult,
+): boolean {
+  const status = latestCloseLineageStatus(data);
+  return status === "resolved" || status === "missing";
+}
+
+export async function valuationModelFreshnessDetails(
+  data: ValuationModelInputsResult,
+): Promise<FreshnessEvaluation[]> {
   const details: FreshnessEvaluation[] = [];
   const masterSources = sourcesByStage(data.sources, "company_master");
   if (masterSources.length > 0) {
@@ -66,14 +84,21 @@ function freshnessDetails(
   }
 
   const marketSources = sourcesByStage(data.sources, "market_valuation");
-  if (marketSources.length > 0) {
+  if (
+    marketSources.length > 0 &&
+    latestCloseDependencyEvidenceAccepted(data)
+  ) {
     details.push(
-      evaluateFreshness({
-        policy: FRESHNESS_POLICIES.completedOfficialSession,
-        observedAsOf: latestObservedAsOf(marketSources),
-        expectedAsOf: null,
-        sourceUrls: unique(marketSources.map((source) => source.sourceUrl)),
-      }),
+      ...(await resolveOfficialCompletedSessionFreshness({
+        market: data.company.market,
+        observations: [
+          {
+            market: data.company.market,
+            observedAsOf: latestObservedAsOf(marketSources),
+            sources: marketSources,
+          },
+        ],
+      })),
     );
   }
 
@@ -134,15 +159,15 @@ function qualityIssues(data: ValuationModelInputsResult): QualityIssue[] {
       }),
     });
   }
-  if (!sourceDependenciesComplete(data)) {
+  if (!valuationModelSourceDependenciesComplete(data)) {
     issues.push({
       code: "SOURCE_DEPENDENCY_INCOMPLETE",
       severity: "warning",
       scope: "source",
       message:
-        "至少一個實際執行的 company master、statement 或 official valuation dependency 缺少對應 source lineage；source 品質為 partial。",
+        "至少一個實際執行的 company master、statement 或 official valuation dependency 缺少對應 source lineage，或未通過 identity／reconciliation／source contract；source 品質為 partial。",
       refs: issueRefs(data, {
-        fields: ["sources", "workBudget"],
+        fields: ["sources", "lineage", "workBudget"],
       }),
     });
   }
@@ -217,15 +242,19 @@ function qualityIssues(data: ValuationModelInputsResult): QualityIssue[] {
   return issues;
 }
 
-function sourceDependenciesComplete(data: ValuationModelInputsResult): boolean {
+export function valuationModelSourceDependenciesComplete(
+  data: ValuationModelInputsResult,
+): boolean {
   const masterSourceCount = sourcesByStage(data.sources, "company_master").length;
   const statementSourceCount = sourcesByStage(data.sources, "statement").length;
   const marketSourceCount = sourcesByStage(data.sources, "market_valuation").length;
+  const marketDependencyAccepted =
+    marketSourceCount > 0 && latestCloseDependencyEvidenceAccepted(data);
   return (
     masterSourceCount === 1 &&
     statementSourceCount === data.workBudget.statementCalls.actual &&
     (data.workBudget.valuationDependencyCalls.actual === 0 ||
-      marketSourceCount > 0)
+      marketDependencyAccepted)
   );
 }
 
@@ -234,7 +263,7 @@ export const getValuationModelInputsTool = defineTool(
   {
     title: "取得可追溯的估值模型輸入",
     description:
-      "為單一目前上市櫃非金融公司整理可重算的 valuation model input evidence：TTM revenue、營業利益 EBIT proxy、cash tax rate、D&A、只含 PPE acquisition 的 CapEx、ΔNWC、source/sign-normalized historical FCFF proxy、cash、有息負債、net debt、目前 issued shares、最近完成官方估值日收盤、market cap 與 enterprise value。財報 TTM 嚴格採 Q4 FY 或 current YTD + prior FY - prior-year YTD，並核對 company identity、報表類型、期別、合併範圍、row-role uniqueness 及 HTML/catalog unit provenance；任一證據不足即 data_gap/null，不補 0、不猜科目、不靜默換來源。每個欄位揭露 reported/derived/data_gap/not_applicable、evidenceClass、formula、inputs、lineage 與 notes；歷史財報是目前可見、可能重編版本，不是 point-in-time filing vintage。issuedShares 是目前 master 的已發行普通股，不是 fully diluted shares；latestOfficialClose 不是盤中價，且 official market latest freshness 在沒有權威交易日 resolver 時仍為 unknown。金融業明確 NOT_APPLICABLE，應改用 residual-income/dividend 類模型。本工具不執行 DCF、不提供 WACC／terminal-growth 隱藏預設、評級、目標價或投資建議。",
+      "為單一目前上市櫃非金融公司整理可重算的 valuation model input evidence：TTM revenue、營業利益 EBIT proxy、cash tax rate、D&A、只含 PPE acquisition 的 CapEx、ΔNWC、source/sign-normalized historical FCFF proxy、cash、有息負債、net debt、目前 issued shares、最近完成官方估值日收盤、market cap 與 enterprise value。財報 TTM 嚴格採 Q4 FY 或 current YTD + prior FY - prior-year YTD，並核對 company identity、報表類型、期別、合併範圍、row-role uniqueness 及 HTML/catalog unit provenance；任一證據不足即 data_gap/null，不補 0、不猜科目、不靜默換來源。latestOfficialClose 的內部全市場 dependency 使用 compatible，仍要求至少 95% current-master matchRatio；單一公司 code／name／market 必須再由外層 market=all current master 與官方 selected row 精確核對，因此無關公司的集合差異不會讓合法價格變成 data_gap，目標公司或來源證據不一致仍 fail closed。每個欄位揭露 reported/derived/data_gap/not_applicable、evidenceClass、formula、inputs、lineage 與 notes；歷史財報是目前可見、可能重編版本，不是 point-in-time filing vintage。issuedShares 是目前 master 的已發行普通股，不是 fully diluted shares；latestOfficialClose 不是盤中價，其 freshness 由公司所屬市場的官方年度開休市日曆、exact benchmark session 與 13:33 guard 驗證，來源不可用或契約漂移時保守為 unknown。金融業明確 NOT_APPLICABLE，應改用 residual-income/dividend 類模型。本工具不執行 DCF、不提供 WACC／terminal-growth 隱藏預設、評級、目標價或投資建議。",
     inputSchema: valuationModelInputsInputSchema,
     outputSchema: valuationModelInputsOutputSchema,
     annotations,
@@ -245,7 +274,7 @@ export const getValuationModelInputsTool = defineTool(
         companyCode: company_code,
       });
       const dataGapCount = data.quality.dataGapFields.length;
-      const sourceComplete = sourceDependenciesComplete(data);
+      const sourceComplete = valuationModelSourceDependenciesComplete(data);
       const masterSourceCount = sourcesByStage(
         data.sources,
         "company_master",
@@ -279,7 +308,7 @@ export const getValuationModelInputsTool = defineTool(
               : dataGapCount > 0
                 ? "partial"
                 : "complete",
-          freshnessDetails: freshnessDetails(data),
+          freshnessDetails: await valuationModelFreshnessDetails(data),
           issues: qualityIssues(data),
         },
       );

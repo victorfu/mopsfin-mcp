@@ -788,7 +788,37 @@ export const analyzeObservedPriceOutputSchema =
   analyzeObservedPriceDataSchema
   .safeExtend(successResultShape)
   .superRefine((value, context) => {
-    const expectedMeta = observedPriceMetaContract(value);
+    const officialFreshness = value.meta.quality.freshnessDetails.find(
+      (detail) => detail.policyId === "official.completed-session.v1",
+    );
+    const resolverEvidence = officialFreshness?.resolverEvidence;
+    const expectedMeta = observedPriceMetaContract(value, resolverEvidence);
+    if (!resolverEvidence) {
+      context.addIssue({
+        code: "custom",
+        path: ["meta", "quality", "freshnessDetails"],
+        message:
+          "observed-price official completed-session freshness 必須嵌入 resolver evidence。",
+      });
+    } else if (
+      resolverEvidence.markets.length !== 1 ||
+      resolverEvidence.markets[0] !== value.company.market ||
+      resolverEvidence.marketResolutions.length !== 1 ||
+      resolverEvidence.marketResolutions[0]?.market !== value.company.market
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: [
+          "meta",
+          "quality",
+          "freshnessDetails",
+          "resolverEvidence",
+          "markets",
+        ],
+        message:
+          "observed-price resolver evidence 必須只涵蓋 company／official-close 所屬市場。",
+      });
+    }
     if (
       value.meta.asOf.selector !== "snapshot" ||
       value.meta.asOf.resolved.granularity !== "mixed" ||
@@ -918,37 +948,112 @@ export const analyzeObservedPriceOutputSchema =
           "servedAt 必須是有效時間、不得早於 generatedAt，且 assembledAt 必須是相同 instant",
       });
     }
-    if (value.meta.asOf.sourceCutoffs.length !== value.sources.length) {
+    const resolverSources = [
+      ...new Map(
+        (resolverEvidence?.marketResolutions.flatMap(
+          (resolution) => resolution.sources,
+        ) ?? []).map((source) => [
+          [
+            source.sourceUrl,
+            source.retrievedAt,
+            source.asOfGranularity,
+            source.asOf,
+          ].join("\u0000"),
+          source,
+        ]),
+      ).values(),
+    ];
+    if (
+      value.meta.asOf.sourceCutoffs.length !==
+      value.sources.length + resolverSources.length
+    ) {
       context.addIssue({
         code: "custom",
         path: ["meta", "asOf", "sourceCutoffs"],
-        message: "sourceCutoffs 必須完整一對一保留三份 top-level sources",
+        message:
+          "sourceCutoffs 必須完整一對一保留三份 top-level sources 與 deduped resolver calendar／marker sources",
       });
       return;
     }
-    for (const [index, source] of value.sources.entries()) {
-      const cutoff = value.meta.asOf.sourceCutoffs[index];
-      if (!cutoff) continue;
+    const unusedCutoffIndexes = new Set(
+      value.meta.asOf.sourceCutoffs.map((_, index) => index),
+    );
+    const consumeCutoff = (
+      matches: (
+        cutoff: (typeof value.meta.asOf.sourceCutoffs)[number],
+      ) => boolean,
+    ): boolean => {
+      const index = [...unusedCutoffIndexes].find((candidate) =>
+        matches(value.meta.asOf.sourceCutoffs[candidate]!),
+      );
+      if (index === undefined) return false;
+      unusedCutoffIndexes.delete(index);
+      return true;
+    };
+    for (const source of value.sources) {
       const asOf =
         source.stage === "company_master"
           ? source.reportDate
           : source.dataDate;
       if (
-        cutoff.publishedAt !== null ||
-        cutoff.sourceUrl !== source.sourceUrl ||
-        cutoff.retrievedAt !== source.retrievedAt ||
-        cutoff.resolved.granularity !== "date" ||
-        cutoff.resolved.from !== asOf ||
-        cutoff.resolved.through !== asOf ||
-        JSON.stringify(cutoff.cache) !== JSON.stringify(source.cache)
+        !consumeCutoff(
+          (cutoff) =>
+            cutoff.publishedAt === null &&
+            cutoff.sourceUrl === source.sourceUrl &&
+            cutoff.retrievedAt === source.retrievedAt &&
+            cutoff.resolved.granularity === "date" &&
+            cutoff.resolved.from === asOf &&
+            cutoff.resolved.through === asOf &&
+            JSON.stringify(cutoff.cache) === JSON.stringify(source.cache),
+        )
       ) {
         context.addIssue({
           code: "custom",
-          path: ["meta", "asOf", "sourceCutoffs", index],
+          path: ["meta", "asOf", "sourceCutoffs"],
           message:
-            "每個 source cutoff 必須依序與 top-level source URL、as-of、retrievedAt 與 cache 完全一致",
+            "每個 top-level source 都必須有唯一 cutoff，其 URL、as-of、retrievedAt 與 cache 完全一致",
         });
       }
+    }
+    for (const source of resolverSources) {
+      const resolved =
+        source.asOfGranularity === "year"
+          ? {
+              granularity: "date" as const,
+              from: `${source.asOf}-01-01`,
+              through: `${source.asOf}-12-31`,
+            }
+          : {
+              granularity: "month" as const,
+              from: source.asOf,
+              through: source.asOf,
+            };
+      if (
+        !consumeCutoff(
+          (cutoff) =>
+            cutoff.publishedAt === null &&
+            cutoff.sourceUrl === source.sourceUrl &&
+            cutoff.retrievedAt === source.retrievedAt &&
+            cutoff.resolved.granularity === resolved.granularity &&
+            cutoff.resolved.from === resolved.from &&
+            cutoff.resolved.through === resolved.through &&
+            JSON.stringify(cutoff.cache) === JSON.stringify(source.cache),
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["meta", "asOf", "sourceCutoffs"],
+          message:
+            "每個 deduped resolver source 都必須有唯一 cutoff，其 granularity、as-of、retrievedAt 與 cache 完全一致",
+        });
+      }
+    }
+    if (unusedCutoffIndexes.size > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["meta", "asOf", "sourceCutoffs"],
+        message: "sourceCutoffs 不得包含 top-level 或 resolver evidence 以外的來源。",
+      });
     }
   })
   .describe("analyze_observed_price 的成功 MCP envelope、共用 metadata 與嚴格 domain result");

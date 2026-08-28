@@ -56,6 +56,10 @@ export function GET() {
           "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST",
         tpexBenchmark:
           "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingIndex",
+        twseTradingCalendar:
+          "https://www.twse.com.tw/holidaySchedule/holidaySchedule",
+        tpexTradingCalendar:
+          "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate",
         twseExRightDividend:
           "https://www.twse.com.tw/rwd/zh/exRight/TWT49U",
         twseExRightDividendDetail:

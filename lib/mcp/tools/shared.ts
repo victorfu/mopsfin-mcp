@@ -1,6 +1,14 @@
 import { evaluateFreshness } from "@/lib/freshness/evaluate";
+import {
+  completedSessionExpectedAsOfForMarket,
+  completedSessionResolver,
+} from "@/lib/freshness/completed-session-resolver";
 import { FRESHNESS_POLICIES } from "@/lib/freshness/policies";
 import type { FreshnessEvaluation, FreshnessPolicy } from "@/lib/freshness/types";
+import type {
+  CompanyMarket,
+  CompanyMarketSelection,
+} from "@/lib/company-master/types";
 import { MOPSFIN_SOURCE_URL } from "@/lib/mopsfin/constants";
 import { asMopsfinError } from "@/lib/mopsfin/errors";
 import type { Catalog } from "@/lib/mopsfin/types";
@@ -111,6 +119,62 @@ export function selectorFreshness(options: {
       sourceUrls: sourceUrls(options.sources),
     }),
   ];
+}
+
+export interface CompletedSessionFreshnessObservation {
+  market: CompanyMarket;
+  observedAsOf: string | null;
+  sources: Array<{ sourceUrl: string | null }>;
+}
+
+/**
+ * Resolve latest completed-session freshness once, then evaluate one or more
+ * source-domain observations without performing network work in schemas or
+ * result-contract validation. Explicit historical selectors must keep using
+ * selectorFreshness and never call this helper.
+ */
+export async function resolveOfficialCompletedSessionFreshness(options: {
+  market: CompanyMarketSelection;
+  observations: CompletedSessionFreshnessObservation[];
+  evaluatedAt?: string;
+}): Promise<FreshnessEvaluation[]> {
+  const allowedMarkets: CompanyMarket[] =
+    options.market === "all" ? ["listed", "otc"] : [options.market];
+  if (
+    options.observations.length === 0 ||
+    options.observations.some(
+      (observation) => !allowedMarkets.includes(observation.market),
+    )
+  ) {
+    throw new TypeError(
+      "completed-session observations 必須非空且 market 必須位於 resolver scope。",
+    );
+  }
+  const evidence = await completedSessionResolver.resolve({
+    market: options.market,
+    ...(options.evaluatedAt ? { evaluatedAt: options.evaluatedAt } : {}),
+  });
+  return options.observations.map((observation) => {
+    const resolution = evidence.marketResolutions.find(
+      (item) => item.market === observation.market,
+    );
+    const resolverSourceUrls = resolution?.sources.map(
+      (item) => item.sourceUrl,
+    ) ?? [];
+    return evaluateFreshness({
+      policy: FRESHNESS_POLICIES.completedOfficialSession,
+      observedAsOf: observation.observedAsOf,
+      expectedAsOf:
+        evidence.status === "resolved"
+          ? completedSessionExpectedAsOfForMarket(evidence, observation.market)
+          : null,
+      sourceUrls: [
+        ...sourceUrls(observation.sources),
+        ...resolverSourceUrls,
+      ],
+      resolverEvidence: evidence,
+    });
+  });
 }
 
 export function taipeiDate(instant: string): string | null {

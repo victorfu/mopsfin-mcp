@@ -543,6 +543,64 @@ function inferSourceCutoffs(
   });
 }
 
+function completedSessionResolverCutoffs(
+  freshnessDetails: FreshnessEvaluation[],
+): ResultMeta["asOf"]["sourceCutoffs"] {
+  const cutoffs: ResultMeta["asOf"]["sourceCutoffs"] = [];
+  const seen = new Set<string>();
+  for (const detail of freshnessDetails) {
+    for (const resolution of detail.resolverEvidence?.marketResolutions ?? []) {
+      for (const source of resolution.sources) {
+        const key = [
+          source.sourceUrl,
+          source.retrievedAt,
+          source.asOfGranularity,
+          source.asOf,
+        ].join("\u0000");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        cutoffs.push({
+          sourceUrl: source.sourceUrl,
+          resolved:
+            source.asOfGranularity === "year"
+              ? {
+                  granularity: "date",
+                  from: `${source.asOf}-01-01`,
+                  through: `${source.asOf}-12-31`,
+                }
+              : {
+                  granularity: "month",
+                  from: source.asOf,
+                  through: source.asOf,
+                },
+          publishedAt: null,
+          retrievedAt: source.retrievedAt,
+          cache: source.cache,
+        });
+      }
+    }
+  }
+  return cutoffs;
+}
+
+function uniqueSourceCutoffs(
+  cutoffs: ResultMeta["asOf"]["sourceCutoffs"],
+): ResultMeta["asOf"]["sourceCutoffs"] {
+  const seen = new Set<string>();
+  return cutoffs.filter((cutoff) => {
+    const key = [
+      cutoff.sourceUrl,
+      cutoff.retrievedAt,
+      cutoff.resolved.granularity,
+      cutoff.resolved.from,
+      cutoff.resolved.through,
+    ].join("\u0000");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function buildResultMeta(
   data: object,
   hints: ResultMetaHints = {},
@@ -550,12 +608,16 @@ export function buildResultMeta(
 ): ResultMeta {
   const record = data as UnknownRecord;
   const resolved = hints.resolved ?? inferResolved(record);
-  const sourceCutoffs = inferSourceCutoffs(record, resolved);
+  const domainSourceCutoffs = inferSourceCutoffs(record, resolved);
   const freshnessDetails = fallbackFreshnessDetails(
     hints,
     resolved,
-    sourceCutoffs.map((cutoff) => cutoff.sourceUrl),
+    domainSourceCutoffs.map((cutoff) => cutoff.sourceUrl),
   );
+  const sourceCutoffs = uniqueSourceCutoffs([
+    ...domainSourceCutoffs,
+    ...completedSessionResolverCutoffs(freshnessDetails),
+  ]);
   const snapshotId =
     hints.snapshotId !== undefined
       ? hints.snapshotId

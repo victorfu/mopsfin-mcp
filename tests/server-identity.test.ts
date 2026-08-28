@@ -23,13 +23,14 @@ const runtimeSurfacePaths = [
   "../lib/market-data/client-utils.ts",
   "../lib/mopsfin/http.ts",
   "../lib/revenue/client.ts",
+  "../scripts/test-client-contract.mjs",
   "../scripts/test-client.mjs",
 ] as const;
 
 describe("canonical server identity", () => {
   it("derives runtime identity from package metadata without a second version literal", () => {
     expect(SERVER_VERSION).toBe(packageMetadata.version);
-    expect(SERVER_VERSION).toBe("0.9.0");
+    expect(SERVER_VERSION).toBe("0.9.1");
     expect(SERVER_IDENTITY).toMatchObject({
       name: "mopsfin-taiwan-equities",
       version: packageMetadata.version,
