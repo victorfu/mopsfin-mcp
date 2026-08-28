@@ -46,6 +46,32 @@ describe("LLM-facing official guidance", () => {
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("cache hit 不會改寫 retrievedAt");
   });
 
+  it("distinguishes raw OHLC from fail-closed corporate-action-adjusted series", () => {
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_stock_price_series");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("最多 36 個日曆月份");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "raw_unadjusted 會在單次 orchestration 內收齊最多 3 個既有 get_stock_ohlc cursor pages，但完全不查公司行動",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "price_index_compatible_corporate_action_adjusted",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "anchorDate 固定為最後一根實際 raw bar",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("cash-only factor=1");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("成交量永遠維持 raw shares");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("不可回退 raw");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("freshness 為 not_applicable");
+    expect(MOPSFIN_OFFICIAL_GUIDANCE.valueBasis).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          dataType: "公司行動調整價格序列",
+          basis: expect.stringContaining("非 adjusted close 或 total return"),
+        }),
+      ]),
+    );
+  });
+
   it("explains official catalyst scope without upgrading disclosures into signals", () => {
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_company_catalyst_events");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("material_information");

@@ -2,6 +2,7 @@
 export const PUBLIC_TOOL_NAMES = [
   "find_companies",
   "get_stock_ohlc",
+  "get_stock_price_series",
   "get_daily_market_ohlc",
   "get_stock_reaction_signals",
   "get_company_catalyst_events",

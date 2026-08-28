@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.6.5`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 19 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收、大盤指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
+目前版本 `0.7.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 20 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -17,7 +17,7 @@ Next.js /api/mcp on Vercel
        │    └─ HTML → 展開 rowspan/colspan 的二維 tables
        ├─ openapi.twse.com.tw → 上市公司母體
        ├─ www.tpex.org.tw/openapi → 上櫃公司母體
-       └─ TWSE／TPEx／MOPS 官方資料 → 原始日線價量、日估值、月營收、市場指數、公司行動實際結果、重大訊息／法說會與 current catalyst snapshots
+       └─ TWSE／TPEx／MOPS 官方資料 → 原始日線價量、公司行動調整價格序列、日估值、月營收、市場指數、公司行動實際結果、重大訊息／法說會與 current catalyst snapshots
 ```
 
 - 不使用資料庫、Redis 或已淘汰的 HTTP+SSE transport。
@@ -38,6 +38,7 @@ Next.js /api/mcp on Vercel
 |---|---|
 | `find_companies` | 搜尋公司代號與名稱 |
 | `get_stock_ohlc` | 查詢單一目前或歷史公司股票的跨期原始日線 OHLC，支援時間游標與轉板合併 |
+| `get_stock_price_series` | 一次收齊單一公司最多 36 個月的 raw 或 price-index-compatible 公司行動調整日線，附可選事件 ledger 與 fail-closed 證據 |
 | `get_daily_market_ohlc` | 查詢最近完成交易日或指定日期的上市、上櫃或全部市場日線價量 |
 | `get_stock_reaction_signals` | 比較個股 5／20／60／120 交易日原始與 price-index-compatible 報酬、價格指數 benchmark、量能與回撤代理訊號 |
 | `get_daily_market_valuation` | 查詢上市、上櫃或全部市場 latest／指定日估值與參考財報欄位 |
@@ -58,7 +59,7 @@ Next.js /api/mcp on Vercel
 
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。成功結果固定包含 `ok=true` 與 `meta`；`meta.asOf`、`meta.quality`、`meta.page` 分別揭露實際資料時間、來源／母體／selection／值品質與續頁狀態。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
-LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 19 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 20 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
 
 需要目前上市櫃代號母體或全市場掃描候選代號時使用 `list_companies`；只知道特定公司名稱或代號時使用 `find_companies`，不要以 `find_companies` 枚舉全市場。不知道資料指標或期間時使用 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
@@ -97,7 +98,7 @@ deep batch 會逐公司解析 identity，並在 24-unit 預算內嘗試隔離 me
 
 單次呼叫的 catalyst 計畫查詢工作單位上限為 40；重大訊息每個 company×month 為一單位，歷史法說每個 company×month 會分上市與上櫃兩單位，另加近期 market snapshot。這是執行前的 logical work budget，不包含 company-master hint、cache hit、single-flight 或 retry attempts，也不是實際 HTTP attempt 計數；超限時應縮小公司、日期或 event family 範圍。執行時的 failure isolation 是 `per_company_event_type_calendar_month`：上游錯誤、security block 或 parser failure 只標記對應單位並保留其他結果，不得解讀為無事件。`familyCoverage` 只計 selected-company 歷史月份，近期補強另列於 `coverage.currentSnapshots`。只有官方回應的明確空結果可核對、所有 requested families 完成、`companies[].eventCount=0`、沒有 failures，且 `meta.quality.selection=complete` 已確認公司 identity，才能說該公司在指定範圍「已驗證無事件」。
 
-`publishedAt`、`factDate`、`scheduledAt` 與 `effectiveAt` 分開保留，官方未提供的日期不會互相代填。`dateConfidence=confirmed` 只表示時間直接來自官方證據，不代表事件為正面、負面或市場尚未反應。事件只作為 screening 後的人工查核證據；v0.6.5 不把它納入 `screen_taiwan_stock_candidates` 分數，也不產生情緒、impact score、目標價或買賣建議。
+`publishedAt`、`factDate`、`scheduledAt` 與 `effectiveAt` 分開保留，官方未提供的日期不會互相代填。`dateConfidence=confirmed` 只表示時間直接來自官方證據，不代表事件為正面、負面或市場尚未反應。事件只作為 screening 後的人工查核證據；目前不把它納入 `screen_taiwan_stock_candidates` 分數，也不產生情緒、impact score、目標價或買賣建議。
 
 事件使用 stateless offset 分頁：每頁會重新查詢並組裝官方來源，不是 pinned point-in-time snapshot。續頁必須沿用完全相同的公司、日期與 event types，並在 `fingerprint` 或 `meta.asOf.snapshotId` 改變時由 `offset=0` 重查。
 
@@ -138,7 +139,7 @@ MCP descriptions 必須與實際行為同步，不能只更新程式邏輯或 RE
 3. 每個 input/output 欄位的 Zod `.describe(...)`，包括 enum 各值的精確語意。
 4. README、首頁工具清單、設定 prompt、smoke client 與 MCP integration tests。
 
-整合測試會直接稽核 MCP `tools/list` 的實際輸出：每個工具必須有 title 與足夠完整的 tool description，所有 input/output 的巢狀 object、array item 與其欄位都必須有 description。測試也會特別鎖定 `list_companies` 的市場／TDR 完整性、兩個 OHLC 工具的 `raw_unadjusted`、價量單位、時間游標與完整性，以及歷史估值、歷史月營收／趨勢、批次指標、reaction signals、官方重大訊息／法說會事件與候選篩選四柱的來源、缺值、分頁及比較限制。
+整合測試會直接稽核 MCP `tools/list` 的實際輸出：每個工具必須有 title 與足夠完整的 tool description，所有 input/output 的巢狀 object、array item 與其欄位都必須有 description。測試也會特別鎖定 `list_companies` 的市場／TDR 完整性、兩個既有 OHLC 工具的 `raw_unadjusted`、價量單位、時間游標與完整性，以及 `get_stock_price_series` 的 raw／adjusted 分離、backward anchor、event ledger、fail-closed 調整證據與工作量界線；歷史估值、月營收／趨勢、批次指標、reaction signals、官方事件與候選篩選四柱的來源、缺值、分頁及比較限制也都在契約範圍。
 
 ### 統一結果、分頁與錯誤契約
 
@@ -158,7 +159,17 @@ HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `
 
 `get_daily_market_ohlc` 的 `market=all | listed | otc` 與公司母體一致。`date=latest` 代表最近完成交易日，不是盤中即時價；也可指定 `YYYY-MM-DD`，但假日或未來日期不會退回前一日。指定日期的上市市場最早為 `2004-02-11`、上櫃與全部市場最早為 `2007-04-23`。`company_codes` 最多 500 家；省略時回本次官方 snapshot 中通過公司股票辨識規則的全部 eligible rows，仍須依 `universeCoverageVerified`、`reconciliation` 與 `meta.quality` 判讀 rowset，指定代號有缺漏時則讀取 `selectionComplete` 與 `missingCompanyCodes`。
 
-兩個工具都固定回 `currency=TWD`、`timezone=Asia/Taipei`、`interval=1d`、`priceBasis=raw_unadjusted`，並正規化官方成交股數、成交金額、成交筆數與漲跌。TPEx 歷史個股的「張／仟元」會乘以 1,000 統一為 shares／TWD；每個月、每個實際探測市場的 source 都分開保留 URL、原始單位、multiplier 與 `snapshotIdentity`。只有回應本身可核對月份時才保留 `dataMonth` 並讓 `meta.asOf.sourceCutoffs` 逐月追溯；官方 no-data response 若缺 title/date，會回 `snapshotIdentity=unverified_empty`、省略 `dataMonth`、將該 source cutoff 設為 none，並以 `meta.quality.source=partial` 與 `SOURCE_SNAPSHOT_IDENTITY_UNVERIFIED` 明示。官方 `--`／無成交會正規化為 `null` OHLC 與 `status=no_trade`，官方零成交量值仍保留 0；`qualityStatus`、`missingFields` 與 `dataQualityComplete` 用來區分完整、部分缺欄及官方無成交。週末、休市與停牌日期不會補合成 bar。這兩個 OHLC tools 不提供盤中報價或 adjusted close，也不內嵌公司行動資料或公司行動調整價；需要公司行動證據與 price-index-compatible 報酬時應使用 `get_stock_reaction_signals`。
+兩個工具都固定回 `currency=TWD`、`timezone=Asia/Taipei`、`interval=1d`、`priceBasis=raw_unadjusted`，並正規化官方成交股數、成交金額、成交筆數與漲跌。TPEx 歷史個股的「張／仟元」會乘以 1,000 統一為 shares／TWD；每個月、每個實際探測市場的 source 都分開保留 URL、原始單位、multiplier 與 `snapshotIdentity`。只有回應本身可核對月份時才保留 `dataMonth` 並讓 `meta.asOf.sourceCutoffs` 逐月追溯；官方 no-data response 若缺 title/date，會回 `snapshotIdentity=unverified_empty`、省略 `dataMonth`、將該 source cutoff 設為 none，並以 `meta.quality.source=partial` 與 `SOURCE_SNAPSHOT_IDENTITY_UNVERIFIED` 明示。官方 `--`／無成交會正規化為 `null` OHLC 與 `status=no_trade`，官方零成交量值仍保留 0；`qualityStatus`、`missingFields` 與 `dataQualityComplete` 用來區分完整、部分缺欄及官方無成交。週末、休市與停牌日期不會補合成 bar。這兩個 OHLC tools 不提供盤中報價或 adjusted close，也不內嵌公司行動資料或公司行動調整價；需要完整 raw／adjusted 日線序列時使用獨立的 `get_stock_price_series`，需要 benchmark reaction proxies 時使用 `get_stock_reaction_signals`。
+
+### `get_stock_price_series` 公司行動調整價格序列
+
+這個工具接受一個四碼 `company_code`、含頭含尾的 `start_date`／`end_date`、明確 `price_basis` 與 `include_event_ledger`；單次最多 36 個日曆月份，沒有 public cursor。它會在一次 orchestration 內收齊最多 3 個既有 `get_stock_ohlc` cursor pages；raw range 未能在安全上限內完整處理時整個工具 fail closed，不把局部結果冒充完整序列。`get_stock_ohlc` 的公開輸入、輸出與逐頁行為完全不變。
+
+`price_basis=raw_unadjusted` 只回官方原始未還原權值 OHLC，完全不查公司行動；即使 `include_event_ledger=true`，ledger 仍為空，也不會增加公司行動請求。`price_basis=price_index_compatible_corporate_action_adjusted` 才會用 TWSE／TPEx official actual-result 除權息、減資與面額變更資料建立 backward factor，`adjustment.anchorDate` 固定是 requested window 最後一根實際 raw bar，而不是落在休市日的 requested end date。cash-only 現金股利 factor 固定為 1，現金股利造成的價格效果會保留；因此 adjusted OHLC 不是 adjusted close、股息再投資、total return 或 total shareholder return。成交量不調整，`volumeBasis=raw_shares`。
+
+`include_event_ledger=true` 只在 adjusted basis 附上逐事件 official lineage、factor、`priorCloseCheck` 與 `markerReconciliation`。公司 identity、official history coverage、factor、prior close、同日多事件、轉板／市場、名稱或 `changeMarker` reconciliation 任一證據不足時，受影響 `cumulativeFactor` 與 `adjusted` 固定為 `null`，`adjustmentStatus=unknown` 並列出穩定原因；絕不回退 raw、猜測 factor 或把沒有可驗證事件說成無事件。原始 OHLC 與 raw volume 仍保留供稽核。
+
+結果的 `sources[].stage` 分開標示 `company_master`、`raw_price` 與 `corporate_actions`，`coverage` 分開揭露 raw、公司行動與 adjustment；`workBudget` 另列一次 orchestration master call、最多 3 個 OHLC pages，以及 adjusted basis 至多一次 history dependency 與其官方 request count。`fingerprint` 綁 query、identity、raw bars、公司行動 history 與 adjustment evidence，排除 `retrievedAt`／cache caller state。這是明確歷史 range，`meta.quality.freshness=not_applicable`；它不是盤中即時或「截至現在」的價格聲明，也不構成投資建議。
 
 `get_daily_market_ohlc` 的 `universe_policy=compatible` 維持 current-master 加四碼代號 fallback 行為，但各市場與目前 master 的 `matchRatio` 仍須至少 95%，以拒絕疑似截斷來源，並以 `classificationPolicy` 與 `reconciliation` 如實揭露差異；`strict_current_master` 只允許 `date=latest`，目前公司母體與行情不完全吻合時回 `INCOMPLETE_COVERAGE`。歷史日期固定採 `historical_code_rule`，不可將目前公司母體套用為歷史母體或據此宣稱無存續偏誤。
 
@@ -237,7 +248,7 @@ ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` �
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
 4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
-5. 建立後確認 ChatGPT 能辨識 19 個工具。
+5. 建立後確認 ChatGPT 能辨識 20 個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
 Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流程見 [OpenAI 官方連接說明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。
@@ -246,6 +257,7 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 
 - 「查台積電最近 12 季營業收入，整理成表格並標示期別、單位與 warnings。」
 - 「查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。」
+- 「用 get_stock_price_series 查台積電 2025-01-01 到 2026-08-24 的 price-index-compatible 公司行動調整日線並附 event ledger；同時保留 raw OHLC、標示 backward anchor、現金股利 factor=1 與 raw shares，任何 adjustment 證據不足請回 null，不要回退 raw，也不要稱為 adjusted close 或 total return。」
 - 「列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。」
 - 「查最新上市櫃公司估值，列出台積電與穩懋的本益比、股價淨值比、殖利率及 valueStatus。」
 - 「查 2025-01-02 上市櫃公司估值，列出台積電與穩懋的 PE、PB、股利年度、參考財報期與 rawValue。」
@@ -274,7 +286,7 @@ npm test
 npm run build
 ```
 
-一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、官方重大訊息／法說會事件、current official catalyst snapshots、latest 候選篩選四柱與 funnel、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
+一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、raw／公司行動調整價格序列、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、官方重大訊息／法說會事件、current official catalyst snapshots、latest 候選篩選四柱與 funnel、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
 
 Live contract tests 預設從一般測試跳過，只有明確設定時才會查詢原站。只執行低流量的 screening semantic catalog canary：
 
@@ -312,7 +324,7 @@ npm run test:live
 4. 部署後以 `npm run test:client -- https://<preview>/api/mcp` 驗收。
 5. 視公開流量在 Vercel Firewall 設定適當規則；應用本身不建立跨 instance rate-limit 資料庫。
 
-建議 Preview 驗收：latest 非金融研究候選篩選、指定公司官方 catalyst events 與 current snapshots、台積電最近 12 季營收、台積電與聯發科 ROE、多家公司多指標 batch、2026-08-24 上市櫃 OHLC、指定日估值、歷史月營收／趨勢、台積電相對 TAIEX reaction signals、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
+建議 Preview 驗收：latest 非金融研究候選篩選、指定公司官方 catalyst events 與 current snapshots、台積電最近 12 季營收、台積電與聯發科 ROE、多家公司多指標 batch、2026-08-24 上市櫃 OHLC、台積電 raw／公司行動調整價格序列與 event ledger、指定日估值、歷史月營收／趨勢、台積電相對 TAIEX reaction signals、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
 
 ## 錯誤碼
 

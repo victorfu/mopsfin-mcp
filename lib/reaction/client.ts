@@ -7,6 +7,13 @@ import type {
   MasterCompany,
 } from "@/lib/company-master/types";
 import { corporateActionClient } from "@/lib/corporate-actions/client";
+import {
+  buildPriceIndexCompatibleSeries,
+  corporateActionEventsWithin,
+  isPriceIndexAdjustableCorporateAction,
+  type PriceIndexAdjustmentUnknownReason,
+  type PriceIndexCompatibleSeriesResult,
+} from "@/lib/corporate-actions/adjustment-engine";
 import type {
   CorporateActionEvent,
   CorporateActionHistory,
@@ -451,7 +458,7 @@ function loadedCorporateActionEvidenceComplete(
     history.coverage.coverageComplete &&
     history.events
       .filter((event) => event.effectiveDate > history.requestedStart)
-      .every(actionIsAdjustable)
+      .every(isPriceIndexAdjustableCorporateAction)
   );
 }
 
@@ -498,203 +505,103 @@ function sameBar(left: OhlcBar, right: OhlcBar): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function actionIsAdjustable(event: CorporateActionEvent): boolean {
-  return (
-    event.adjustmentStatus === "available" &&
-    typeof event.priceIndexAdjustmentFactor === "number" &&
-    Number.isFinite(event.priceIndexAdjustmentFactor) &&
-    event.priceIndexAdjustmentFactor > 0
-  );
-}
-
-function actionPriorCloseMatches(
-  event: CorporateActionEvent,
-  bars: OhlcBar[],
-): boolean {
-  if (
-    typeof event.priorCloseTwd !== "number" ||
-    !Number.isFinite(event.priorCloseTwd) ||
-    event.priorCloseTwd <= 0
-  ) {
-    return false;
-  }
-  const previousClose = bars
-    .filter(
-      (bar) =>
-        bar.date < event.effectiveDate &&
-        typeof bar.close === "number" &&
-        Number.isFinite(bar.close) &&
-        bar.close > 0,
-    )
-    .sort((left, right) => left.date.localeCompare(right.date))
-    .at(-1)?.close;
-  if (typeof previousClose !== "number") return false;
-  const tolerance = Math.max(1e-6, event.priorCloseTwd * 1e-8);
-  return Math.abs(previousClose - event.priorCloseTwd) <= tolerance;
-}
-
-function ambiguousSameDayActionKeys(
-  events: CorporateActionEvent[],
-): Set<string> {
-  const counts = new Map<string, number>();
-  for (const event of events) {
-    const key = `${event.companyCode}:${event.effectiveDate}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return new Set(
-    [...counts]
-      .filter(([, count]) => count > 1)
-      .map(([key]) => key),
-  );
-}
-
-function hasAmbiguousSameDayActions(events: CorporateActionEvent[]): boolean {
-  return ambiguousSameDayActionKeys(events).size > 0;
-}
-
-function actionIsUsable(
-  event: CorporateActionEvent,
-  bars: OhlcBar[],
-  events: CorporateActionEvent[],
-): boolean {
-  return (
-    !ambiguousSameDayActionKeys(events).has(
-      `${event.companyCode}:${event.effectiveDate}`,
-    ) &&
-    actionIsAdjustable(event) &&
-    actionPriorCloseMatches(event, bars)
-  );
-}
-
-function eventsWithin(
-  events: CorporateActionEvent[],
-  startDate: string,
-  endDate: string,
-): CorporateActionEvent[] {
-  return events.filter(
-    (event) => event.effectiveDate > startDate && event.effectiveDate <= endDate,
-  );
-}
-
-function officialMarkersWithin(
-  bars: OhlcBar[],
-  startDate: string,
-  endDate: string,
-) {
-  return bars
-    .filter(
-      (bar) =>
-        bar.date > startDate &&
-        bar.date <= endDate &&
-        bar.changeMarker !== null,
-    )
-    .map((bar) => ({ date: bar.date, marker: bar.changeMarker as string }));
-}
-
-function unmatchedMarkers(
-  bars: OhlcBar[],
-  events: CorporateActionEvent[],
-  startDate: string,
-  endDate: string,
-) {
-  const eventDates = new Set(
-    eventsWithin(events, startDate, endDate).map((event) => event.effectiveDate),
-  );
-  return officialMarkersWithin(bars, startDate, endDate).filter(
-    (marker) => !eventDates.has(marker.date),
-  );
-}
-
-function adjustedCloseMap(
-  benchmarkWindow: BenchmarkHistory["bars"],
-  barsByDate: Map<string, OhlcBar>,
-  events: CorporateActionEvent[],
-): { closes: Map<string, number>; startFactor: number } {
-  const endDate = (benchmarkWindow.at(-1) as { date: string }).date;
-  const relevantEvents = eventsWithin(events, benchmarkWindow[0].date, endDate);
-  const bars = [...barsByDate.values()];
-  const closes = new Map<string, number>();
-  for (const benchmark of benchmarkWindow) {
-    const close = barsByDate.get(benchmark.date)?.close;
-    if (typeof close !== "number" || !Number.isFinite(close) || close <= 0) continue;
-    const factor = relevantEvents
-      .filter((event) => event.effectiveDate > benchmark.date)
-      .reduce(
-        (product, event) =>
-          product * (actionIsUsable(event, bars, relevantEvents)
-            ? (event.priceIndexAdjustmentFactor as number)
-            : 1),
-        1,
-      );
-    closes.set(benchmark.date, close * factor);
-  }
-  const startFactor = relevantEvents.reduce(
-    (product, event) =>
-      product * (actionIsUsable(event, bars, relevantEvents)
-        ? (event.priceIndexAdjustmentFactor as number)
-        : 1),
-    1,
-  );
-  return { closes, startFactor };
-}
-
-function returnComparabilityReasons(
-  signal: ReturnReactionSignal,
+function adjustmentForWindow(
   company: MasterCompany,
+  benchmarkWindow: BenchmarkHistory["bars"],
   bars: OhlcBar[],
   observedNames: string[],
   actionHistory: CorporateActionHistory | null,
   companyEvents: CorporateActionEvent[],
+): PriceIndexCompatibleSeriesResult {
+  return buildPriceIndexCompatibleSeries({
+    companyCode: company.code,
+    currentCompanyName: company.shortName,
+    currentMarket: company.market,
+    observedNames: [
+      ...observedNames,
+      ...companyEvents.map((event) => event.name),
+    ],
+    bars,
+    events: companyEvents,
+    coverage: actionHistory?.coverage ?? null,
+    windowStartDate: benchmarkWindow[0].date,
+    anchorDate: (benchmarkWindow.at(-1) as { date: string }).date,
+  });
+}
+
+function adjustedCloseMap(
+  adjustment: PriceIndexCompatibleSeriesResult,
+): Map<string, number> {
+  return new Map(
+    adjustment.bars.flatMap((bar) =>
+      typeof bar.adjusted?.close === "number"
+        ? [[bar.date, bar.adjusted.close] as const]
+        : [],
+    ),
+  );
+}
+
+function hasAdjustmentReason(
+  adjustment: PriceIndexCompatibleSeriesResult,
+  reasons: PriceIndexAdjustmentUnknownReason[],
+): boolean {
+  return reasons.some((reason) => adjustment.unknownReasons.includes(reason));
+}
+
+function hasUsableFactorWithPriorCloseFailure(
+  adjustment: PriceIndexCompatibleSeriesResult,
+): boolean {
+  return adjustment.eventLedger.some(
+    (ledger) =>
+      isPriceIndexAdjustableCorporateAction(ledger.event) &&
+      ledger.priorCloseCheck.status !== "matched",
+  );
+}
+
+function returnComparabilityReasonsFromAdjustment(
+  adjustment: PriceIndexCompatibleSeriesResult,
 ): ExcessReturnComparabilityReason[] {
   const reasons: ExcessReturnComparabilityReason[] = [];
-  if (!actionHistory?.coverage.coverageComplete) {
+  if (
+    adjustment.unknownReasons.includes(
+      "corporate_action_coverage_incomplete",
+    )
+  ) {
     reasons.push("corporate_action_coverage_incomplete");
   }
-  const horizonEvents = eventsWithin(
-    companyEvents,
-    signal.startDate,
-    signal.endDate,
-  );
   if (
-    horizonEvents.some((event) => !actionIsAdjustable(event)) ||
-    hasAmbiguousSameDayActions(horizonEvents)
+    hasAdjustmentReason(adjustment, [
+      "corporate_action_factor_unavailable",
+      "cash_only_factor_not_one",
+      "ambiguous_same_day_corporate_actions",
+      "duplicate_raw_bar_date",
+    ])
   ) {
     reasons.push("corporate_action_adjustment_unavailable");
   }
-  if (
-    horizonEvents.some(
-      (event) => actionIsAdjustable(event) && !actionPriorCloseMatches(event, bars),
-    )
-  ) {
+  if (hasUsableFactorWithPriorCloseFailure(adjustment)) {
     reasons.push("corporate_action_prior_close_mismatch");
   }
   if (
-    unmatchedMarkers(
-      bars,
-      companyEvents,
-      signal.startDate,
-      signal.endDate,
-    ).length > 0
+    adjustment.unknownReasons.includes("unmatched_official_change_marker")
   ) {
     reasons.push("unmatched_official_change_marker_within_horizon");
   }
-  const horizonBars = bars.filter(
-    (bar) => bar.date >= signal.startDate && bar.date <= signal.endDate,
-  );
-  const horizonMarkets = new Set(horizonBars.map((bar) => bar.market));
   if (
-    horizonMarkets.size > 1 ||
-    [...horizonMarkets].some((market) => market !== company.market)
+    hasAdjustmentReason(adjustment, [
+      "market_transition_or_historical_market_mismatch",
+      "corporate_action_market_mismatch",
+    ])
   ) {
     reasons.push(
       "market_transition_or_historical_market_mismatch_within_horizon",
     );
   }
   if (
-    new Set(
-      [company.shortName, ...observedNames, ...companyEvents.map((event) => event.name)]
-        .map((name) => name.trim()),
-    ).size > 1
+    hasAdjustmentReason(adjustment, [
+      "company_identity_name_mismatch",
+      "corporate_action_company_code_mismatch",
+    ])
   ) {
     reasons.push("multiple_observed_names");
   }
@@ -703,21 +610,10 @@ function returnComparabilityReasons(
 
 function applyReturnComparability(
   signal: ReturnReactionSignal,
-  company: MasterCompany,
-  bars: OhlcBar[],
-  observedNames: string[],
-  actionHistory: CorporateActionHistory | null,
-  companyEvents: CorporateActionEvent[],
+  adjustment: PriceIndexCompatibleSeriesResult,
 ): ReturnReactionSignal {
   if (signal.status !== "available") return signal;
-  const reasons = returnComparabilityReasons(
-    signal,
-    company,
-    bars,
-    observedNames,
-    actionHistory,
-    companyEvents,
-  );
+  const reasons = returnComparabilityReasonsFromAdjustment(adjustment);
   return reasons.length === 0
     ? signal
     : {
@@ -742,18 +638,37 @@ function corporateActionNotComparable(
 
 function volumeWindowComparable(
   signal: { startDate: string; endDate: string },
+  company: MasterCompany,
   bars: OhlcBar[],
+  observedNames: string[],
   actionHistory: CorporateActionHistory | null,
   companyEvents: CorporateActionEvent[],
 ): boolean {
-  if (!actionHistory?.coverage.coverageComplete) return false;
+  const adjustment = buildPriceIndexCompatibleSeries({
+    companyCode: company.code,
+    currentCompanyName: company.shortName,
+    currentMarket: company.market,
+    observedNames,
+    bars,
+    events: companyEvents,
+    coverage: actionHistory?.coverage ?? null,
+    windowStartDate: signal.startDate,
+    anchorDate: signal.endDate,
+  });
   if (
-    unmatchedMarkers(bars, companyEvents, signal.startDate, signal.endDate).length > 0
+    !adjustment.coverageComplete ||
+    adjustment.unmatchedOfficialChangeMarkers.length > 0
   ) {
     return false;
   }
-  return !eventsWithin(companyEvents, signal.startDate, signal.endDate).some(
-    (event) => event.shareCountChanged || !actionIsAdjustable(event),
+  return !corporateActionEventsWithin(
+    companyEvents,
+    signal.startDate,
+    signal.endDate,
+  ).some(
+    (event) =>
+      event.shareCountChanged ||
+      !isPriceIndexAdjustableCorporateAction(event),
   );
 }
 
@@ -767,35 +682,29 @@ function comparability(
   startDate: string,
   endDate: string,
 ): ReactionComparability {
-  const observedMarkets = (["listed", "otc"] as const).filter((market) =>
-    bars.some((bar) => bar.market === market),
-  );
-  const marketTransitionDetected =
-    observedMarkets.length > 1 ||
-    observedMarkets.some((market) => market !== company.market);
-  const officialChangeMarkers = bars
-    .filter((bar) => bar.changeMarker !== null)
-    .map((bar) => ({ date: bar.date, marker: bar.changeMarker as string }));
-  const unmatchedOfficialChangeMarkers = unmatchedMarkers(
+  const adjustment = buildPriceIndexCompatibleSeries({
+    companyCode: company.code,
+    currentCompanyName: company.shortName,
+    currentMarket: company.market,
+    observedNames: [
+      ...observedNames,
+      ...companyEvents.map((event) => event.name),
+    ],
     bars,
-    companyEvents,
-    startDate,
-    endDate,
-  );
-  const coverageComplete = actionHistory?.coverage.coverageComplete === true;
-  const hasUnavailableAdjustment = eventsWithin(
-    companyEvents,
-    startDate,
-    endDate,
-  ).some((event) => !actionIsAdjustable(event)) ||
-    hasAmbiguousSameDayActions(eventsWithin(companyEvents, startDate, endDate));
-  const hasPriorCloseMismatch = eventsWithin(
-    companyEvents,
-    startDate,
-    endDate,
-  ).some(
-    (event) => actionIsAdjustable(event) && !actionPriorCloseMatches(event, bars),
-  );
+    events: companyEvents,
+    coverage: actionHistory?.coverage ?? null,
+    windowStartDate: startDate,
+    anchorDate: endDate,
+  });
+  const coverageComplete = adjustment.coverageComplete;
+  const hasUnavailableAdjustment = hasAdjustmentReason(adjustment, [
+    "corporate_action_factor_unavailable",
+    "cash_only_factor_not_one",
+    "ambiguous_same_day_corporate_actions",
+    "duplicate_raw_bar_date",
+  ]);
+  const hasPriorCloseMismatch =
+    hasUsableFactorWithPriorCloseFailure(adjustment);
   const reasons: ReactionComparability["reasons"] = [];
   if (stockDataStatus === "no_data") reasons.push("no_stock_data");
   if (stockDataStatus === "unavailable") {
@@ -808,18 +717,21 @@ function comparability(
   if (hasPriorCloseMismatch) {
     reasons.push("corporate_action_prior_close_mismatch");
   }
-  if (unmatchedOfficialChangeMarkers.length > 0) {
+  if (adjustment.unmatchedOfficialChangeMarkers.length > 0) {
     reasons.push("unmatched_official_change_marker_present");
   }
-  if (marketTransitionDetected) {
+  if (
+    hasAdjustmentReason(adjustment, [
+      "market_transition_or_historical_market_mismatch",
+      "corporate_action_market_mismatch",
+    ])
+  ) {
     reasons.push("market_transition_or_historical_market_mismatch");
   }
-  if (
-    new Set(
-      [company.shortName, ...observedNames, ...companyEvents.map((event) => event.name)]
-        .map((name) => name.trim()),
-    ).size > 1
-  ) {
+  if (hasAdjustmentReason(adjustment, [
+    "company_identity_name_mismatch",
+    "corporate_action_company_code_mismatch",
+  ])) {
     reasons.push("multiple_observed_names");
   }
   return {
@@ -842,11 +754,12 @@ function comparability(
         ? "official_history_verified_events"
         : "official_history_verified_no_event",
     corporateActionCoverageComplete: coverageComplete,
-    marketTransitionDetected,
-    observedMarkets,
+    marketTransitionDetected: adjustment.marketTransitionDetected,
+    observedMarkets: adjustment.observedMarkets,
     corporateActions: companyEvents,
-    officialChangeMarkers,
-    unmatchedOfficialChangeMarkers,
+    officialChangeMarkers: adjustment.officialChangeMarkers,
+    unmatchedOfficialChangeMarkers:
+      adjustment.unmatchedOfficialChangeMarkers,
     reasons,
   };
 }
@@ -885,21 +798,24 @@ function companySignals(
       resolvedAsOf,
       horizon + 1,
     );
-    const adjusted = adjustedCloseMap(window, barsByDate, companyEvents);
+    const adjustment = adjustmentForWindow(
+      company,
+      window,
+      stock.bars,
+      stock.observedNames,
+      actionHistory,
+      companyEvents,
+    );
     return applyReturnComparability(
       calculateReturnSignal(
         horizon,
         window,
         barsByDate,
         stock.status,
-        adjusted.closes,
-        adjusted.startFactor,
+        adjustedCloseMap(adjustment),
+        adjustment.factorAtWindowStart ?? 1,
       ),
-      company,
-      stock.bars,
-      stock.observedNames,
-      actionHistory,
-      companyEvents,
+      adjustment,
     );
   });
   const rawVolume5 = calculateAverageWindowSignal(
@@ -930,9 +846,12 @@ function companySignals(
     "turnoverTwd",
     stock.status,
   );
-  const adjustedPath = adjustedCloseMap(
+  const pathAdjustment = adjustmentForWindow(
+    company,
     longestBenchmarkWindow,
-    barsByDate,
+    stock.bars,
+    stock.observedNames,
+    actionHistory,
     companyEvents,
   );
   const rawPricePath = calculatePricePathSignal(
@@ -940,31 +859,20 @@ function companySignals(
     longestBenchmarkWindow,
     barsByDate,
     stock.status,
-    adjustedPath.closes,
+    adjustedCloseMap(pathAdjustment),
   );
-  const actionPathComparable =
-    actionHistory?.coverage.coverageComplete === true &&
-    eventsWithin(
-      companyEvents,
-      rawPricePath.startDate,
-      rawPricePath.endDate,
-    ).every((event) =>
-      actionIsUsable(
-        event,
-        stock.bars,
-        eventsWithin(
-          companyEvents,
-          rawPricePath.startDate,
-          rawPricePath.endDate,
-        ),
-      ),
-    ) &&
-    unmatchedMarkers(
-      stock.bars,
-      companyEvents,
-      rawPricePath.startDate,
-      rawPricePath.endDate,
-    ).length === 0;
+  const actionPathComparable = !hasAdjustmentReason(pathAdjustment, [
+    "corporate_action_coverage_incomplete",
+    "corporate_action_factor_unavailable",
+    "cash_only_factor_not_one",
+    "ambiguous_same_day_corporate_actions",
+    "corporate_action_prior_close_missing",
+    "corporate_action_prior_close_mismatch",
+    "unmatched_official_change_marker",
+    "corporate_action_market_mismatch",
+    "corporate_action_company_code_mismatch",
+    "duplicate_raw_bar_date",
+  ]);
   const pricePath = actionPathComparable || rawPricePath.status !== "available"
     ? rawPricePath
     : {
@@ -988,12 +896,26 @@ function companySignals(
   );
   const volume5 =
     rawVolume5.status === "available" &&
-    !volumeWindowComparable(rawVolume5, stock.bars, actionHistory, companyEvents)
+    !volumeWindowComparable(
+      rawVolume5,
+      company,
+      stock.bars,
+      stock.observedNames,
+      actionHistory,
+      companyEvents,
+    )
       ? corporateActionNotComparable(rawVolume5)
       : rawVolume5;
   const volume20 =
     rawVolume20.status === "available" &&
-    !volumeWindowComparable(rawVolume20, stock.bars, actionHistory, companyEvents)
+    !volumeWindowComparable(
+      rawVolume20,
+      company,
+      stock.bars,
+      stock.observedNames,
+      actionHistory,
+      companyEvents,
+    )
       ? corporateActionNotComparable(rawVolume20)
       : rawVolume20;
   const volumeRatio = calculateRatioSignal(volume5, volume20);

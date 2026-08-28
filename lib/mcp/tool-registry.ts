@@ -11,6 +11,7 @@ import { companiesTools } from "./tools/companies";
 import type { ToolDefinition } from "./tools/definition";
 import { financialsTools } from "./tools/financials";
 import { marketTools } from "./tools/market";
+import { priceSeriesTools } from "./tools/price-series";
 import { revenueTools } from "./tools/revenue";
 import { researchTools } from "./tools/research";
 import { screeningTools } from "./tools/screening";
@@ -18,6 +19,7 @@ import { screeningTools } from "./tools/screening";
 const definitions = [
   ...companiesTools,
   ...marketTools,
+  ...priceSeriesTools,
   ...catalystTools,
   ...screeningTools,
   ...researchTools,

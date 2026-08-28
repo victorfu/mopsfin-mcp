@@ -37,6 +37,11 @@ export {
 } from "./schema/valuation";
 
 export {
+  stockPriceSeriesInputSchema,
+  stockPriceSeriesOutputSchema,
+} from "./schema/price-series";
+
+export {
   monthlyRevenueInputSchema,
   monthlyRevenueOutputSchema,
   monthlyRevenueTrendInputSchema,

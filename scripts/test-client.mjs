@@ -39,6 +39,11 @@ try {
       `tools/list returned ${names.length} tools but health reports ${String(health.toolCount)}: ${names.join(", ")}`,
     );
   }
+  if (!names.includes("get_stock_price_series")) {
+    throw new Error(
+      `tools/list is missing the v0.7 price-series contract: ${names.join(", ")}`,
+    );
+  }
   if (health.mcpEndpoint !== endpoint.pathname) {
     throw new Error(
       `Health MCP endpoint ${String(health.mcpEndpoint)} does not match ${endpoint.pathname}`,

@@ -14,6 +14,7 @@ const readme = readFileSync(
 const verifiedExamplePrompts = [
   "查台積電最近 12 季營業收入，整理成表格並標示期別、單位與 warnings。",
   "查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。",
+  "用 get_stock_price_series 查台積電 2025-01-01 到 2026-08-24 的 price-index-compatible 公司行動調整日線並附 event ledger；同時保留 raw OHLC、標示 backward anchor、現金股利 factor=1 與 raw shares，任何 adjustment 證據不足請回 null，不要回退 raw，也不要稱為 adjusted close 或 total return。",
   "列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。",
   "查最新上市櫃公司估值，列出台積電與穩懋的本益比、股價淨值比、殖利率及 valueStatus。",
   "查 2025-01-02 上市櫃公司估值，列出台積電與穩懋的 PE、PB、股利年度、參考財報期與 rawValue。",
@@ -145,6 +146,16 @@ describe("README example prompts", () => {
     expect(readme).toContain("不使用資料庫、不寫入 persistence");
     expect(readme).toContain("這兩個 OHLC tools");
     expect(readme).toContain("不內嵌公司行動資料或公司行動調整價");
+    expect(readme).toContain("### `get_stock_price_series` 公司行動調整價格序列");
+    expect(readme).toContain("單次最多 36 個日曆月份");
+    expect(readme).toContain("沒有 public cursor");
+    expect(readme).toContain("最多 3 個既有 `get_stock_ohlc` cursor pages");
+    expect(readme).toContain("完全不查公司行動");
+    expect(readme).toContain("backward factor");
+    expect(readme).toContain("cash-only 現金股利 factor 固定為 1");
+    expect(readme).toContain("`volumeBasis=raw_shares`");
+    expect(readme).toContain("絕不回退 raw");
+    expect(readme).toContain("`meta.quality.freshness=not_applicable`");
     expect(readme).toContain("balanced_non_financial_v2");
     expect(readme).toContain("taiwan_stock_screen.v2");
     expect(readme).toContain("coarseRanking");

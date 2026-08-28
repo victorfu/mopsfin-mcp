@@ -22,6 +22,8 @@ import {
   monthlyRevenueTrendInputSchema,
   screenTaiwanStockCandidatesInputSchema,
   stockOhlcOutputSchema,
+  stockPriceSeriesInputSchema,
+  stockPriceSeriesOutputSchema,
   stockReactionSignalsInputSchema,
   stockReactionSignalsOutputSchema,
 } from "@/lib/mcp/schemas";
@@ -32,6 +34,8 @@ import { MopsfinError } from "@/lib/mopsfin/errors";
 import { MOPSFIN_SERVER_INSTRUCTIONS } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
 import { priceClient } from "@/lib/price/client";
+import { stockPriceSeriesClient } from "@/lib/price-series/client";
+import type { StockPriceSeriesResult } from "@/lib/price-series/types";
 import { reactionClient } from "@/lib/reaction/client";
 import type { StockReactionSignalsResult } from "@/lib/reaction/types";
 import { monthlyRevenueClient } from "@/lib/revenue/client";
@@ -809,6 +813,254 @@ const stockOhlc = {
   ],
   warnings: [],
 };
+
+const stockPriceSeries = {
+  query: {
+    companyCode: "2330",
+    startDate: "2026-01-01",
+    endDate: "2026-01-31",
+    priceBasis:
+      "price_index_compatible_corporate_action_adjusted" as const,
+    includeEventLedger: true,
+  },
+  generatedAt: "2026-08-25T00:00:00.000Z",
+  timezone: "Asia/Taipei" as const,
+  currency: "TWD" as const,
+  interval: "1d" as const,
+  requestedPriceBasis:
+    "price_index_compatible_corporate_action_adjusted" as const,
+  rawPriceBasis: "raw_unadjusted" as const,
+  adjustedPriceBasis:
+    "price_index_compatible_corporate_action_adjusted" as const,
+  coverageComplete: true,
+  dataQualityComplete: true,
+  identity: {
+    status: "verified_current_master" as const,
+    companyCode: "2330",
+    companyName: "台積電",
+    resolvedMarket: "listed" as const,
+    currentMasterMarket: "listed" as const,
+    currentMasterName: "台積電",
+    masterSnapshotId: "listed-2026-08-24+otc-2026-08-24",
+    observedNames: ["台積電"],
+    observedMarkets: ["listed" as const],
+    reasons: [],
+  },
+  adjustment: {
+    status: "complete" as const,
+    adjustmentDirection: "backward" as const,
+    anchorDate: "2026-01-05",
+    factorAtWindowStart: 0.5,
+    cashDividendTreatment: "retained" as const,
+    isAdjustedClose: false as const,
+    isTotalReturn: false as const,
+    volumeAdjusted: false as const,
+    volumeBasis: "raw_shares" as const,
+    unknownReasons: [],
+    officialChangeMarkers: [{ date: "2026-01-05", marker: "X" }],
+    unmatchedOfficialChangeMarkers: [],
+    marketTransitionDetected: false,
+  },
+  bars: [
+    {
+      date: "2026-01-02",
+      open: 1555,
+      high: 1585,
+      low: 1545,
+      close: 1585,
+      volumeShares: 25_000_000,
+      turnoverTwd: 39_200_000_000,
+      tradeCount: 50_000,
+      change: 30,
+      changeMarker: null,
+      market: "listed" as const,
+      status: "traded" as const,
+      qualityStatus: "complete" as const,
+      missingFields: [],
+      cumulativeFactor: 0.5,
+      adjusted: {
+        open: 777.5,
+        high: 792.5,
+        low: 772.5,
+        close: 792.5,
+      },
+      adjustmentStatus: "complete" as const,
+      adjustmentUnknownReasons: [],
+      volumeBasis: "raw_shares" as const,
+    },
+    {
+      date: "2026-01-05",
+      open: 790,
+      high: 805,
+      low: 785,
+      close: 800,
+      volumeShares: 30_000_000,
+      turnoverTwd: 24_000_000_000,
+      tradeCount: 60_000,
+      change: 7.5,
+      changeMarker: "X",
+      market: "listed" as const,
+      status: "traded" as const,
+      qualityStatus: "complete" as const,
+      missingFields: [],
+      cumulativeFactor: 1,
+      adjusted: {
+        open: 790,
+        high: 805,
+        low: 785,
+        close: 800,
+      },
+      adjustmentStatus: "complete" as const,
+      adjustmentUnknownReasons: [],
+      volumeBasis: "raw_shares" as const,
+    },
+  ],
+  eventLedgerIncluded: true,
+  eventLedger: [
+    {
+      event: {
+        companyCode: "2330",
+        name: "台積電",
+        market: "listed" as const,
+        effectiveDate: "2026-01-05",
+        kind: "stock_rights" as const,
+        priorCloseTwd: 1585,
+        referencePriceTwd: 792.5,
+        cashDividendPerShareTwd: null,
+        priceIndexAdjustmentFactor: 0.5,
+        shareCountChanged: true,
+        adjustmentStatus: "available" as const,
+        adjustmentReason:
+          "official_reference_price_divided_by_prior_close" as const,
+        sourceFamily: "ex_right_dividend" as const,
+        sourceUrl: "https://www.twse.com.tw/rwd/zh/exRight/TWT49UDetail",
+        rawType: "除權",
+      },
+      status: "applied" as const,
+      factor: 0.5,
+      priorCloseCheck: {
+        status: "matched" as const,
+        officialPriorCloseTwd: 1585,
+        observedPriorCloseDate: "2026-01-02",
+        observedPriorCloseTwd: 1585,
+        toleranceTwd: 0.00001585,
+      },
+      markerReconciliation: {
+        status: "matched" as const,
+        marker: "X",
+      },
+      unknownReasons: [],
+    },
+  ],
+  coverage: {
+    requestedStart: "2026-01-01",
+    requestedEnd: "2026-01-31",
+    rawPrice: {
+      status: "complete" as const,
+      coverageComplete: true as const,
+      coveredThrough: "2026-01-31",
+      pageCount: 1,
+      barCount: 2,
+      dataQualityComplete: true,
+    },
+    corporateActions: {
+      status: "complete" as const,
+      coverage: {
+        status: "complete" as const,
+        coverageComplete: true,
+        requestedStart: "2026-01-01",
+        requestedEnd: "2026-01-31",
+        gaps: [],
+      },
+      failure: null,
+    },
+    adjustment: {
+      status: "complete" as const,
+      completeBarCount: 2,
+      unknownBarCount: 0,
+    },
+  },
+  sources: [
+    {
+      stage: "company_master" as const,
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      sourceName: "臺灣證券交易所－上市公司基本資料",
+      sourceUrl: "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+      reportDate: "2026-08-24",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      rawCount: 2,
+      excludedTdrCount: 1,
+      companyCount: 1,
+      minimumExpectedCount: 1,
+    },
+    {
+      stage: "raw_price" as const,
+      market: "listed" as const,
+      sourceName: "臺灣證券交易所－個股日成交資訊",
+      sourceUrl:
+        "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260101&stockNo=2330&response=json",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      snapshotIdentity: "verified" as const,
+      dataMonth: "2026-01",
+      normalization: {
+        volumeShares: {
+          sourceUnit: "share" as const,
+          outputUnit: "share" as const,
+          multiplier: 1 as const,
+        },
+        turnoverTwd: {
+          sourceUnit: "TWD" as const,
+          outputUnit: "TWD" as const,
+          multiplier: 1 as const,
+        },
+        tradeCount: {
+          sourceUnit: "trade" as const,
+          outputUnit: "trade" as const,
+          multiplier: 1 as const,
+        },
+      },
+    },
+    {
+      stage: "corporate_actions" as const,
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      family: "ex_right_dividend" as const,
+      scope: "range_summary" as const,
+      sourceName: "臺灣證券交易所－除權除息計算結果表",
+      sourceUrl: "https://www.twse.com.tw/rwd/zh/exRight/TWT49U",
+      retrievedAt: "2026-08-25T00:00:00.000Z",
+      supportedFrom: "2003-05-05",
+      queryStart: "2026-01-01",
+      queryEnd: "2026-01-31",
+      responseStart: "2026-01-01",
+      responseEnd: "2026-01-31",
+      rawRowCount: 1,
+      companyEventCount: 1,
+      officialDeclaredRowCount: 1,
+      officialDeclaredRowCountAvailable: true,
+    },
+  ],
+  workBudget: {
+    orchestrationCompanyMasterCalls: 1 as const,
+    rawPriceDependencyMasterLookupPolicy:
+      "dependency_managed_per_cursor_page_not_counted_as_orchestration_call" as const,
+    rawPricePageLimit: 3 as const,
+    rawPricePageCount: 1,
+    rawPricePageUnitDefinition: "one_get_stock_ohlc_cursor_page" as const,
+    corporateActionHistoryCalls: 1 as const,
+    corporateActionOfficialRequestCount: 2,
+    corporateActionRequestUnitDefinition:
+      "one_official_range_or_selected_event_detail_request" as const,
+  },
+  fingerprint: "f".repeat(64),
+  fingerprintBasis:
+    "query_identity_raw_bars_without_retrieved_at_or_cache_plus_corporate_action_history_and_adjustment_evidence" as const,
+  warnings: [
+    "raw OHLC 與成交量永遠保留官方未還原值；null 不會改寫成 0。",
+    "backward price-index-compatible 調整不是 adjusted close 或 total return。",
+  ],
+} satisfies StockPriceSeriesResult;
 
 const dailyMarketOhlc = {
   query: {
@@ -1940,6 +2192,37 @@ describe("MCP protocol integration", () => {
       }).success,
     ).toBe(false);
 
+    const priceSeriesInput = {
+      company_code: "2330",
+      start_date: "2023-01-01",
+      end_date: "2025-12-31",
+      price_basis:
+        "price_index_compatible_corporate_action_adjusted" as const,
+      include_event_ledger: true,
+    };
+    expect(stockPriceSeriesInputSchema.safeParse(priceSeriesInput).success).toBe(
+      true,
+    );
+    expect(
+      stockPriceSeriesInputSchema.safeParse({
+        ...priceSeriesInput,
+        end_date: "2026-01-01",
+      }).success,
+    ).toBe(false);
+    expect(
+      stockPriceSeriesInputSchema.safeParse({
+        ...priceSeriesInput,
+        start_date: "2025-12-31",
+        end_date: "2025-01-01",
+      }).success,
+    ).toBe(false);
+    expect(
+      stockPriceSeriesInputSchema.safeParse({
+        ...priceSeriesInput,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+
     expect(screenTaiwanStockCandidatesInputSchema.parse({})).toEqual({
       market: "all",
       include_ky: true,
@@ -2010,6 +2293,29 @@ describe("MCP protocol integration", () => {
     expect(companyMetricOutputSchema.safeParse(successEnvelope(trend)).success).toBe(
       true,
     );
+  });
+
+  it("keeps the stock price-series success contract strict", () => {
+    const envelope = successEnvelope(stockPriceSeries);
+    expect(stockPriceSeriesOutputSchema.safeParse(envelope).success).toBe(true);
+    expect(
+      stockPriceSeriesOutputSchema.safeParse({
+        ...envelope,
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    expect(
+      stockPriceSeriesOutputSchema.safeParse({
+        ...envelope,
+        bars: [
+          {
+            ...stockPriceSeries.bars[0],
+            unexpected: true,
+          },
+          stockPriceSeries.bars[1],
+        ],
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts the explicit no-stock-data reaction comparability reason", () => {
@@ -2120,6 +2426,9 @@ describe("MCP protocol integration", () => {
       .spyOn(companyMasterClient, "listCompanies")
       .mockResolvedValue(companyMaster);
     vi.spyOn(priceClient, "getStockOhlc").mockResolvedValue(stockOhlc);
+    const priceSeriesSpy = vi
+      .spyOn(stockPriceSeriesClient, "getStockPriceSeries")
+      .mockResolvedValue(stockPriceSeries);
     vi.spyOn(priceClient, "getDailyMarketOhlc").mockResolvedValue(dailyMarketOhlc);
     vi.spyOn(valuationClient, "getDailyMarketValuation").mockResolvedValue(
       dailyMarketValuation,
@@ -2255,6 +2564,7 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("TWSE");
     expect(client.getInstructions()).toContain("TPEx");
     expect(client.getInstructions()).toContain("get_stock_ohlc");
+    expect(client.getInstructions()).toContain("get_stock_price_series");
     expect(client.getInstructions()).toContain("raw_unadjusted");
     expect(client.getInstructions()).toContain("get_daily_market_valuation");
     expect(client.getInstructions()).toContain("get_monthly_revenue");
@@ -2348,6 +2658,78 @@ describe("MCP protocol integration", () => {
     expect(stockOutput?.properties?.coverage?.description).toContain(
       "12 個日曆月份",
     );
+    const stockPriceSeriesTool = listed.tools.find(
+      (tool) => tool.name === "get_stock_price_series",
+    );
+    expect(stockPriceSeriesTool?.title).toEqual(expect.stringContaining("價格"));
+    expect(stockPriceSeriesTool?.description).toContain("36");
+    expect(stockPriceSeriesTool?.description).toContain("raw_unadjusted");
+    expect(stockPriceSeriesTool?.description).toContain(
+      "price_index_compatible_corporate_action_adjusted",
+    );
+    expect(stockPriceSeriesTool?.description).toContain("backward");
+    expect(stockPriceSeriesTool?.description).toContain("total return");
+    expect(stockPriceSeriesTool?.description).toContain("raw shares");
+    expect(stockPriceSeriesTool?.description).toContain("include_event_ledger");
+    expect(stockPriceSeriesTool?.inputSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: expect.arrayContaining([
+        "company_code",
+        "start_date",
+        "end_date",
+        "price_basis",
+        "include_event_ledger",
+      ]),
+    });
+    expect(
+      stockPriceSeriesTool?.inputSchema.properties?.price_basis,
+    ).toMatchObject({
+      enum: [
+        "raw_unadjusted",
+        "price_index_compatible_corporate_action_adjusted",
+      ],
+    });
+    expect(
+      stockPriceSeriesTool?.inputSchema.properties?.include_event_ledger,
+    ).toMatchObject({ type: "boolean" });
+    expect(stockPriceSeriesTool?.inputSchema.properties).not.toHaveProperty(
+      "cursor",
+    );
+    const stockPriceSeriesOutput = stockPriceSeriesTool?.outputSchema as
+      | {
+          additionalProperties?: boolean;
+          properties?: Record<
+            string,
+            {
+              description?: string;
+              items?: {
+                properties?: Record<string, { description?: string }>;
+              };
+            }
+          >;
+        }
+      | undefined;
+    expect(stockPriceSeriesOutput?.additionalProperties).toBe(false);
+    expect(
+      stockPriceSeriesOutput?.properties?.adjustedPriceBasis?.description,
+    ).toContain("null");
+    expect(stockPriceSeriesOutput?.properties?.bars?.description).toContain(
+      "raw",
+    );
+    expect(
+      stockPriceSeriesOutput?.properties?.bars?.items?.properties?.adjusted
+        ?.description,
+    ).toContain("null");
+    expect(
+      stockPriceSeriesOutput?.properties?.eventLedger?.description,
+    ).toContain("ledger");
+    expect(stockPriceSeriesOutput?.properties?.sources?.description).toContain(
+      "stage",
+    );
+    expect(
+      stockPriceSeriesOutput?.properties?.workBudget?.description,
+    ).toContain("工作量");
     const dailyOhlcTool = listed.tools.find(
       (tool) => tool.name === "get_daily_market_ohlc",
     );
@@ -2568,6 +2950,17 @@ describe("MCP protocol integration", () => {
           company_code: "2330",
           start_date: "2026-01-01",
           end_date: "2026-01-31",
+        },
+      ],
+      [
+        "get_stock_price_series",
+        {
+          company_code: "2330",
+          start_date: "2026-01-01",
+          end_date: "2026-01-31",
+          price_basis:
+            "price_index_compatible_corporate_action_adjusted",
+          include_event_ledger: true,
         },
       ],
       ["get_daily_market_ohlc", { market: "all", date: "latest" }],
@@ -2798,6 +3191,163 @@ describe("MCP protocol integration", () => {
           date: "2026-01-02",
           close: 1585,
         });
+      }
+      if (name === "get_stock_price_series") {
+        const structured = result.structuredContent as {
+          meta: {
+            asOf: {
+              selector: string;
+              resolved: {
+                granularity: string;
+                from: string | null;
+                through: string | null;
+              };
+              snapshotId: string | null;
+            };
+            quality: {
+              status: string;
+              source: string;
+              universe: string;
+              selection: string;
+              values: string;
+              freshness: string;
+              issues: Array<{ code: string }>;
+            };
+            page: { mode: string; unit: string; next: unknown };
+          };
+          requestedPriceBasis: string;
+          rawPriceBasis: string;
+          adjustedPriceBasis: string | null;
+          coverageComplete: boolean;
+          dataQualityComplete: boolean;
+          identity: { status: string; companyCode: string };
+          adjustment: {
+            status: string;
+            adjustmentDirection: string;
+            anchorDate: string;
+            factorAtWindowStart: number | null;
+            cashDividendTreatment: string;
+            isAdjustedClose: boolean;
+            isTotalReturn: boolean;
+            volumeAdjusted: boolean;
+            volumeBasis: string;
+          };
+          bars: Array<{
+            date: string;
+            close: number | null;
+            cumulativeFactor: number | null;
+            adjusted: { close: number | null } | null;
+            adjustmentStatus: string;
+            volumeShares: number | null;
+            volumeBasis: string;
+          }>;
+          eventLedgerIncluded: boolean;
+          eventLedger: Array<{
+            status: string;
+            factor: number | null;
+            priorCloseCheck: { status: string };
+            markerReconciliation: { status: string; marker: string | null };
+          }>;
+          coverage: {
+            rawPrice: { pageCount: number; coverageComplete: boolean };
+            corporateActions: { status: string };
+            adjustment: {
+              status: string;
+              completeBarCount: number;
+              unknownBarCount: number;
+            };
+          };
+          workBudget: {
+            rawPricePageLimit: number;
+            rawPricePageCount: number;
+            corporateActionHistoryCalls: number;
+          };
+        };
+        expect(structured.meta).toMatchObject({
+          asOf: {
+            selector: "range",
+            resolved: {
+              granularity: "date",
+              from: "2026-01-02",
+              through: "2026-01-05",
+            },
+            snapshotId: "f".repeat(64),
+          },
+          quality: {
+            status: "complete",
+            source: "complete",
+            universe: "verified",
+            selection: "complete",
+            values: "complete",
+            freshness: "not_applicable",
+          },
+          page: { mode: "none", unit: "none", next: null },
+        });
+        expect(structured.meta.quality.issues.map((issue) => issue.code)).toEqual(
+          expect.arrayContaining([
+            "PRICE_INDEX_COMPATIBLE_ADJUSTMENT_BASIS",
+            "RAW_VOLUME_NOT_ADJUSTED",
+          ]),
+        );
+        expect(structured).toMatchObject({
+          requestedPriceBasis:
+            "price_index_compatible_corporate_action_adjusted",
+          rawPriceBasis: "raw_unadjusted",
+          adjustedPriceBasis:
+            "price_index_compatible_corporate_action_adjusted",
+          coverageComplete: true,
+          dataQualityComplete: true,
+          identity: {
+            status: "verified_current_master",
+            companyCode: "2330",
+          },
+          adjustment: {
+            status: "complete",
+            adjustmentDirection: "backward",
+            anchorDate: "2026-01-05",
+            factorAtWindowStart: 0.5,
+            cashDividendTreatment: "retained",
+            isAdjustedClose: false,
+            isTotalReturn: false,
+            volumeAdjusted: false,
+            volumeBasis: "raw_shares",
+          },
+          eventLedgerIncluded: true,
+          coverage: {
+            rawPrice: { pageCount: 1, coverageComplete: true },
+            corporateActions: { status: "complete" },
+            adjustment: {
+              status: "complete",
+              completeBarCount: 2,
+              unknownBarCount: 0,
+            },
+          },
+          workBudget: {
+            rawPricePageLimit: 3,
+            rawPricePageCount: 1,
+            corporateActionHistoryCalls: 1,
+          },
+        });
+        expect(structured.bars[0]).toMatchObject({
+          date: "2026-01-02",
+          close: 1585,
+          cumulativeFactor: 0.5,
+          adjusted: { close: 792.5 },
+          adjustmentStatus: "complete",
+          volumeShares: 25_000_000,
+          volumeBasis: "raw_shares",
+        });
+        expect(structured.eventLedger).toEqual([
+          expect.objectContaining({
+            status: "applied",
+            factor: 0.5,
+            priorCloseCheck: expect.objectContaining({ status: "matched" }),
+            markerReconciliation: expect.objectContaining({
+              status: "matched",
+              marker: "X",
+            }),
+          }),
+        ]);
       }
       if (name === "get_daily_market_ohlc") {
         const structured = result.structuredContent as {
@@ -3443,6 +3993,15 @@ describe("MCP protocol integration", () => {
         ]);
       }
     }
+
+    expect(priceSeriesSpy).toHaveBeenCalledOnce();
+    expect(priceSeriesSpy).toHaveBeenCalledWith({
+      companyCode: "2330",
+      startDate: "2026-01-01",
+      endDate: "2026-01-31",
+      priceBasis: "price_index_compatible_corporate_action_adjusted",
+      includeEventLedger: true,
+    });
 
     expect(catalystSnapshotSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(catalystSnapshotSpy).toHaveBeenCalledWith({

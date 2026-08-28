@@ -6,6 +6,7 @@ import * as common from "@/lib/mcp/schema/common";
 import * as company from "@/lib/mcp/schema/company";
 import * as financials from "@/lib/mcp/schema/financials";
 import * as price from "@/lib/mcp/schema/price";
+import * as priceSeries from "@/lib/mcp/schema/price-series";
 import * as revenue from "@/lib/mcp/schema/revenue";
 import * as research from "@/lib/mcp/schema/research";
 import * as screening from "@/lib/mcp/schema/screening";
@@ -23,6 +24,7 @@ const publicSchemaOwners = {
   findCompaniesInputSchema: company.findCompaniesInputSchema,
   listCompaniesInputSchema: company.listCompaniesInputSchema,
   stockOhlcInputSchema: price.stockOhlcInputSchema,
+  stockPriceSeriesInputSchema: priceSeries.stockPriceSeriesInputSchema,
   dailyMarketOhlcInputSchema: price.dailyMarketOhlcInputSchema,
   dailyMarketValuationInputSchema: valuation.dailyMarketValuationInputSchema,
   monthlyRevenueInputSchema: revenue.monthlyRevenueInputSchema,
@@ -41,6 +43,7 @@ const publicSchemaOwners = {
   findCompaniesOutputSchema: company.findCompaniesOutputSchema,
   listCompaniesOutputSchema: company.listCompaniesOutputSchema,
   stockOhlcOutputSchema: price.stockOhlcOutputSchema,
+  stockPriceSeriesOutputSchema: priceSeries.stockPriceSeriesOutputSchema,
   dailyMarketOhlcOutputSchema: price.dailyMarketOhlcOutputSchema,
   dailyMarketValuationOutputSchema: valuation.dailyMarketValuationOutputSchema,
   monthlyRevenueOutputSchema: revenue.monthlyRevenueOutputSchema,

@@ -12,6 +12,7 @@ import type {
   CorporateActionEvent,
   CorporateActionHistory,
 } from "@/lib/corporate-actions/types";
+import { buildPriceIndexCompatibleSeries } from "@/lib/corporate-actions/adjustment-engine";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import type { OhlcBar, StockOhlcResult } from "@/lib/price/types";
 import {
@@ -687,15 +688,16 @@ describe("ReactionClient getStockReactionSignals", () => {
       referencePriceTwd: priorClose * 0.5,
       priceIndexAdjustmentFactor: 0.5,
     });
+    const price = fakePrice(companies, {
+      markerDate: effectiveDate,
+      splitFromDate: effectiveDate,
+      splitFactor: 0.5,
+    });
     const client = new ReactionClient(
       vi.fn() as typeof fetch,
       now,
       master(companies),
-      fakePrice(companies, {
-        markerDate: effectiveDate,
-        splitFromDate: effectiveDate,
-        splitFactor: 0.5,
-      }),
+      price,
       {
         benchmarkClient: fakeBenchmark(),
         corporateActionClient: fakeCorporateActions({ events: [corporateEvent] }),
@@ -709,6 +711,35 @@ describe("ReactionClient getStockReactionSignals", () => {
     });
     const item = result.companies[0];
     const return20 = item.returns.find((signal) => signal.horizonSessions === 20);
+    const start20 = allSessions[endIndex - 20];
+    const raw = await price.getStockOhlc({
+      companyCode: "2330",
+      startDate: start20,
+      endDate: "2026-06-30",
+    });
+    const adjusted = buildPriceIndexCompatibleSeries({
+      companyCode: "2330",
+      currentCompanyName: "台積電",
+      currentMarket: "listed",
+      observedNames: raw.observedNames,
+      bars: raw.bars,
+      events: [corporateEvent],
+      coverage: {
+        status: "complete",
+        coverageComplete: true,
+        requestedStart: start20,
+        requestedEnd: "2026-06-30",
+        gaps: [],
+      },
+      windowStartDate: start20,
+      anchorDate: "2026-06-30",
+    });
+    const adjustedStart = adjusted.bars.find(
+      (bar) => bar.date === start20,
+    )?.adjusted?.close;
+    const adjustedEnd = adjusted.bars.find(
+      (bar) => bar.date === "2026-06-30",
+    )?.adjusted?.close;
 
     expect(return20?.stockReturnPercent).toBeLessThan(-40);
     expect(return20).toMatchObject({
@@ -717,6 +748,13 @@ describe("ReactionClient getStockReactionSignals", () => {
       excessReturnReasons: [],
     });
     expect(return20?.priceIndexCompatibleStockReturnPercent).toBeGreaterThan(0);
+    expect(return20?.priceIndexCompatibleStockReturnPercent).toBeCloseTo(
+      ((adjustedEnd as number) / (adjustedStart as number) - 1) * 100,
+      7,
+    );
+    expect(return20?.corporateActionAdjustmentFactor).toBe(
+      adjusted.factorAtWindowStart,
+    );
     expect(item.comparability).toMatchObject({
       status: "price_index_compatible",
       corporateActionAdjustment: "applied",
