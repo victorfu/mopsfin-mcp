@@ -1,7 +1,7 @@
 import type { MetricDefinition } from "./types";
 
 export const MOPSFIN_SERVER_INSTRUCTIONS = `
-這是 Mopsfin 台股 MCP v0.6.2，一個公開、唯讀、無資料庫的台灣公司財務與市場資料 Server，共提供 18 個工具。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、歷史日估值、歷史月營收、市場價格指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
+這是 Mopsfin 台股 MCP v0.6.3，一個公開、唯讀、無資料庫的台灣公司財務與市場資料 Server，共提供 18 個工具。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、歷史日估值、歷史月營收、市場價格指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 使用順序：需要「好公司＋基本面改善＋估值合理＋市場尚未充分反應」的初步研究名單時使用 screen_taiwan_stock_candidates；它只做 latest、非金融、營收改善導向的有界 research triage。對篩選後的少量公司查核指定日期範圍內的官方重大訊息與法人說明會時使用 get_company_catalyst_events；查核當期財測達成／重大差異、股東會與股利決議 snapshot 時使用 get_company_catalyst_snapshots；兩者都不會改變 screen 分數。需要目前上市櫃母體或自行掃描候選代號時先呼叫 list_companies；只知道特定公司名稱或代號時使用 find_companies，不要用 find_companies 枚舉全市場。list_companies 的 market=listed 只回上市（含創新板）、market=otc 只回上櫃、market=all 合併兩個當次官方來源；include_financial=false 或 include_ky=false 可排除金融保險業或 KY 公司。查單一股票跨期歷史價量使用 get_stock_ohlc；查同一交易日 accepted market snapshot 或一批代號使用 get_daily_market_ohlc，並依 universeCoverageVerified／reconciliation 判讀 rowset；比較個股與市場在 5／20／60／120 個交易日視窗的原始報酬、price-index-compatible 報酬、量能與價格路徑代理訊號使用 get_stock_reaction_signals。查 latest 或指定日估值使用 get_daily_market_valuation；查單月營收使用 get_monthly_revenue；查 3–24 個月營收序列與透明衍生值使用 get_monthly_revenue_trend。不知道 metric_code、industry_codes、institution_codes 或可用期別時先呼叫 list_catalog；單一指標使用 get_company_metric，多家公司 × 多指標使用 get_company_metrics_batch。回答前應讀取 list_catalog guidance 以及每次結果的 meta、coverage、status 與 warnings。
 
@@ -36,6 +36,8 @@ export const MOPSFIN_SERVER_INSTRUCTIONS = `
 平均數與公司指標覆蓋：公司指標的所選公司平均數是所選公司的簡單平均，產業平均數是依產業分類計算的上市與上櫃公司指標平均。金融機構指標可另外要求相應金控／銀行／票券業的產業平均，以及本次所選機構的簡單平均。所有平均數都由 Mopsfin 計算，不是市值加權。get_company_metric 應依 seriesType 與 companyCode 分辨公司／平均 series，不可只解析 label；每點 valueStatus 與 coverage.selectionComplete、noValidDataCompanyCodes、missingPeriods、commonThroughPeriod 都是答案的一部分。多家公司與多指標的矩陣查詢優先使用 get_company_metrics_batch，不要自行發出大量單指標呼叫。
 
 更新與責任：Mopsfin 每日更新一次，可能較公開資訊觀測站最新申報落後約一日；公司母體應以 list_companies 的各來源 reportDate、價格與估值應以 dataDate、月營收應以 dataMonth／sourceReportDate，並以 meta.asOf.sourceCutoffs、coverage、sources 與 warnings 為準。本服務不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP，也不構成投資建議；重要判斷應回查官方公司名錄、行情與公開資訊觀測站原始申報。
+
+Freshness 與時間血緣：latest 只表示查詢意圖，不會直接宣稱資料在預期窗口內。meta.asOf 分開提供 data cutoff、真正 upstream retrievedAt、MCP servedAt 與 caller-specific cache provenance；cache hit 不會改寫 retrievedAt，官方未明示 publishedAt 時維持 null。meta.quality.freshnessDetails 以中央 source-specific policy 列出 observedAsOf、expectedAsOf、lag 與 reason；沒有可靠 expected as-of／交易日 resolver 時固定 unknown 並帶 FRESHNESS_UNVERIFIED，落後 policy 時為 stale 並帶 DATA_STALE。歷史 exact/range selector 的 latest freshness 為 not_applicable。
 
 Stateless reliability：每個 MCP request 共用單一 absolute deadline；上游 attempt、等待有界併發 gate 與 retry delay 都不得超過剩餘時間。暫時性錯誤只做有限重試，優先尊重有安全上限的 Retry-After，否則採 exponential backoff 與 jitter。上游 response bytes、JSON／CSV rows、HTML table 展開、動態 TTL cache entries／weight、同時連線數與等待 queue 都有上限；超載或超限會回結構化錯誤。行程內 telemetry 只彙總 MCP method、tool name、延遲、狀態、錯誤碼與 reliability counters，不保留 tool arguments、request body、認證資料或使用者查詢值，也不持久化。shallow health 不呼叫官方來源；官方 schema 與 snapshot identity 另由每週一次的低頻 live contract 檢查。
 

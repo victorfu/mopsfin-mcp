@@ -220,6 +220,44 @@ describe("CompanyMasterClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("preserves retrieval time while exposing outer cache provenance on sources", async () => {
+    let clockMs = Date.parse("2026-08-25T00:00:00.000Z");
+    const clock = () => new Date(clockMs);
+    const fetchMock = fixtureFetch();
+    const client = new CompanyMasterClient(
+      fetchMock as typeof fetch,
+      clock,
+      { ...testOptions, cacheTtlMs: 60_000 },
+    );
+
+    const first = await client.getMarketSnapshot("listed");
+    clockMs += 10_000;
+    const second = await client.getMarketSnapshot("listed");
+    const refreshed = await client.getMarketSnapshot("listed", true);
+
+    expect(first.source.retrievedAt).toBe("2026-08-25T00:00:00.000Z");
+    expect(first.source.cache).toEqual(first.cache);
+    expect(first.cache).toMatchObject({
+      status: "miss",
+      storedAt: "2026-08-25T00:00:00.000Z",
+      ageMs: 0,
+      ttlMs: 60_000,
+    });
+    expect(second.source.retrievedAt).toBe(first.source.retrievedAt);
+    expect(second.source.cache).toMatchObject({
+      status: "hit",
+      observedAt: "2026-08-25T00:00:10.000Z",
+      storedAt: "2026-08-25T00:00:00.000Z",
+      ageMs: 10_000,
+    });
+    expect(refreshed.source.cache).toMatchObject({
+      status: "bypass",
+      storedAt: "2026-08-25T00:00:10.000Z",
+      ageMs: 0,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("fails the all-market request instead of publishing a partial universe", async () => {
     const fetchMock = vi.fn(async (url: URL | RequestInfo) => {
       if (String(url).includes("openapi.twse.com.tw")) {

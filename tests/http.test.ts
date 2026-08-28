@@ -4,6 +4,24 @@ import { MopsfinError } from "@/lib/mopsfin/errors";
 import { MopsfinHttpClient } from "@/lib/mopsfin/http";
 
 describe("MopsfinHttpClient", () => {
+  it("stamps the completed upstream fetch instead of response assembly time", async () => {
+    const client = new MopsfinHttpClient(
+      vi.fn().mockResolvedValue(new Response("ok")) as typeof fetch,
+      { now: () => new Date("2026-08-26T01:02:03.000Z") },
+    );
+
+    await expect(client.get("/")).resolves.toMatchObject({
+      retrievedAt: "2026-08-26T01:02:03.000Z",
+      cache: {
+        status: "bypass",
+        observedAt: "2026-08-26T01:02:03.000Z",
+        storedAt: null,
+        ageMs: null,
+        ttlMs: 0,
+      },
+    });
+  });
+
   it("retries one network failure and succeeds", async () => {
     const fetchMock = vi
       .fn()

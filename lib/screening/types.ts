@@ -2,6 +2,7 @@ import type {
   CompanyMarket,
   CompanyMarketSelection,
 } from "@/lib/company-master/types";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 import type {
   ResolvedScreenFinancialMetric,
   ScreenMetricRole,
@@ -128,6 +129,7 @@ export interface ScreenSource {
   sourceName: string;
   sourceUrl: string;
   retrievedAt: string;
+  cache?: CacheProvenance;
   market: CompanyMarket | null;
   asOf: string;
   asOfGranularity: "date" | "month" | "quarter" | "mixed";

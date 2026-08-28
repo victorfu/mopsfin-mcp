@@ -17,6 +17,61 @@ const resolvedAsOfSchema = z
   })
   .strict();
 
+export const sourceCacheObservationSchema = z
+  .object({
+    status: z
+      .enum(["hit", "miss", "shared", "bypass", "not_applicable", "unknown"])
+      .describe("此 caller 觀察到的 in-process cache 狀態"),
+    observedAt: z
+      .string()
+      .nullable()
+      .describe("此 caller 觀察 cache 狀態的 ISO 8601 時間；loader 未提供時為 null"),
+    storedAt: z
+      .string()
+      .nullable()
+      .describe("目前 cached upstream value 首次儲存時間；未儲存時為 null"),
+    ageMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe("caller 觀察時的 cache age；不適用或未知時為 null"),
+    ttlMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .nullable()
+      .describe("該來源 cache TTL；不適用或未知時為 null"),
+  })
+  .strict();
+
+export const freshnessEvaluationSchema = z
+  .object({
+    status: z.enum([
+      "within_expected_window",
+      "stale",
+      "unknown",
+      "not_applicable",
+    ]).describe("此 policy/source 的 freshness 判斷"),
+    policyId: z.string().min(1).describe("中央 freshness policy 的穩定識別碼"),
+    observedAsOf: z.string().nullable().describe("來源實際觀察到的資料日期或期別"),
+    expectedAsOf: z.string().nullable().describe("policy 可驗證的預期資料日期或期別；無可靠 resolver 時為 null"),
+    lag: z
+      .object({
+        value: z.number().nonnegative().describe("落後量；0 表示符合 expected as-of"),
+        unit: z
+          .enum(["calendar_day", "calendar_month", "trading_session", "quarter"])
+          .describe("落後量使用的時間單位"),
+      })
+      .strict()
+      .nullable()
+      .describe("可由 policy 安全計算的落後量；不可推測時為 null"),
+    reasonCode: z.string().min(1).describe("freshness 判斷的穩定原因代碼"),
+    reason: z.string().min(1).describe("freshness 判斷說明"),
+    sourceUrls: z.array(z.string().url()).describe("此 freshness 判斷涵蓋的官方來源"),
+  })
+  .strict();
+
 export const resultMetaSchema = z
   .object({
     contractVersion: z.literal("mopsfin.result.v1").describe("共用結果契約版本"),
@@ -25,7 +80,8 @@ export const resultMetaSchema = z
         selector: z.enum(["latest", "explicit", "range", "snapshot", "none"]).describe("使用者要求的時間選擇模式"),
         resolved: resolvedAsOfSchema.describe("工具實際解析並使用的資料時間"),
         timezone: z.literal("Asia/Taipei").describe("日期解析與 latest 使用的時區"),
-        assembledAt: z.string().describe("本服務完成組裝結果的 ISO 8601 時間"),
+        servedAt: z.string().describe("本服務將 MCP 結果組裝並回傳給 caller 的 ISO 8601 時間"),
+        assembledAt: z.string().describe("servedAt 的 v1 相容別名"),
         snapshotId: z
           .string()
           .nullable()
@@ -37,6 +93,7 @@ export const resultMetaSchema = z
               resolved: resolvedAsOfSchema.describe("此來源實際涵蓋的日期、月份、季度或時間"),
               publishedAt: z.string().nullable().describe("來源出表／發布時間；官方未提供時為 null"),
               retrievedAt: z.string().describe("本服務取得此來源的 ISO 8601 時間"),
+              cache: sourceCacheObservationSchema.describe("不改寫 retrievedAt 的 caller-specific cache provenance"),
             })
             .strict(),
         ).describe("逐官方來源的時間界線與擷取時間"),
@@ -60,6 +117,10 @@ export const resultMetaSchema = z
           "unknown",
           "not_applicable",
         ]).describe("相對官方預期更新窗口的新鮮度"),
+        freshnessDetails: z
+          .array(freshnessEvaluationSchema)
+          .min(1)
+          .describe("逐 policy/source 的 observed、expected、lag 與保守判斷證據"),
         issues: z.array(
           z
             .object({
@@ -1013,6 +1074,9 @@ const sourceShape = {
   sourceName: z.string().describe("資料來源名稱"),
   sourceUrl: z.string().url().describe("Mopsfin 官方來源首頁"),
   retrievedAt: z.string().describe("本服務從上游取得或整理資料的 ISO 8601 時間"),
+  cache: sourceCacheObservationSchema
+    .optional()
+    .describe("此 caller 對 Mopsfin upstream response 的 cache provenance；舊來源可省略"),
   upstreamRoute: z.string().describe("本次實際使用的固定 Mopsfin 上游 endpoint path"),
   freshnessNote: z.string().describe("官方資料更新頻率與可能時間差"),
 };
@@ -1153,6 +1217,7 @@ const companyMasterSourceSchema = z
       .string()
       .describe("上游資料列的出表日期，已由民國日期正規化為 YYYY-MM-DD"),
     retrievedAt: z.string().describe("本服務實際取得這份來源快照的 ISO 8601 時間"),
+    cache: sourceCacheObservationSchema.optional().describe("公司母體來源的 caller-specific cache provenance"),
     rawCount: z.number().int().describe("此官方來源正規化與排除 TDR 前的原始筆數"),
     excludedTdrCount: z
       .number()
@@ -1354,6 +1419,7 @@ const priceSourceSchema = z
     sourceName: z.string().describe("官方 OHLC 資料集或查詢頁名稱"),
     sourceUrl: z.string().url().describe("本次使用的固定 TWSE／TPEx 官方 URL"),
     retrievedAt: z.string().describe("本服務實際取得這份官方回應的 ISO 8601 時間"),
+    cache: sourceCacheObservationSchema.optional().describe("OHLC 來源的 caller-specific cache provenance"),
     snapshotIdentity: z
       .enum(["verified", "unverified_empty"])
       .optional()
@@ -1563,6 +1629,7 @@ const valuationSourceSchema = z
     sourceName: z.string().describe("本次實際使用的官方 latest discovery 或 exact-day 估值資料集名稱"),
     sourceUrl: z.string().url().describe("本次使用的官方 OpenAPI 或指定日估值 endpoint URL"),
     retrievedAt: z.string().describe("本服務取得官方回應的 ISO 8601 時間"),
+    cache: sourceCacheObservationSchema.optional().describe("估值來源的 caller-specific cache provenance"),
     dataDate: calendarDateSchema.describe("此官方來源的實際估值資料日期"),
     rawCount: z.number().int().describe("官方回應的原始資料列數"),
     eligibleRowCount: z.number().int().describe("正規化後可辨識為四碼公司股票的資料列數"),
@@ -1725,6 +1792,7 @@ const revenueSourceSchema = z
     sourceName: z.string().describe("官方月營收 OpenAPI 或歷史 MOPS archive 資料集名稱"),
     sourceUrl: z.string().url().describe("本次實際讀取的固定官方 OpenAPI 或 MOPS archive URL"),
     retrievedAt: z.string().describe("本服務取得官方回應的 ISO 8601 時間"),
+    cache: sourceCacheObservationSchema.optional().describe("月營收來源的 caller-specific cache provenance"),
     rawCount: z.number().int().describe("官方回應的原始資料列數"),
     eligibleRowCount: z.number().int().describe("正規化後可辨識為四碼公司股票的資料列數"),
     dataMonth: yearMonthSchema.describe("此官方月營收來源的資料年月"),
@@ -2167,6 +2235,7 @@ const catalystSourceSchema = z
       .string()
       .nullable()
       .describe("本服務取得此官方回應的 ISO 8601 時間；沒有單一共同時間時為 null"),
+    cache: sourceCacheObservationSchema.optional().describe("事件來源的 caller-specific cache provenance"),
     scope: z
       .enum(["current_official_snapshot", "selected_company_historical_months"])
       .describe("當期官方快照或依 selected company×calendar month 查詢的歷史結果"),
@@ -2606,6 +2675,7 @@ const catalystSnapshotSourceSchema = z
     status: z.enum(["nonempty", "verified_empty", "failed", "unsupported"]).describe("官方非空、exact blank sentinel、查詢失敗或 current route 不存在"),
     freshness: catalystSnapshotFreshnessSchema.describe("依 sourceSnapshotDate 判定；失敗或 unsupported 為 not_applicable"),
     retrievedAt: z.string().nullable().describe("成功取得來源的 ISO 8601 時間；失敗或 unsupported 為 null"),
+    cache: sourceCacheObservationSchema.optional().describe("current snapshot 來源的 caller-specific cache provenance"),
     sourceSnapshotDate: calendarDateSchema.nullable().describe("官方出表／snapshot 日期；失敗或 unsupported 為 null"),
     sourceSnapshotAgeDays: z.number().int().nonnegative().nullable().describe("相對台北 latest 日的 snapshot age；未來日期 fail closed，不適用為 null"),
     rawRowCount: z.number().int().nonnegative().describe("官方 payload raw row 數；未取得為 0"),
@@ -3518,6 +3588,7 @@ const benchmarkSourceSchema = z
     sourceUrl: z.string().url().describe("本次使用的固定官方市場指數 URL"),
     dataMonth: calendarMonthSchema.describe("此來源請求與核對的 benchmark 月份"),
     retrievedAt: z.string().describe("本服務取得此官方 benchmark 回應的 ISO 8601 時間"),
+    cache: sourceCacheObservationSchema.optional().describe("benchmark 來源的 caller-specific cache provenance"),
     rowCount: z.number().int().describe("正規化後此來源的 benchmark 交易日數"),
   })
   .strict();
@@ -3576,6 +3647,7 @@ const corporateActionSourceSchema = z
     sourceName: z.string().describe("官方 actual-result 資料集名稱"),
     sourceUrl: z.string().url().describe("本次實際請求的官方 URL"),
     retrievedAt: z.string().describe("本服務取得官方回應的 ISO 8601 時間"),
+    cache: sourceCacheObservationSchema.optional().describe("公司行動來源的 caller-specific cache provenance"),
     supportedFrom: calendarDateSchema.describe("此官方資料族群可驗證的最早日期"),
     queryStart: calendarDateSchema.describe("本次 actual-result 查詢起日"),
     queryEnd: calendarDateSchema.describe("本次 actual-result 查詢迄日"),
@@ -4538,6 +4610,7 @@ const screenSourceSchema = z
     sourceName: z.string().describe("官方資料來源名稱"),
     sourceUrl: z.string().url().describe("實際官方來源 URL"),
     retrievedAt: z.string().describe("本服務取得或使用來源的 ISO 8601 時間"),
+    cache: sourceCacheObservationSchema.optional().describe("screen 保留的 caller-specific source cache provenance"),
     market: z
       .enum(["listed", "otc"])
       .nullable()

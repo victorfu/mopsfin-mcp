@@ -720,7 +720,10 @@ describe("Taiwan stock screen calculations", () => {
   });
 });
 
-function masterResult(companies: MasterCompany[]): CompanyMasterResult {
+function masterResult(
+  companies: MasterCompany[],
+  reportDate = "2026-07-31",
+): CompanyMasterResult {
   return {
     query: { market: "all", includeFinancial: true, includeKy: true },
     generatedAt: "2026-08-01T00:00:00.000Z",
@@ -736,7 +739,7 @@ function masterResult(companies: MasterCompany[]): CompanyMasterResult {
       exchange: "TWSE",
       sourceName: "TWSE",
       sourceUrl: "https://example.test/master",
-      reportDate: "2026-07-31",
+      reportDate,
       retrievedAt: "2026-08-01T00:00:00.000Z",
       rawCount: companies.length,
       excludedTdrCount: 0,
@@ -1111,6 +1114,7 @@ function screenClientFixture(
     companyCount?: number;
     catalog?: Catalog;
     metricsDefinitionNameDrift?: boolean;
+    masterReportDate?: string;
   } = {},
 ) {
   const companies = Array.from({ length: options.companyCount ?? 12 }, (_, index) =>
@@ -1145,7 +1149,11 @@ function screenClientFixture(
   );
   const client = new TaiwanStockScreenClient(
     {
-      companyMaster: { listCompanies: vi.fn(async () => masterResult(companies)) },
+      companyMaster: {
+        listCompanies: vi.fn(async () =>
+          masterResult(companies, options.masterReportDate),
+        ),
+      },
       revenue: {
         getMonthlyRevenue: vi.fn(async () => latestRevenue(companies)),
         getMonthlyRevenueTrend,
@@ -1282,6 +1290,35 @@ describe("TaiwanStockScreenClient", () => {
       code: "UPSTREAM_BAD_RESPONSE",
       reason: "CATALOG_CONTRACT_MISMATCH",
     });
+  });
+
+  it("fails closed when the current company master is stale", async () => {
+    const fixture = screenClientFixture({ masterReportDate: "2026-07-20" });
+
+    const result = await fixture.client.screenTaiwanStockCandidates(SCREEN_QUERY);
+
+    expect(result.funnel.deepScored).toBe(10);
+    expect(result.funnel.reactionSelected).toBe(0);
+    expect(result.funnel.reactionScored).toBe(0);
+    expect(result.candidates).toEqual([]);
+    expect(fixture.getStockReactionSignals).not.toHaveBeenCalled();
+    expect(result.notReactionScored).toHaveLength(10);
+    expect(result.notReactionScored[0]?.reasonCodes).toEqual(
+      expect.arrayContaining([
+        "company_quality_unknown",
+        "fundamental_improvement_unknown",
+      ]),
+    );
+    expect(
+      result.dependencyStatus.find(
+        (item) => item.dependency === "company_master",
+      ),
+    ).toMatchObject({
+      status: "partial",
+      affectedCompanyCodes: expect.any(Array),
+    });
+    expect(result.warnings.some((warning) => warning.includes("source_stale_company_master")))
+      .toBe(true);
   });
 
   it("converts a batch catalog race into the semantic contract error", async () => {

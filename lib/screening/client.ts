@@ -4,6 +4,11 @@ import {
 } from "@/lib/company-master/client";
 import type { MasterCompany } from "@/lib/company-master/types";
 import {
+  aggregateFreshness,
+  evaluateFreshness,
+} from "@/lib/freshness/evaluate";
+import { FRESHNESS_POLICIES } from "@/lib/freshness/policies";
+import {
   companyMetricsBatchClient,
   type CompanyMetricsBatchClient,
   type CompanyMetricsBatchCompany,
@@ -44,6 +49,7 @@ import {
   latestAnnualRoe,
   nextDiligenceSteps,
   rejectionReasons,
+  unknownPillar,
   valuationPeerContext,
 } from "./calculations";
 import {
@@ -321,6 +327,17 @@ function sourceCompleteness(statuses: ScreenDependencyStatus[]): boolean {
     .every((status) => status.status === "complete");
 }
 
+function taipeiDate(value: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
+}
+
 export class TaiwanStockScreenClient {
   private readonly companyMaster: CompanyMasterLike;
   private readonly revenue: RevenueLike;
@@ -345,6 +362,7 @@ export class TaiwanStockScreenClient {
     rawQuery: TaiwanStockScreenQuery,
   ): Promise<TaiwanStockScreenResult> {
     const query = normalizeQuery(rawQuery);
+    const evaluationTime = this.now();
     const [master, latestRevenue, latestValuation, catalog] = await Promise.all([
       this.companyMaster.listCompanies({
         market: query.market,
@@ -367,6 +385,17 @@ export class TaiwanStockScreenClient {
     const metricResolution = resolveScreenMetricRoles(catalog);
     const screenDefinition = buildTaiwanStockScreenDefinition(metricResolution);
     const metricCodes = resolvedMetricCodes(metricResolution);
+    const masterFreshness = aggregateFreshness(
+      master.sources.map((source) =>
+        evaluateFreshness({
+          policy: FRESHNESS_POLICIES.currentSnapshotSevenDays,
+          observedAsOf: source.reportDate,
+          expectedAsOf: taipeiDate(evaluationTime),
+          sourceUrls: [source.sourceUrl],
+        }),
+      ),
+    );
+    const masterStale = masterFreshness === "stale";
 
     const masterByCode = new Map(master.companies.map((company) => [company.code, company]));
     const missingRequestedCodes = (query.companyCodes ?? []).filter(
@@ -432,9 +461,12 @@ export class TaiwanStockScreenClient {
         stage: "coarse",
         dependency: "company_master",
         status: "partial",
-        affectedCompanyCodes: [],
-        message:
-          "必要來源與 heuristic gate 均通過，但官方沒有 declared row count，不能證明完整 rowset。",
+        affectedCompanyCodes: masterStale
+          ? eligibleCompanies.map((company) => company.code)
+          : [],
+        message: masterStale
+          ? "目前公司母體 reportDate 已超過 7 日 freshness window；仍保留來源證據，但所有 screen pillars fail closed 為 unknown。"
+          : "必要來源與 heuristic gate 均通過，但官方沒有 declared row count，不能證明完整 rowset。",
       }),
       dependency({
         stage: "coarse",
@@ -597,12 +629,12 @@ export class TaiwanStockScreenClient {
       const financialThroughPeriod = metrics
         ? financialCommonThroughPeriod(metrics, metricResolution)
         : null;
-      const companyQuality = buildCompanyQualityPillar(
+      const computedCompanyQuality = buildCompanyQualityPillar(
         metrics,
         financialThroughPeriod,
         metricResolution,
       );
-      const fundamentalImprovement = buildFundamentalImprovementPillar(
+      const computedFundamentalImprovement = buildFundamentalImprovementPillar(
         metrics,
         revenueTrend,
         financialThroughPeriod,
@@ -617,12 +649,33 @@ export class TaiwanStockScreenClient {
         peerEligibleCompanies,
         latestValuation.rows,
       );
-      const reasonableValuation = buildReasonableValuationPillar(
+      const computedReasonableValuation = buildReasonableValuationPillar(
         coarse.valuation,
         annualRoe,
         peerContext,
         latestValuation.dataDate,
       );
+      const companyQuality = masterStale
+        ? unknownPillar(
+            "company_quality",
+            "好公司",
+            "source_stale_company_master",
+          )
+        : computedCompanyQuality;
+      const fundamentalImprovement = masterStale
+        ? unknownPillar(
+            "fundamental_improvement",
+            "基本面改善",
+            "source_stale_company_master",
+          )
+        : computedFundamentalImprovement;
+      const reasonableValuation = masterStale
+        ? unknownPillar(
+            "reasonable_valuation",
+            "估值合理",
+            "source_stale_company_master",
+          )
+        : computedReasonableValuation;
       return {
         ...coarse,
         metrics,
@@ -815,6 +868,7 @@ export class TaiwanStockScreenClient {
           sourceName: source.sourceName,
           sourceUrl: source.sourceUrl,
           retrievedAt: source.retrievedAt,
+          ...(source.cache ? { cache: source.cache } : {}),
           market: source.market,
           asOf: source.reportDate,
           asOfGranularity: "date",
@@ -826,6 +880,7 @@ export class TaiwanStockScreenClient {
           sourceName: source.sourceName,
           sourceUrl: source.sourceUrl,
           retrievedAt: source.retrievedAt,
+          ...(source.cache ? { cache: source.cache } : {}),
           market: source.market,
           asOf: source.dataMonth,
           asOfGranularity: "month",
@@ -837,6 +892,7 @@ export class TaiwanStockScreenClient {
           sourceName: source.sourceName,
           sourceUrl: source.sourceUrl,
           retrievedAt: source.retrievedAt,
+          ...(source.cache ? { cache: source.cache } : {}),
           market: source.market,
           asOf: source.dataDate,
           asOfGranularity: "date",
@@ -848,6 +904,7 @@ export class TaiwanStockScreenClient {
           sourceName: source.sourceName,
           sourceUrl: source.sourceUrl,
           retrievedAt: source.retrievedAt,
+          ...(source.cache ? { cache: source.cache } : {}),
           market: source.market,
           asOf: source.dataMonth,
           asOfGranularity: "month",
@@ -859,6 +916,7 @@ export class TaiwanStockScreenClient {
           sourceName: source.sourceName,
           sourceUrl: source.sourceUrl,
           retrievedAt: source.retrievedAt,
+          ...(source.cache ? { cache: source.cache } : {}),
           market: null,
           asOf:
             financialThroughPeriods.length === 1
@@ -874,6 +932,7 @@ export class TaiwanStockScreenClient {
           sourceName: source.sourceName,
           sourceUrl: source.sourceUrl,
           retrievedAt: source.retrievedAt,
+          ...(source.cache ? { cache: source.cache } : {}),
           market: source.market,
           asOf: source.dataMonth,
           asOfGranularity: "month",
@@ -885,6 +944,7 @@ export class TaiwanStockScreenClient {
           sourceName: source.sourceName,
           sourceUrl: source.sourceUrl,
           retrievedAt: source.retrievedAt,
+          ...(source.cache ? { cache: source.cache } : {}),
           market: source.market,
           asOf: source.dataDate ?? source.dataMonth ?? "mixed",
           asOfGranularity: source.dataDate
@@ -900,6 +960,7 @@ export class TaiwanStockScreenClient {
           sourceName: source.sourceName,
           sourceUrl: source.sourceUrl,
           retrievedAt: source.retrievedAt,
+          ...(source.cache ? { cache: source.cache } : {}),
           market: source.market,
           asOf: source.queryEnd,
           asOfGranularity: "date",
@@ -946,10 +1007,15 @@ export class TaiwanStockScreenClient {
         "深篩財務資料的逐公司失敗已保留為 unknown／notReactionScored；沒有轉成 0、投資條件 fail，或阻斷其他公司的評估。",
       );
     }
+    if (masterStale) {
+      warnings.push(
+        "公司母體 freshness=stale；本次仍保留 coarse/deep 原始證據，但所有四柱判定均不得形成 research_candidate，受影響公司以 source_stale_company_master 維持 unknown。",
+      );
+    }
 
     return {
       query,
-      generatedAt: this.now().toISOString(),
+      generatedAt: evaluationTime.toISOString(),
       timezone: "Asia/Taipei",
       screenDefinition,
       asOf: {

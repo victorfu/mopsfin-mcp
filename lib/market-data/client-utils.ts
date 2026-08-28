@@ -5,6 +5,11 @@ import type {
 } from "@/lib/company-master/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import {
+  observeCache,
+  type CacheProvenance,
+  type CacheStatus,
+} from "@/lib/upstream/cache-provenance";
+import {
   AbsoluteDeadline,
   assertJsonWithinLimits,
   BoundedSemaphore,
@@ -43,6 +48,13 @@ export interface OfficialSourceConfig {
 export interface JsonSnapshot {
   payload: unknown;
   retrievedAt: string;
+  /** Acquisition-layer metadata; public tool schemas wire this separately. */
+  cache?: CacheProvenance;
+}
+
+interface StoredJsonSnapshot {
+  snapshot: Omit<JsonSnapshot, "cache">;
+  storedAtMs: number | null;
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -322,8 +334,11 @@ export class OfficialJsonLoader {
   private readonly maxJsonArrayLength: number;
   private readonly maxJsonNodes: number;
   private readonly semaphore: BoundedSemaphore;
-  private readonly cache: BoundedTtlLru<string, JsonSnapshot>;
-  private readonly pending = new Map<string, SharedUpstreamFlight<JsonSnapshot>>();
+  private readonly cache: BoundedTtlLru<string, StoredJsonSnapshot>;
+  private readonly pending = new Map<
+    string,
+    SharedUpstreamFlight<StoredJsonSnapshot>
+  >();
 
   constructor(
     private readonly fetchImpl: FetchLike,
@@ -355,9 +370,11 @@ export class OfficialJsonLoader {
     try {
       deadline.throwIfExpired();
       const cached = this.cache.get(config.sourceUrl, now);
-      if (cached) return cached;
+      if (cached) return this.observe(cached, "hit", now);
       let flight = this.pending.get(config.sourceUrl);
+      let status: CacheStatus = "shared";
       if (!flight) {
+        status = this.cacheTtlMs > 0 ? "miss" : "bypass";
         flight = createSharedUpstreamFlight(
           this.deadlineMs,
           async (sharedDeadline) => {
@@ -365,12 +382,17 @@ export class OfficialJsonLoader {
               config,
               sharedDeadline,
             );
-            this.cache.set(config.sourceUrl, snapshot, {
-              ttlMs: this.cacheTtlMs,
-              weight: byteLength,
-              nowMs: this.now().getTime(),
-            });
-            return snapshot;
+            const storedAtMs =
+              this.cacheTtlMs > 0 ? this.now().getTime() : null;
+            const stored = { snapshot, storedAtMs };
+            if (storedAtMs !== null) {
+              this.cache.set(config.sourceUrl, stored, {
+                ttlMs: this.cacheTtlMs,
+                weight: byteLength,
+                nowMs: storedAtMs,
+              });
+            }
+            return stored;
           },
         );
         this.pending.set(config.sourceUrl, flight);
@@ -382,7 +404,8 @@ export class OfficialJsonLoader {
         };
         void flight.promise.then(clearFlight, clearFlight);
       }
-      return await flight.wait(deadline);
+      const stored = await flight.wait(deadline);
+      return this.observe(stored, status, this.now().getTime());
     } catch (error) {
       if (error instanceof UpstreamReliabilityError) {
         throw this.timeoutError(config, error);
@@ -397,10 +420,26 @@ export class OfficialJsonLoader {
     this.cache.delete(sourceUrl);
   }
 
+  private observe(
+    stored: StoredJsonSnapshot,
+    status: CacheStatus,
+    observedAtMs: number,
+  ): JsonSnapshot {
+    return {
+      ...stored.snapshot,
+      cache: observeCache({
+        status,
+        observedAtMs,
+        storedAtMs: stored.storedAtMs,
+        ttlMs: this.cacheTtlMs,
+      }),
+    };
+  }
+
   private async requestJson(
     config: OfficialSourceConfig,
     deadline: AbsoluteDeadline,
-  ): Promise<{ snapshot: JsonSnapshot; byteLength: number }> {
+  ): Promise<{ snapshot: Omit<JsonSnapshot, "cache">; byteLength: number }> {
     let lastError: MopsfinError | undefined;
 
     for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
@@ -417,7 +456,7 @@ export class OfficialJsonLoader {
           signal: scope.signal,
           headers: {
             Accept: "application/json",
-            "User-Agent": "mopsfin-mcp/0.6.2 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": "mopsfin-mcp/0.6.3 (+https://mopsfin.twse.com.tw/)",
           },
         });
         const body = await readResponseTextWithLimit(

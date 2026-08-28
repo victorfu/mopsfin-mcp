@@ -20,6 +20,7 @@ import {
   type OfficialSourceConfig,
 } from "@/lib/market-data/client-utils";
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 
 import {
   OfficialHtmlPostLoader,
@@ -86,6 +87,7 @@ interface HistoricalUnitResult {
   duplicateRowCount: number;
   snapshotStatus: "nonempty" | "verified_empty";
   retrievedAt: string;
+  cache?: CacheProvenance;
   snapshotIdentity: string;
 }
 
@@ -502,6 +504,7 @@ function parseCurrentSource(
         sourceUrl: config.sourceUrl,
         scope: "current_official_snapshot",
         retrievedAt: snapshot.retrievedAt,
+        ...(snapshot.cache ? { cache: snapshot.cache } : {}),
         reportDate: null,
         rawRowCount: 1,
         eligibleEventCount: 0,
@@ -664,6 +667,7 @@ function parseCurrentSource(
       sourceUrl: config.sourceUrl,
       scope: "current_official_snapshot",
       retrievedAt: snapshot.retrievedAt,
+      ...(snapshot.cache ? { cache: snapshot.cache } : {}),
       reportDate,
       rawRowCount: snapshot.payload.length,
       eligibleEventCount: unique.events.length,
@@ -942,6 +946,7 @@ function parseMaterialHistory(
       duplicateRowCount: 0,
       snapshotStatus: "verified_empty",
       retrievedAt: snapshot.retrievedAt,
+      ...(snapshot.cache ? { cache: snapshot.cache } : {}),
       snapshotIdentity,
     };
   }
@@ -1096,6 +1101,7 @@ function parseMaterialHistory(
     duplicateRowCount: unique.duplicateCount,
     snapshotStatus: "nonempty",
     retrievedAt: snapshot.retrievedAt,
+    ...(snapshot.cache ? { cache: snapshot.cache } : {}),
     snapshotIdentity: stableDigest({
       sourceKey: "mops_material_information_history",
       companyCode,
@@ -1154,6 +1160,7 @@ function parseConferenceHistory(
       duplicateRowCount: 0,
       snapshotStatus: "verified_empty",
       retrievedAt: snapshot.retrievedAt,
+      ...(snapshot.cache ? { cache: snapshot.cache } : {}),
       snapshotIdentity: stableDigest([
         "mops_investor_conference_history",
         companyCode,
@@ -1298,6 +1305,7 @@ function parseConferenceHistory(
     duplicateRowCount: unique.duplicateCount,
     snapshotStatus: "nonempty",
     retrievedAt: snapshot.retrievedAt,
+    ...(snapshot.cache ? { cache: snapshot.cache } : {}),
     snapshotIdentity: stableDigest({
       sourceKey: "mops_investor_conference_history",
       companyCode,
@@ -1380,6 +1388,9 @@ function historySource(
         : CONFERENCE_HISTORY_URL,
     retrievedAt:
       units.map((unit) => unit.retrievedAt).sort().at(-1) ?? null,
+    ...(units.length === 1 && units[0].cache
+      ? { cache: units[0].cache }
+      : {}),
     scope: "selected_company_historical_months",
     queryStart: startDate,
     queryEnd: endDate,
@@ -1894,6 +1905,7 @@ export class CatalystClient {
               sourceName: source.sourceName,
               sourceUrl: source.sourceUrl,
               retrievedAt: source.retrievedAt,
+              ...(source.cache ? { cache: source.cache } : {}),
               scope: "current_official_snapshot",
               queryStart: startDate,
               queryEnd: endDate,

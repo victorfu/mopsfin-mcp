@@ -4,6 +4,10 @@ import {
 } from "@/lib/market-data/client-utils";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import {
+  observeCache,
+  type CacheStatus,
+} from "@/lib/upstream/cache-provenance";
+import {
   createSharedUpstreamFlight,
   getCurrentDeadline,
   UpstreamReliabilityError,
@@ -28,6 +32,11 @@ interface SourceConfig {
 
 interface CompanyMasterClientOptions extends OfficialJsonLoaderOptions {
   minimumCompanyCounts?: Partial<Record<CompanyMarket, number>>;
+}
+
+interface StoredCompanyMarketSnapshot {
+  snapshot: Omit<CompanyMarketSnapshot, "cache">;
+  storedAtMs: number | null;
 }
 
 const SOURCE_CONFIGS: Record<CompanyMarket, SourceConfig> = {
@@ -261,6 +270,7 @@ export function normalizeCompanyMarketPayload(
   config: SourceConfig,
   retrievedAt: string,
   minimumExpectedCount: number,
+  cache?: CompanyMarketSnapshot["cache"],
 ): CompanyMarketSnapshot {
   if (!Array.isArray(payload) || payload.length === 0) {
     fail(`${config.market} 公司基本資料不是非空陣列。`, {
@@ -312,6 +322,7 @@ export function normalizeCompanyMarketPayload(
       excludedTdrCount,
       companyCount: companies.length,
       minimumExpectedCount,
+      ...(cache ? { cache } : {}),
     },
     companies,
   };
@@ -324,11 +335,11 @@ export class CompanyMasterClient {
   private readonly loader: OfficialJsonLoader;
   private readonly cached = new Map<
     CompanyMarket,
-    { expiresAt: number; snapshot: CompanyMarketSnapshot }
+    { expiresAt: number; stored: StoredCompanyMarketSnapshot }
   >();
   private readonly pending = new Map<
     CompanyMarket,
-    SharedUpstreamFlight<CompanyMarketSnapshot>
+    SharedUpstreamFlight<StoredCompanyMarketSnapshot>
   >();
 
   constructor(
@@ -369,19 +380,28 @@ export class CompanyMasterClient {
     const now = this.now().getTime();
     const callerDeadline = getCurrentDeadline();
     const cached = this.cached.get(market);
-    if (!force && cached && cached.expiresAt > now) return cached.snapshot;
+    if (!force && cached && cached.expiresAt > now) {
+      return this.observe(cached.stored, "hit", now);
+    }
     const existing = this.pending.get(market);
-    if (existing) return this.waitForSnapshot(existing, callerDeadline);
+    if (existing) {
+      const stored = await this.waitForSnapshot(existing, callerDeadline);
+      return this.observe(stored, "shared", this.now().getTime());
+    }
 
     const request = createSharedUpstreamFlight(
       this.flightDeadlineMs,
       async () => {
         const snapshot = await this.loadMarket(market);
-        this.cached.set(market, {
-          expiresAt: this.now().getTime() + this.cacheTtlMs,
-          snapshot,
-        });
-        return snapshot;
+        const storedAtMs = this.cacheTtlMs > 0 ? this.now().getTime() : null;
+        const stored = { snapshot, storedAtMs };
+        if (storedAtMs !== null) {
+          this.cached.set(market, {
+            expiresAt: storedAtMs + this.cacheTtlMs,
+            stored,
+          });
+        }
+        return stored;
       },
     );
     this.pending.set(market, request);
@@ -389,13 +409,18 @@ export class CompanyMasterClient {
       if (this.pending.get(market) === request) this.pending.delete(market);
     };
     void request.promise.then(clearRequest, clearRequest);
-    return this.waitForSnapshot(request, callerDeadline);
+    const stored = await this.waitForSnapshot(request, callerDeadline);
+    return this.observe(
+      stored,
+      force || this.cacheTtlMs <= 0 ? "bypass" : "miss",
+      this.now().getTime(),
+    );
   }
 
   private async waitForSnapshot(
-    request: SharedUpstreamFlight<CompanyMarketSnapshot>,
+    request: SharedUpstreamFlight<StoredCompanyMarketSnapshot>,
     deadline: AbsoluteDeadline | undefined,
-  ): Promise<CompanyMarketSnapshot> {
+  ): Promise<StoredCompanyMarketSnapshot> {
     try {
       return await request.wait(deadline);
     } catch (error) {
@@ -421,6 +446,24 @@ export class CompanyMasterClient {
       }
       throw error;
     }
+  }
+
+  private observe(
+    stored: StoredCompanyMarketSnapshot,
+    status: CacheStatus,
+    observedAtMs: number,
+  ): CompanyMarketSnapshot {
+    const cache = observeCache({
+      status,
+      observedAtMs,
+      storedAtMs: stored.storedAtMs,
+      ttlMs: this.cacheTtlMs,
+    });
+    return {
+      ...stored.snapshot,
+      source: { ...stored.snapshot.source, cache },
+      cache,
+    };
   }
 
   async listCompanies(
@@ -527,13 +570,14 @@ export class CompanyMasterClient {
 
   private async loadMarket(market: CompanyMarket): Promise<CompanyMarketSnapshot> {
     const config = SOURCE_CONFIGS[market];
-    const payload = await this.requestJson(config);
+    const loaded = await this.loader.get(config);
     const minimum = this.minimumCompanyCounts[market];
     const snapshot = normalizeCompanyMarketPayload(
-      payload,
+      loaded.payload,
       config,
-      this.now().toISOString(),
+      loaded.retrievedAt,
       minimum,
+      loaded.cache,
     );
     if (snapshot.companies.length < minimum) {
       fail(`${config.exchange} 公司基本資料筆數低於完整性基準。`, {
@@ -543,10 +587,6 @@ export class CompanyMasterClient {
       });
     }
     return snapshot;
-  }
-
-  private async requestJson(config: SourceConfig): Promise<unknown> {
-    return (await this.loader.get(config)).payload;
   }
 }
 

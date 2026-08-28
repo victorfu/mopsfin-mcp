@@ -47,7 +47,10 @@ describe("MopsfinClient", () => {
       throw new Error(`unexpected ${parsed.pathname}`);
     });
     const client = new MopsfinClient(
-      new MopsfinHttpClient(fetchMock as typeof fetch, { retryDelayMs: 0 }),
+      new MopsfinHttpClient(fetchMock as typeof fetch, {
+        retryDelayMs: 0,
+        now: () => new Date("2026-08-23T01:02:03.000Z"),
+      }),
       () => new Date("2026-08-24T00:00:00+08:00"),
     );
 
@@ -61,6 +64,13 @@ describe("MopsfinClient", () => {
     expect(result.period).toBe("2026Q1");
     expect(result.query.companies).toEqual(["2330 台積電"]);
     expect(result.pagination.totalRows).toBe(2);
+    expect(result).toMatchObject({
+      retrievedAt: "2026-08-23T01:02:03.000Z",
+      cache: {
+        status: "bypass",
+        observedAt: "2026-08-23T01:02:03.000Z",
+      },
+    });
     expect(
       fetchMock.mock.calls.filter(([url]) =>
         String(url).includes("/compare/report"),

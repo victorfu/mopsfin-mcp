@@ -8,6 +8,10 @@ import {
 } from "./constants";
 import { MopsfinError } from "./errors";
 import {
+  observeCache,
+  type CacheProvenance,
+} from "@/lib/upstream/cache-provenance";
+import {
   AbsoluteDeadline,
   BoundedSemaphore,
   createAttemptAbortScope,
@@ -27,6 +31,9 @@ export interface UpstreamResponse {
   body: string;
   contentType: string;
   status: number;
+  /** Time the successful upstream response body was fully acquired. */
+  retrievedAt: string;
+  cache: CacheProvenance;
 }
 
 export interface MopsfinHttpClientOptions {
@@ -36,6 +43,7 @@ export interface MopsfinHttpClientOptions {
   deadlineMs?: number;
   maxResponseBytes?: number;
   semaphore?: BoundedSemaphore;
+  now?: () => Date;
 }
 
 const DEFAULT_DEADLINE_MS = 50_000;
@@ -48,6 +56,7 @@ export class MopsfinHttpClient {
   private readonly deadlineMs: number;
   private readonly maxResponseBytes: number;
   private readonly semaphore: BoundedSemaphore;
+  private readonly now: () => Date;
 
   constructor(
     private readonly fetchImpl: FetchLike = fetch,
@@ -60,6 +69,7 @@ export class MopsfinHttpClient {
     this.maxResponseBytes =
       options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
     this.semaphore = options.semaphore ?? globalUpstreamSemaphore;
+    this.now = options.now ?? (() => new Date());
   }
 
   async get(path: AllowedGetPath, query?: URLSearchParams): Promise<UpstreamResponse> {
@@ -112,7 +122,7 @@ export class MopsfinHttpClient {
             signal: scope.signal,
             headers: {
               Accept: "application/json, text/html;q=0.9, */*;q=0.8",
-              "User-Agent": "mopsfin-mcp/0.6.2 (+https://mopsfin.twse.com.tw/)",
+              "User-Agent": "mopsfin-mcp/0.6.3 (+https://mopsfin.twse.com.tw/)",
               ...init.headers,
             },
           });
@@ -125,10 +135,18 @@ export class MopsfinHttpClient {
           );
 
           if (response.ok) {
+            const retrievedAtMs = this.now().getTime();
             return {
               body: body.text,
               status: response.status,
               contentType: response.headers.get("content-type") ?? "",
+              retrievedAt: new Date(retrievedAtMs).toISOString(),
+              cache: observeCache({
+                status: "bypass",
+                observedAtMs: retrievedAtMs,
+                storedAtMs: null,
+                ttlMs: 0,
+              }),
             };
           }
 

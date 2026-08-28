@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
 
+import { aggregateFreshness } from "@/lib/freshness/evaluate";
+import type {
+  FreshnessEvaluation,
+  FreshnessStatus,
+  SourceCacheObservation,
+} from "@/lib/freshness/types";
 import type { MopsfinError, MopsfinErrorCode } from "@/lib/mopsfin/errors";
 
 export const RESULT_CONTRACT_VERSION = "mopsfin.result.v1" as const;
@@ -59,6 +65,8 @@ export interface ResultMeta {
       through: string | null;
     };
     timezone: "Asia/Taipei";
+    servedAt: string;
+    /** @deprecated Use servedAt. Retained as an additive v1 compatibility alias. */
     assembledAt: string;
     snapshotId: string | null;
     sourceCutoffs: Array<{
@@ -70,6 +78,7 @@ export interface ResultMeta {
       };
       publishedAt: string | null;
       retrievedAt: string;
+      cache: SourceCacheObservation;
     }>;
   };
   quality: {
@@ -78,11 +87,8 @@ export interface ResultMeta {
     universe: "verified" | "compatible" | "unverified" | "not_applicable";
     selection: QualityDimensionStatus;
     values: QualityDimensionStatus;
-    freshness:
-      | "within_expected_window"
-      | "stale"
-      | "unknown"
-      | "not_applicable";
+    freshness: FreshnessStatus;
+    freshnessDetails: FreshnessEvaluation[];
     issues: QualityIssue[];
   };
   page: ResultPageMeta;
@@ -101,6 +107,8 @@ export interface ResultMetaHints {
   selection?: QualityDimensionStatus;
   values?: QualityDimensionStatus;
   freshness?: ResultMeta["quality"]["freshness"];
+  /** Canonical source/policy evidence. Takes precedence over freshness. */
+  freshnessDetails?: FreshnessEvaluation[];
   issues?: QualityIssue[];
   snapshotId?: string | null;
 }
@@ -114,6 +122,42 @@ function isRecord(value: unknown): value is UnknownRecord {
 function readString(record: UnknownRecord, key: string): string | null {
   const value = record[key];
   return typeof value === "string" && value ? value : null;
+}
+
+function readNonNegativeNumber(
+  record: UnknownRecord,
+  key: string,
+): number | null {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
+}
+
+const CACHE_STATUSES = new Set<SourceCacheObservation["status"]>([
+  "hit",
+  "miss",
+  "shared",
+  "bypass",
+  "not_applicable",
+  "unknown",
+]);
+
+function sourceCacheObservation(
+  raw: UnknownRecord,
+): SourceCacheObservation {
+  const cache = isRecord(raw.cache) ? raw.cache : null;
+  const status = cache ? readString(cache, "status") : null;
+  return {
+    status:
+      status && CACHE_STATUSES.has(status as SourceCacheObservation["status"])
+        ? (status as SourceCacheObservation["status"])
+        : "unknown",
+    observedAt: cache ? readString(cache, "observedAt") : null,
+    storedAt: cache ? readString(cache, "storedAt") : null,
+    ageMs: cache ? readNonNegativeNumber(cache, "ageMs") : null,
+    ttlMs: cache ? readNonNegativeNumber(cache, "ttlMs") : null,
+  };
 }
 
 function inferResolved(data: UnknownRecord): ResultMeta["asOf"]["resolved"] {
@@ -227,9 +271,109 @@ function inferPage(data: UnknownRecord): ResultPageMeta {
   };
 }
 
+function fallbackFreshnessDetails(
+  hints: ResultMetaHints,
+  resolved: ResultMeta["asOf"]["resolved"],
+  sourceUrls: string[],
+): FreshnessEvaluation[] {
+  if (hints.freshnessDetails && hints.freshnessDetails.length > 0) {
+    return hints.freshnessDetails.map((detail) => ({
+      ...detail,
+      sourceUrls: [...new Set(detail.sourceUrls)].sort(),
+    }));
+  }
+  const status = hints.freshness ?? "unknown";
+  const observedAsOf =
+    resolved.from !== null && resolved.from === resolved.through
+      ? resolved.from
+      : null;
+  const reason =
+    status === "within_expected_window"
+      ? {
+          code: "LEGACY_HANDLER_HINT",
+          message: "Handler 提供相容 freshness hint；應改用中央 policy evidence。",
+        }
+      : status === "stale"
+        ? {
+            code: "LEGACY_HANDLER_HINT_STALE",
+            message: "Handler 將資料標記為 stale；應改用中央 policy evidence。",
+          }
+        : status === "not_applicable"
+          ? {
+              code: "HISTORICAL_SELECTOR_NOT_APPLICABLE",
+              message: "此查詢不適用 latest freshness。",
+            }
+          : {
+              code: "EXPECTED_AS_OF_UNAVAILABLE",
+              message: "目前沒有可靠的 expected as-of 可驗證資料是否為最新。",
+            };
+  return [
+    {
+      status,
+      policyId:
+        hints.freshness === undefined
+          ? "unverified.no-policy.v1"
+          : "legacy.handler-hint.v1",
+      observedAsOf,
+      expectedAsOf: null,
+      lag: null,
+      reasonCode: reason.code,
+      reason: reason.message,
+      sourceUrls: [...new Set(sourceUrls)].sort(),
+    },
+  ];
+}
+
+function addFreshnessIssues(
+  issues: QualityIssue[],
+  freshnessDetails: FreshnessEvaluation[],
+): void {
+  const addIssue = (
+    code: "DATA_STALE" | "FRESHNESS_UNVERIFIED",
+    details: FreshnessEvaluation[],
+  ) => {
+    if (details.length === 0 || issues.some((issue) => issue.code === code)) {
+      return;
+    }
+    issues.push({
+      code,
+      severity: "warning",
+      scope: "source",
+      message:
+        code === "DATA_STALE"
+          ? "至少一項必要來源落後其 freshness policy 的 expected as-of。"
+          : "至少一項來源缺少可靠 expected as-of，無法驗證為最新。",
+      refs: {
+        companyCodes: [],
+        fields: ["meta.quality.freshnessDetails"],
+        periods: [
+          ...new Set(
+            details.flatMap((detail) =>
+              detail.observedAsOf ? [detail.observedAsOf] : [],
+            ),
+          ),
+        ].sort(),
+        sourceUrls: [
+          ...new Set(details.flatMap((detail) => detail.sourceUrls)),
+        ].sort(),
+      },
+    });
+  };
+
+  addIssue(
+    "DATA_STALE",
+    freshnessDetails.filter((detail) => detail.status === "stale"),
+  );
+  addIssue(
+    "FRESHNESS_UNVERIFIED",
+    freshnessDetails.filter((detail) => detail.status === "unknown"),
+  );
+}
+
 function inferQuality(
   data: UnknownRecord,
   hints: ResultMetaHints,
+  freshnessDetails: FreshnessEvaluation[],
 ): ResultMeta["quality"] {
   const coverage = isRecord(data.coverage) ? data.coverage : null;
   const hasContinuation = Boolean(coverage && readString(coverage, "nextCursor"));
@@ -298,6 +442,9 @@ function inferQuality(
     });
   }
 
+  addFreshnessIssues(issues, freshnessDetails);
+  const freshness = aggregateFreshness(freshnessDetails);
+
   return {
     status:
       source === "partial" ||
@@ -306,14 +453,17 @@ function inferQuality(
       selection === "partial" ||
       selection === "unknown" ||
       values === "partial" ||
-      values === "unknown"
+      values === "unknown" ||
+      freshness === "stale" ||
+      freshness === "unknown"
         ? "partial"
         : "complete",
     source,
     universe,
     selection,
     values,
-    freshness: hints.freshness ?? "unknown",
+    freshness,
+    freshnessDetails,
     issues,
   };
 }
@@ -384,10 +534,9 @@ function inferSourceCutoffs(
           ? { granularity, from: value, through: value }
           : { ...fallback },
         publishedAt:
-          readString(raw, "sourceSnapshotDate") ??
-          readString(raw, "sourceReportDate") ??
-          readString(raw, "reportDate"),
+          readString(raw, "publishedAt"),
         retrievedAt,
+        cache: sourceCacheObservation(raw),
       },
     ];
   });
@@ -396,18 +545,32 @@ function inferSourceCutoffs(
 export function buildResultMeta(
   data: object,
   hints: ResultMetaHints = {},
-  assembledAt = new Date().toISOString(),
+  servedAt = new Date().toISOString(),
 ): ResultMeta {
   const record = data as UnknownRecord;
   const resolved = hints.resolved ?? inferResolved(record);
   const sourceCutoffs = inferSourceCutoffs(record, resolved);
+  const freshnessDetails = fallbackFreshnessDetails(
+    hints,
+    resolved,
+    sourceCutoffs.map((cutoff) => cutoff.sourceUrl),
+  );
   const snapshotId =
     hints.snapshotId !== undefined
       ? hints.snapshotId
       : readString(record, "snapshotId") ??
         (sourceCutoffs.length > 0
           ? createHash("sha256")
-              .update(JSON.stringify(sourceCutoffs))
+              .update(
+                JSON.stringify(
+                  sourceCutoffs.map((cutoff) => ({
+                    sourceUrl: cutoff.sourceUrl,
+                    resolved: cutoff.resolved,
+                    publishedAt: cutoff.publishedAt,
+                    retrievedAt: cutoff.retrievedAt,
+                  })),
+                ),
+              )
               .digest("hex")
               .slice(0, 24)
           : null);
@@ -417,11 +580,12 @@ export function buildResultMeta(
       selector: hints.selector ?? inferSelector(record, resolved),
       resolved,
       timezone: "Asia/Taipei",
-      assembledAt,
+      servedAt,
+      assembledAt: servedAt,
       snapshotId,
       sourceCutoffs,
     },
-    quality: inferQuality(record, hints),
+    quality: inferQuality(record, hints, freshnessDetails),
     page: hints.page ?? inferPage(record),
   };
 }

@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { parseCatalogHtml } from "@/lib/mopsfin/catalog";
+import { CatalogService, parseCatalogHtml } from "@/lib/mopsfin/catalog";
+import { MopsfinHttpClient } from "@/lib/mopsfin/http";
 
 const fixture = readFileSync(
   fileURLToPath(new URL("./fixtures/catalog.html", import.meta.url)),
@@ -50,5 +51,44 @@ describe("parseCatalogHtml", () => {
   it("fails loudly when the upstream DOM structure no longer has a catalog", () => {
     expect(() => parseCatalogHtml("<html><body>changed</body></html>"))
       .toThrow(/網站結構可能已變更/);
+  });
+});
+
+describe("CatalogService provenance", () => {
+  it("keeps discovery/retrieval time stable across cache hits", async () => {
+    let clockMs = Date.parse("2026-08-24T00:00:00.000Z");
+    const now = () => new Date(clockMs);
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(fixture));
+    const service = new CatalogService(
+      new MopsfinHttpClient(fetchMock as typeof fetch, { now, maxAttempts: 1 }),
+      now,
+    );
+
+    const first = await service.getCatalog();
+    clockMs += 5_000;
+    const second = await service.getCatalog();
+    const refreshed = await service.getCatalog(true);
+
+    expect(first).toMatchObject({
+      discoveredAt: "2026-08-24T00:00:00.000Z",
+      retrievedAt: "2026-08-24T00:00:00.000Z",
+      cache: { status: "miss", ageMs: 0 },
+    });
+    expect(second).toMatchObject({
+      discoveredAt: first.discoveredAt,
+      retrievedAt: first.retrievedAt,
+      cache: {
+        status: "hit",
+        observedAt: "2026-08-24T00:00:05.000Z",
+        storedAt: "2026-08-24T00:00:00.000Z",
+        ageMs: 5_000,
+      },
+    });
+    expect(refreshed).toMatchObject({
+      discoveredAt: "2026-08-24T00:00:05.000Z",
+      retrievedAt: "2026-08-24T00:00:05.000Z",
+      cache: { status: "bypass", ageMs: 0 },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

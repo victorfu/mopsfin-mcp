@@ -6,7 +6,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 
 連線資訊：
 - 名稱：Mopsfin 台股財務
-- 版本：0.6.2
+- 版本：0.6.3
 - 說明：篩選台股研究候選，並查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、公司行動實際結果、benchmark reaction signals、重大訊息與法說會、current official catalyst snapshots，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
@@ -59,7 +59,7 @@ export default function Home() {
       </header>
 
       <section className="hero" id="top">
-        <p className="eyebrow">V0.6.2 · REMOTE MCP · TAIWAN EQUITY RESEARCH</p>
+        <p className="eyebrow">V0.6.3 · REMOTE MCP · TAIWAN EQUITY RESEARCH</p>
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
@@ -243,8 +243,9 @@ export default function Home() {
             <p><code>screen_taiwan_stock_candidates</code> 固定使用 <code>balanced_non_financial_v2</code>／<code>taiwan_stock_screen.v2</code>，是 latest-only、有工作量上限的非金融研究分流：以月營收領先粗篩，再對有限名單評估 <code>companyQuality</code>、<code>fundamentalImprovement</code>、<code>reasonableValuation</code> 與 <code>marketUnderreactionProxy</code>，最多回傳 5 個候選。七項財務需求先由穩定 semantic roles 對即時 catalog 解析；缺少、重複或語意衝突會以 <code>CATALOG_CONTRACT_MISMATCH</code> fail closed，當次 role→code/name/family 證據則保留在 <code>screenDefinition.evidencePolicies</code>。market pillar 只接受可比的公司行動調整證據。deep stage 會在 24-unit 預算內隔離 company-level identity／metric errors；受影響代號以 <code>dependencyStatus</code> 與 <code>notReactionScored</code> 標示 unknown，不會被誤判為 fail 或 0 分。其餘 deepSelected 公司繼續，但不從 deepSelected 之外自動遞補。不同資料來源的 as-of 可能不同；結果不是完整全市場深篩、point-in-time 回測、錯價證明或投資建議。</p>
             <p><code>get_company_catalyst_events</code> 依 selected company 與日期範圍即時查 MOPS 歷史重大訊息、法說會日曆，並用 TWSE／TPEx 每日重大訊息補強近期資料。<code>publishedAt</code>、<code>factDate</code>、<code>scheduledAt</code> 與 <code>effectiveAt</code> 分開；官方無事件、查詢失敗與 parser/security block 也分開。它不提供分析師 consensus、預估修正、情緒分數或投資建議，且不會改變四柱 screening 分數。</p>
             <p><code>get_company_catalyst_snapshots</code> 只讀取當次官方 snapshot evidence：<code>forecast_achievement</code>、<code>forecast_material_variance</code>、<code>shareholder_meeting</code> 與 <code>dividend_decision</code>，不是歷史事件查詢。應檢查 <code>sourceSnapshotDate</code>、<code>freshness</code>、<code>pointInTimeHistoryAvailable</code>、<code>firstKnownAt</code> 與 <code>upcomingEligible</code>；公司財測不是分析師 consensus，stale／unsupported 不是 current no-data。TPEx 沒有可用的 current dividend source，不會以舊的 <code>mopsfin_t187ap39_O</code> 冒充當期股利決議。此工具與現有 events 工具都不納入四柱 screening 評分。</p>
-            <p>成功結果固定提供 <code>meta.asOf</code>、<code>meta.quality</code> 與 <code>meta.page</code>；reaction cursor v2 會把公司行動 range contracts/summaries 與 requested-company 權息 detail fingerprint 納入來源 snapshot，但不儲存在伺服器。若來源在續頁間改變，須依錯誤 <code>action=restart_pagination</code> 從第一頁重啟。</p>
-            <p>每個請求都有整體 deadline，暫時性上游錯誤會在期限內依 <code>Retry-After</code> 或 backoff 有限重試；response、cache、併發與等待 queue 均設上限。行程內 telemetry 只彙總 method、tool name、延遲、狀態與錯誤碼，不記錄 tool arguments 或 request body，也不持久化。服務狀態頁不呼叫上游，官方資料契約另以每週一次的低頻 live checks 驗證。</p>
+            <p>成功結果固定提供 <code>meta.asOf</code>、<code>meta.quality</code> 與 <code>meta.page</code>。<code>data cutoff</code>、<code>retrievedAt</code>、<code>servedAt</code> 與 cache age 分開保留；<code>freshnessDetails</code> 會列出逐來源 policy、observed/expected as-of 與 lag，無法驗證時是 <code>FRESHNESS_UNVERIFIED</code>，不會因查詢參數是 latest 就自動宣稱 fresh。reaction cursor v2 會把公司行動 range contracts/summaries 與 requested-company 權息 detail fingerprint 納入來源 snapshot，但不儲存在伺服器。若來源在續頁間改變，須依錯誤 <code>action=restart_pagination</code> 從第一頁重啟。</p>
+            <p>資料 freshness 依來源分開判讀：Mopsfin 財務資料依官方說明每日更新、可能較申報落後約一日；這不代表所有 TWSE／TPEx 資料固定落後一天。OHLC／估值依完成交易日，月營收依資料年月與出表日，事件與 current snapshots 則依各自發布、事件或 snapshot 日期判讀。</p>
+            <p>每個請求都有整體 deadline，暫時性上游錯誤會在期限內依 <code>Retry-After</code> 或 backoff 有限重試；response、cache、併發與等待 queue 均設上限。行程內 telemetry 只彙總 method、tool name、延遲、狀態與錯誤碼，不記錄 tool arguments 或 request body，也不持久化。服務狀態頁是 shallow health，不呼叫上游；<code>liveness=ok</code> 與 <code>applicationReadiness=ready</code> 只表示應用程式可回應，<code>upstreamContracts.status=not_checked</code> 明示該次請求未驗證官方資料契約。官方資料契約另以每週一次的低頻 live checks 驗證。</p>
             <p>上市櫃公司通常一年申報 4 次；興櫃與公開發行公司可能僅申報半年與年度，部分公司只需申報年度。查不到某季不一定代表連線失敗。</p>
             <p>本服務不是臺灣證券交易所或證券櫃檯買賣中心的官方服務，僅供資訊查詢，不構成投資建議。重要決策前請回到官方市場名錄與原始申報資料查核。</p>
             <div className="sourceLinks">
@@ -276,7 +277,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>Mopsfin 台股 MCP · v0.6.2</span>
+        <span>Mopsfin 台股 MCP · v0.6.3</span>
         <span>公開 · 唯讀 · 無資料庫</span>
       </footer>
     </main>

@@ -3,6 +3,7 @@ import type {
   CompanyMasterResult,
   MasterCompany,
 } from "@/lib/company-master/types";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 
 export type UniversePolicy = "compatible" | "strict_current_master";
 
@@ -29,6 +30,7 @@ export interface OfficialMarketSource {
   retrievedAt: string;
   rawCount: number;
   eligibleRowCount: number;
+  cache?: CacheProvenance;
 }
 
 export interface CurrentCompanyMasterLike {

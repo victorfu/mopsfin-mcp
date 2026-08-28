@@ -1,5 +1,10 @@
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import {
+  observeCache,
+  type CacheProvenance,
+  type CacheStatus,
+} from "@/lib/upstream/cache-provenance";
+import {
   AbsoluteDeadline,
   BoundedSemaphore,
   BoundedTtlLru,
@@ -18,6 +23,13 @@ export interface CatalystHtmlSnapshot {
   body: string;
   contentType: string;
   retrievedAt: string;
+  /** Acquisition-layer metadata; public tool schemas wire this separately. */
+  cache?: CacheProvenance;
+}
+
+interface StoredCatalystHtmlSnapshot {
+  snapshot: Omit<CatalystHtmlSnapshot, "cache">;
+  storedAtMs: number | null;
 }
 
 export interface CatalystHtmlPostLoader {
@@ -51,8 +63,11 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
   private readonly maxResponseBytes: number;
   private readonly cacheTtlMs: number;
   private readonly semaphore: BoundedSemaphore;
-  private readonly cache: BoundedTtlLru<string, CatalystHtmlSnapshot>;
-  private readonly pending = new Map<string, Promise<CatalystHtmlSnapshot>>();
+  private readonly cache: BoundedTtlLru<string, StoredCatalystHtmlSnapshot>;
+  private readonly pending = new Map<
+    string,
+    Promise<StoredCatalystHtmlSnapshot>
+  >();
 
   constructor(
     private readonly fetchImpl: typeof fetch,
@@ -96,31 +111,60 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
       left.localeCompare(right),
     );
     const cacheKey = `${sourceUrl}?${new URLSearchParams(normalizedFields).toString()}`;
-    const cached = this.cache.get(cacheKey, this.now().getTime());
-    if (cached) return cached;
+    const observedAtMs = this.now().getTime();
+    const cached = this.cache.get(cacheKey, observedAtMs);
+    if (cached) return this.observe(cached, "hit", observedAtMs);
     const existing = this.pending.get(cacheKey);
-    if (existing) return existing;
+    if (existing) {
+      const stored = await existing;
+      return this.observe(stored, "shared", this.now().getTime());
+    }
     const pending = this.request(sourceName, sourceUrl, fields).then((snapshot) => {
-      this.cache.set(cacheKey, snapshot, {
-        ttlMs: this.cacheTtlMs,
-        weight: Buffer.byteLength(snapshot.body, "utf8"),
-        nowMs: this.now().getTime(),
-      });
-      return snapshot;
+      const storedAtMs = this.cacheTtlMs > 0 ? this.now().getTime() : null;
+      const stored = { snapshot, storedAtMs };
+      if (storedAtMs !== null) {
+        this.cache.set(cacheKey, stored, {
+          ttlMs: this.cacheTtlMs,
+          weight: Buffer.byteLength(snapshot.body, "utf8"),
+          nowMs: storedAtMs,
+        });
+      }
+      return stored;
     });
     this.pending.set(cacheKey, pending);
     const clear = () => {
       if (this.pending.get(cacheKey) === pending) this.pending.delete(cacheKey);
     };
     void pending.then(clear, clear);
-    return pending;
+    const stored = await pending;
+    return this.observe(
+      stored,
+      this.cacheTtlMs > 0 ? "miss" : "bypass",
+      this.now().getTime(),
+    );
+  }
+
+  private observe(
+    stored: StoredCatalystHtmlSnapshot,
+    status: CacheStatus,
+    observedAtMs: number,
+  ): CatalystHtmlSnapshot {
+    return {
+      ...stored.snapshot,
+      cache: observeCache({
+        status,
+        observedAtMs,
+        storedAtMs: stored.storedAtMs,
+        ttlMs: this.cacheTtlMs,
+      }),
+    };
   }
 
   private async request(
     sourceName: string,
     sourceUrl: string,
     fields: Readonly<Record<string, string>>,
-  ): Promise<CatalystHtmlSnapshot> {
+  ): Promise<Omit<CatalystHtmlSnapshot, "cache">> {
     const url = new URL(sourceUrl);
 
     const deadline = new AbsoluteDeadline(this.deadlineMs);
@@ -146,7 +190,7 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
               Origin: MOPS_ORIGIN,
               Referer: `${MOPS_ORIGIN}/mops/web/index`,
               "User-Agent":
-                "mopsfin-mcp/0.6.2 (+https://mopsfin.twse.com.tw/)",
+                "mopsfin-mcp/0.6.3 (+https://mopsfin.twse.com.tw/)",
               "X-Requested-With": "XMLHttpRequest",
             },
           });

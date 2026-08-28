@@ -3,6 +3,9 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { catalystClient } from "@/lib/catalyst/client";
 import { companyCatalystSnapshotClient } from "@/lib/catalyst/snapshot-client";
 import { companyMasterClient } from "@/lib/company-master/client";
+import { evaluateFreshness } from "@/lib/freshness/evaluate";
+import { FRESHNESS_POLICIES } from "@/lib/freshness/policies";
+import type { FreshnessEvaluation, FreshnessPolicy } from "@/lib/freshness/types";
 import { MOPSFIN_SOURCE_URL } from "@/lib/mopsfin/constants";
 import { companyMetricsBatchClient } from "@/lib/mopsfin/batch";
 import { mopsfinClient } from "@/lib/mopsfin/client";
@@ -71,11 +74,57 @@ const annotations = {
   openWorldHint: false,
 } as const;
 
-function source(route: string) {
+function sourceUrls(sources: Array<{ sourceUrl: string | null }>): string[] {
+  return sources.flatMap((item) => item.sourceUrl ? [item.sourceUrl] : []);
+}
+
+function selectorFreshness(options: {
+  selector: "latest" | "explicit" | "range";
+  observedAsOf: string | null;
+  sources: Array<{ sourceUrl: string | null }>;
+  latestPolicy?: FreshnessPolicy;
+  expectedAsOf?: string | null;
+}): FreshnessEvaluation[] {
+  return [
+    evaluateFreshness({
+      policy:
+        options.selector === "latest"
+          ? options.latestPolicy ?? FRESHNESS_POLICIES.completedOfficialSession
+          : FRESHNESS_POLICIES.historicalExact,
+      observedAsOf: options.observedAsOf,
+      expectedAsOf:
+        options.selector === "latest" ? options.expectedAsOf ?? null : null,
+      sourceUrls: sourceUrls(options.sources),
+    }),
+  ];
+}
+
+function taipeiDate(instant: string): string | null {
+  const date = new Date(instant);
+  if (!Number.isFinite(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = new Map(parts.map((part) => [part.type, part.value]));
+  const year = values.get("year");
+  const month = values.get("month");
+  const day = values.get("day");
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
+function source(
+  route: string,
+  retrievedAt: string,
+  cache?: Catalog["cache"],
+) {
   return {
     sourceName: "公開資訊觀測站－財務比較 E 點通",
     sourceUrl: MOPSFIN_SOURCE_URL,
-    retrievedAt: new Date().toISOString(),
+    retrievedAt,
+    ...(cache ? { cache } : {}),
     upstreamRoute: route,
     freshnessNote: "原站每日更新一次，資料可能較最新申報落後約一日。",
   };
@@ -147,9 +196,10 @@ export function registerMopsfinTools(server: McpServer): void {
     },
     async ({ query, limit }) => {
       try {
-        const companies = await mopsfinClient.findCompanies(query, limit);
+        const result = await mopsfinClient.findCompaniesWithSource(query, limit);
+        const companies = result.companies;
         const data = {
-          ...source("/suggestCompany"),
+          ...source("/suggestCompany", result.retrievedAt, result.cache),
           query: { query, limit },
           companies,
           warnings:
@@ -157,7 +207,16 @@ export function registerMopsfinTools(server: McpServer): void {
               ? ["找不到符合的公司；可縮短名稱或改用公司代號。"]
               : [],
         };
-        return success(`找到 ${companies.length} 家符合「${query}」的公司。`, data);
+        return success(`找到 ${companies.length} 家符合「${query}」的公司。`, data, {
+          freshnessDetails: [
+            evaluateFreshness({
+              policy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
+              observedAsOf: null,
+              expectedAsOf: null,
+              sourceUrls: [MOPSFIN_SOURCE_URL],
+            }),
+          ],
+        });
       } catch (error) {
         return failure(error);
       }
@@ -190,6 +249,11 @@ export function registerMopsfinTools(server: McpServer): void {
           data,
           {
             source: unverifiedSources.length > 0 ? "partial" : "complete",
+            freshnessDetails: selectorFreshness({
+              selector: "range",
+              observedAsOf: data.coverage.coveredThrough,
+              sources: data.sources,
+            }),
             issues:
               unverifiedSources.length > 0
                 ? [
@@ -221,7 +285,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢單日台股市場 OHLC",
       description:
-        "查詢最近完成交易日或指定 YYYY-MM-DD 的上市、上櫃或全部公司股票官方原始 OHLC、成交量（股）、成交金額（TWD）、成交筆數與漲跌價差。market=all 要求 TWSE／TPEx 資料日期一致；latest 不是盤中即時價，指定假日或未來日期不會靜默退回前一日。company_codes 可選且最多 500 家；部分缺失以 selectionComplete=false 揭露。latest 預設 universe_policy=compatible，會保留四碼公司代號 fallback 並回傳 reconciliation，但各市場與目前 master 的 matchRatio 低於 95% 仍回 INCOMPLETE_COVERAGE；strict_current_master 僅支援 latest 且要求完全吻合。歷史日期只使用可解釋但未經目前母體驗證的代號規則。價格為 TWD、Asia/Taipei、1d、raw_unadjusted；qualityStatus、missingFields、dataQualityComplete 與單位 normalization 不可忽略。",
+        "查詢最近完成交易日或指定 YYYY-MM-DD 的上市、上櫃或全部公司股票官方原始 OHLC、成交量（股）、成交金額（TWD）、成交筆數與漲跌價差。market=all 要求 TWSE／TPEx 資料日期一致；latest 不是盤中即時價，指定假日或未來日期不會靜默退回前一日。latest 只是 selector；目前沒有權威交易日 resolver 可獨立算 expectedAsOf，因此 meta freshness 保守為 unknown/FRESHNESS_UNVERIFIED，不因成功取得一個日期就自動宣稱 fresh。company_codes 可選且最多 500 家；部分缺失以 selectionComplete=false 揭露。latest 預設 universe_policy=compatible，會保留四碼公司代號 fallback 並回傳 reconciliation，但各市場與目前 master 的 matchRatio 低於 95% 仍回 INCOMPLETE_COVERAGE；strict_current_master 僅支援 latest 且要求完全吻合。歷史日期只使用可解釋但未經目前母體驗證的代號規則。價格為 TWD、Asia/Taipei、1d、raw_unadjusted；qualityStatus、missingFields、dataQualityComplete 與單位 normalization 不可忽略。",
       inputSchema: dailyMarketOhlcInputSchema,
       outputSchema: dailyMarketOhlcOutputSchema,
       annotations,
@@ -275,7 +339,11 @@ export function registerMopsfinTools(server: McpServer): void {
           {
             page: paginated.page,
             snapshotId,
-            freshness: date === "latest" ? "within_expected_window" : "not_applicable",
+            freshnessDetails: selectorFreshness({
+              selector: date === "latest" ? "latest" : "explicit",
+              observedAsOf: pageData.dataDate,
+              sources: pageData.sources,
+            }),
           },
         );
       } catch (error) {
@@ -359,7 +427,16 @@ export function registerMopsfinTools(server: McpServer): void {
             universe: "verified",
             selection: "complete",
             values: valuesComplete ? "complete" : "partial",
-            freshness: as_of === "latest" ? "within_expected_window" : "not_applicable",
+            freshnessDetails: selectorFreshness({
+              selector: as_of === "latest" ? "latest" : "explicit",
+              observedAsOf:
+                resolvedDates.length === 1 ? resolvedDates[0] ?? null : null,
+              sources: [
+                ...data.benchmarkSources,
+                ...data.stockSources,
+                ...data.corporateActionSources,
+              ],
+            }),
             issues: [
               {
                 code: "PRICE_INDEX_COMPATIBLE_RETURN_BASIS",
@@ -691,7 +768,11 @@ export function registerMopsfinTools(server: McpServer): void {
                 ? "complete"
                 : "partial",
             values: data.failures.length === 0 ? "complete" : "partial",
-            freshness: "unknown",
+            freshnessDetails: selectorFreshness({
+              selector: "range",
+              observedAsOf: data.query.endDate,
+              sources: data.sources,
+            }),
             issues,
           },
         );
@@ -784,6 +865,41 @@ export function registerMopsfinTools(server: McpServer): void {
           item.sourceSnapshotDate === null ? [] : [item.sourceSnapshotDate],
         );
         const orderedSnapshotDates = [...new Set(successfulSnapshotDates)].sort();
+        const expectedSnapshotDate = taipeiDate(data.generatedAt);
+        const snapshotFreshnessDetails = data.sources.flatMap(
+          (item): FreshnessEvaluation[] => {
+            if (item.status === "unsupported") return [];
+            const itemSourceUrls = item.sourceUrl ? [item.sourceUrl] : [];
+            if (item.status === "failed") {
+              return [
+                evaluateFreshness({
+                  policy: FRESHNESS_POLICIES.unspecified,
+                  observedAsOf: null,
+                  expectedAsOf: null,
+                  sourceUrls: itemSourceUrls,
+                }),
+              ];
+            }
+            return [
+              evaluateFreshness({
+                policy: FRESHNESS_POLICIES.currentSnapshotSevenDays,
+                observedAsOf: item.sourceSnapshotDate,
+                expectedAsOf: expectedSnapshotDate,
+                sourceUrls: itemSourceUrls,
+              }),
+            ];
+          },
+        );
+        if (snapshotFreshnessDetails.length === 0) {
+          snapshotFreshnessDetails.push(
+            evaluateFreshness({
+              policy: FRESHNESS_POLICIES.unspecified,
+              observedAsOf: null,
+              expectedAsOf: null,
+              sourceUrls,
+            }),
+          );
+        }
         const issues: NonNullable<ResultMetaHints["issues"]> = [
           ...(data.failures.length > 0
             ? [
@@ -979,12 +1095,7 @@ export function registerMopsfinTools(server: McpServer): void {
               marketHintMissingCodes.length === 0 ? "verified" : "unverified",
             selection: data.coverage.selection,
             values: data.failures.length === 0 ? "complete" : "partial",
-            freshness:
-              staleSources.length > 0
-                ? "stale"
-                : data.failures.length > 0 || successfulSnapshotDates.length === 0
-                  ? "unknown"
-                  : "within_expected_window",
+            freshnessDetails: snapshotFreshnessDetails,
             issues,
           },
         );
@@ -999,7 +1110,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "篩選台股研究候選",
       description:
-        "以各官方來源當下可取得的 latest 資料，對目前上市櫃非金融公司執行固定 balanced_non_financial_v2 研究分流：先以最新月營收與估值粗篩，再對前 10 家做六個月營收趨勢及七項季度財務深篩，最後依 candidate_limit 對最多 5 家計算 5／20／60 benchmark-session reaction。七項財務需求以穩定 semantic roles 表達；每次先對即時 list_catalog 的 family=data 正式中文名稱精確解析，已知歷史代號只作 fallback，缺少、重複、名稱／代號衝突或 batch definition 漂移一律以 CATALOG_CONTRACT_MISMATCH fail closed。screenDefinition 會揭露 required roles、當次 resolved code/name/family、解析時間及 catalog content identity；generic metric tools 仍只接受即時 catalog 正式代號。deep batch 在 24 comparison units 內隔離 company-level metric failure；受影響代號以 company_metrics_unavailable 留在 notReactionScored，其他 deepSelected 公司繼續但不從 top-10 外遞補。v2 第四柱只使用 TWSE／TPEx official actual-result factor 移除股數變動機械斷點後的 price-index-compatible 報酬與 path；現金股利價格效果保留，因此不是 adjusted close、股息再投資或 total return。公司行動 coverage、factor、prior close、marker reconciliation 或 identity 證據不足時第四柱為 unknown，不猜測、不補 0、也不以 raw 報酬判 pass／fail；unknown 也不等於 0。金融業固定排除；四柱皆為 hard gates，overallScore 不可抵銷 fail 或 unknown。只有完成 reaction 的 candidates 才有 bucket，其餘留在 notReactionScored。各來源是 mixed as-of、不是 point-in-time snapshot；本工具只供 research triage，不是投資建議、完整盡調、錯價證明或可直接回測結果。",
+        "以各官方來源當下可取得的 latest 資料，對目前上市櫃非金融公司執行固定 balanced_non_financial_v2 研究分流：先以最新月營收與估值粗篩，再對前 10 家做六個月營收趨勢及七項季度財務深篩，最後依 candidate_limit 對最多 5 家計算 5／20／60 benchmark-session reaction。七項財務需求以穩定 semantic roles 表達；每次先對即時 list_catalog 的 family=data 正式中文名稱精確解析，已知歷史代號只作 fallback，缺少、重複、名稱／代號衝突或 batch definition 漂移一律以 CATALOG_CONTRACT_MISMATCH fail closed。screenDefinition 會揭露 required roles、當次 resolved code/name/family、解析時間及 catalog content identity；generic metric tools 仍只接受即時 catalog 正式代號。deep batch 在 24 comparison units 內隔離 company-level metric failure；受影響代號以 company_metrics_unavailable 留在 notReactionScored，其他 deepSelected 公司繼續但不從 top-10 外遞補。公司母體 reportDate 超過中央 7 日 freshness window 時，仍保留原始 coarse/deep evidence，但所有必要 pillar fail closed 為 unknown，不能形成 research_candidate。v2 第四柱只使用 TWSE／TPEx official actual-result factor 移除股數變動機械斷點後的 price-index-compatible 報酬與 path；現金股利價格效果保留，因此不是 adjusted close、股息再投資或 total return。公司行動 coverage、factor、prior close、marker reconciliation 或 identity 證據不足時第四柱為 unknown，不猜測、不補 0、也不以 raw 報酬判 pass／fail；unknown 也不等於 0。金融業固定排除；四柱皆為 hard gates，overallScore 不可抵銷 fail 或 unknown。只有完成 reaction 的 candidates 才有 bucket，其餘留在 notReactionScored。各來源是 mixed as-of、不是 point-in-time snapshot；本工具只供 research triage，不是投資建議、完整盡調、錯價證明或可直接回測結果。",
       inputSchema: screenTaiwanStockCandidatesInputSchema,
       outputSchema: screenTaiwanStockCandidatesOutputSchema,
       annotations,
@@ -1026,6 +1137,54 @@ export function registerMopsfinTools(server: McpServer): void {
           candidates: data.candidates,
           sources: data.sources,
         });
+        const expectedScreenDate = taipeiDate(data.generatedAt);
+        const screenFreshnessDetails = data.sources.map((item) => {
+          if (item.kind === "company_master") {
+            return evaluateFreshness({
+              policy: FRESHNESS_POLICIES.currentSnapshotSevenDays,
+              observedAsOf: item.asOf,
+              expectedAsOf: expectedScreenDate,
+              sourceUrls: [item.sourceUrl],
+            });
+          }
+          if (item.kind === "monthly_revenue_latest") {
+            return evaluateFreshness({
+              policy: FRESHNESS_POLICIES.monthlyRevenueLatestCommon,
+              observedAsOf: item.asOf,
+              expectedAsOf: data.asOf.revenueMonth,
+              sourceUrls: [item.sourceUrl],
+            });
+          }
+          if (
+            item.kind === "monthly_revenue_history" ||
+            item.kind === "reaction_corporate_action"
+          ) {
+            return evaluateFreshness({
+              policy: FRESHNESS_POLICIES.historicalExact,
+              observedAsOf: item.asOf,
+              expectedAsOf: null,
+              sourceUrls: [item.sourceUrl],
+            });
+          }
+          return evaluateFreshness({
+            policy:
+              item.kind === "company_metrics"
+                ? FRESHNESS_POLICIES.mopsfinLatestUnverified
+                : FRESHNESS_POLICIES.completedOfficialSession,
+            observedAsOf: item.asOf === "mixed" ? null : item.asOf,
+            expectedAsOf: null,
+            sourceUrls: [item.sourceUrl],
+          });
+        });
+        if (screenFreshnessDetails.length === 0) {
+          screenFreshnessDetails.push(
+            evaluateFreshness({
+              policy: FRESHNESS_POLICIES.unspecified,
+              observedAsOf: null,
+              expectedAsOf: null,
+            }),
+          );
+        }
         const incompleteDependencies = data.dependencyStatus.filter(
           (item) => item.status === "partial" || item.status === "failed",
         );
@@ -1072,7 +1231,7 @@ export function registerMopsfinTools(server: McpServer): void {
               data.coverage.reactionEvidenceComplete
                 ? "complete"
                 : "partial",
-            freshness: "unknown",
+            freshnessDetails: screenFreshnessDetails,
             issues: [
               {
                 code: "MASTER_ROWSET_HEURISTIC",
@@ -1167,7 +1326,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢台股市場單日估值",
       description:
-        "查詢 TWSE／TPEx 官方 latest 或指定 YYYY-MM-DD 的上市、上櫃或全部公司本益比、股價淨值比、殖利率，以及來源可提供的收盤價、每股股利、股利年度與估值參考財報期。指定日採 exact-date，假日不退回前一交易日；上市自 2005-09-02、上櫃與 market=all 自 2007-01-02。latest 預設 universe_policy=compatible 並揭露 reconciliation；strict_current_master 只允許 latest。歷史日採 historical_code_rule，不用今天 master 冒充歷史母體。company_codes 最多 500 家，省略 page_size/cursor 維持完整回傳，提供 page_size 才分頁。核心 PE／PB／殖利率 key 若從 eligible row 消失會視為上游 schema drift 並報錯；官方空白、N/A、不具意義或補強來源未提供的欄位則回 null、valueStatus 與 rawValue，不重算財報分母或股利。回答前應檢查 meta.asOf、meta.quality 與 meta.page。",
+        "查詢 TWSE／TPEx 官方 latest 或指定 YYYY-MM-DD 的上市、上櫃或全部公司本益比、股價淨值比、殖利率，以及來源可提供的收盤價、每股股利、股利年度與估值參考財報期。指定日採 exact-date，假日不退回前一交易日；上市自 2005-09-02、上櫃與 market=all 自 2007-01-02。latest 只是 selector；目前沒有權威交易日 resolver 可獨立算 expectedAsOf，因此 meta freshness 保守為 unknown/FRESHNESS_UNVERIFIED。latest 預設 universe_policy=compatible 並揭露 reconciliation；strict_current_master 只允許 latest。歷史日採 historical_code_rule，不用今天 master 冒充歷史母體。company_codes 最多 500 家，省略 page_size/cursor 維持完整回傳，提供 page_size 才分頁。核心 PE／PB／殖利率 key 若從 eligible row 消失會視為上游 schema drift 並報錯；官方空白、N/A、不具意義或補強來源未提供的欄位則回 null、valueStatus 與 rawValue，不重算財報分母或股利。回答前應檢查 meta.asOf、meta.quality 與 meta.page。",
       inputSchema: dailyMarketValuationInputSchema,
       outputSchema: dailyMarketValuationOutputSchema,
       annotations,
@@ -1236,7 +1395,11 @@ export function registerMopsfinTools(server: McpServer): void {
             page: paginated.page,
             snapshotId,
             values: valuesComplete ? "complete" : "partial",
-            freshness: date === "latest" ? "within_expected_window" : "not_applicable",
+            freshnessDetails: selectorFreshness({
+              selector: date === "latest" ? "latest" : "explicit",
+              observedAsOf: pageData.dataDate,
+              sources: pageData.sources,
+            }),
           },
         );
       } catch (error) {
@@ -1250,7 +1413,7 @@ export function registerMopsfinTools(server: McpServer): void {
     {
       title: "查詢台股單月營收",
       description:
-        "查詢上市、上櫃或全部公司在 latest 或 2013-01 起指定 YYYY-MM 的官方單月營收、月增率、年增率與累計營收年增率。latest 以 TWSE／TPEx OpenAPI 發現月份，再與同月或前一月 MOPS archive 核對共同有效月份；若同月不同出表日僅少量重疊公司數值不同，視為官方修訂、採較新 snapshot 並 warning，同出表日或大範圍衝突則報錯。explicit month 採 exact archive，不退回其他月份。歷史 archive 是目前可取得的修訂後檔案，不是 point-in-time vintage，current master 的 industryCode／reconciliation 只能輔助，應以該月 sourceIndustryName 辨識歷史產業。官方金額原始單位為仟元，本工具固定乘以 1,000 輸出 TWD；每欄 valueStatus 區分 reported、missing、invalid_upstream，null 不可當 0。latest 省略 universe_policy 時使用 strict_current_master，歷史月份使用 compatible 且不允許 strict。coverageComplete 是相容欄位：latest 成功完成必要來源、格式與 snapshot identity 核對時為 true，歷史 archive 因無 declared row count 固定為 false；另以 sourceCoverage 說明 rowset 是否能由目前 master 核對，filingCoverage 則只讓 latest 輔助判讀申報進度，歷史值固定是跨時點不可驗證。company_codes 最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt；省略 page_size/cursor 維持完整回傳。",
+        "查詢上市、上櫃或全部公司在 latest 或 2013-01 起指定 YYYY-MM 的官方單月營收、月增率、年增率與累計營收年增率。latest 以 TWSE／TPEx OpenAPI 發現月份，再與同月或前一月 MOPS archive 核對共同有效月份；若同月不同出表日僅少量重疊公司數值不同，視為官方修訂、採較新 snapshot 並 warning，同出表日或大範圍衝突則報錯。meta freshness 的 within_expected_window 只證明本次 selected month 等於兩市場協調出的 latest common official month，不代表每家公司已完成法定申報；仍須讀 filingCoverage。explicit month 採 exact archive，不退回其他月份。歷史 archive 是目前可取得的修訂後檔案，不是 point-in-time vintage，current master 的 industryCode／reconciliation 只能輔助，應以該月 sourceIndustryName 辨識歷史產業。官方金額原始單位為仟元，本工具固定乘以 1,000 輸出 TWD；每欄 valueStatus 區分 reported、missing、invalid_upstream，null 不可當 0。latest 省略 universe_policy 時使用 strict_current_master，歷史月份使用 compatible 且不允許 strict。coverageComplete 是相容欄位：latest 成功完成必要來源、格式與 snapshot identity 核對時為 true，歷史 archive 因無 declared row count 固定為 false；另以 sourceCoverage 說明 rowset 是否能由目前 master 核對，filingCoverage 則只讓 latest 輔助判讀申報進度，歷史值固定是跨時點不可驗證。company_codes 最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt；省略 page_size/cursor 維持完整回傳。",
       inputSchema: monthlyRevenueInputSchema,
       outputSchema: monthlyRevenueOutputSchema,
       annotations,
@@ -1331,7 +1494,14 @@ export function registerMopsfinTools(server: McpServer): void {
                   : "compatible",
             selection: data.selectionComplete ? "complete" : "partial",
             values: valuesComplete ? "complete" : "partial",
-            freshness: data_month === "latest" ? "within_expected_window" : "not_applicable",
+            freshnessDetails: selectorFreshness({
+              selector: data_month === "latest" ? "latest" : "explicit",
+              observedAsOf: pageData.dataMonth,
+              expectedAsOf:
+                data_month === "latest" ? pageData.dataMonth : null,
+              latestPolicy: FRESHNESS_POLICIES.monthlyRevenueLatestCommon,
+              sources: pageData.sources,
+            }),
             issues: [
               ...(!data.sourceCoverage.complete
                 ? [
@@ -1460,7 +1630,14 @@ export function registerMopsfinTools(server: McpServer): void {
             universe: "unverified",
             selection: data.selectionComplete ? "complete" : "partial",
             values: valuesComplete ? "complete" : "partial",
-            freshness: end_month === "latest" ? "within_expected_window" : "not_applicable",
+            freshnessDetails: selectorFreshness({
+              selector: end_month === "latest" ? "latest" : "explicit",
+              observedAsOf: pageData.endMonth,
+              expectedAsOf:
+                end_month === "latest" ? pageData.endMonth : null,
+              latestPolicy: FRESHNESS_POLICIES.monthlyRevenueLatestCommon,
+              sources: pageData.sources,
+            }),
             issues: [
               {
                 code: "SOURCE_ROWSET_UNVERIFIED",
@@ -1566,6 +1743,14 @@ export function registerMopsfinTools(server: McpServer): void {
             page: paginated.page,
             snapshotId,
             universe: "unverified",
+            freshnessDetails: data.sources.map((item) =>
+              evaluateFreshness({
+                policy: FRESHNESS_POLICIES.currentSnapshotSevenDays,
+                observedAsOf: item.reportDate,
+                expectedAsOf: taipeiDate(data.generatedAt),
+                sourceUrls: [item.sourceUrl],
+              }),
+            ),
             issues: [
               {
                 code: "MASTER_ROWSET_HEURISTIC",
@@ -1653,7 +1838,11 @@ export function registerMopsfinTools(server: McpServer): void {
               ]
             : [];
         const data = {
-          ...source("/"),
+          ...source(
+            "/",
+            catalog.retrievedAt ?? catalog.discoveredAt,
+            catalog.cache,
+          ),
           query: { kind, ...(filter ? { query: filter } : {}), limit },
           discoveredAt: catalog.discoveredAt,
           counts: {
@@ -1672,6 +1861,17 @@ export function registerMopsfinTools(server: McpServer): void {
         return success(
           `Mopsfin 目錄共有 ${catalog.metrics.length} 個指標、${catalog.industries.length} 個產業與 ${catalog.financialInstitutions.length} 家金融機構。`,
           data,
+          {
+            selector: "snapshot",
+            freshnessDetails: [
+              evaluateFreshness({
+                policy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
+                observedAsOf: catalog.discoveredAt,
+                expectedAsOf: null,
+                sourceUrls: [MOPSFIN_SOURCE_URL],
+              }),
+            ],
+          },
         );
       } catch (error) {
         return failure(error);
@@ -1716,6 +1916,13 @@ export function registerMopsfinTools(server: McpServer): void {
             )
               ? "partial"
               : "complete",
+            freshnessDetails: selectorFreshness({
+              selector:
+                input.start_period || input.end_period ? "range" : "latest",
+              observedAsOf: data.periods.at(-1) ?? null,
+              latestPolicy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
+              sources: [data],
+            }),
           },
         );
       } catch (error) {
@@ -1900,6 +2107,13 @@ export function registerMopsfinTools(server: McpServer): void {
             selection: data.coverage.selectionComplete ? "complete" : "partial",
             values: metricValuesPartial ? "partial" : "complete",
             resolved: resolvedQuarterRange(returnedPeriods),
+            freshnessDetails: selectorFreshness({
+              selector:
+                input.start_period || input.end_period ? "range" : "latest",
+              observedAsOf: returnedPeriods.sort().at(-1) ?? null,
+              latestPolicy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
+              sources: data.sources,
+            }),
             issues: qualityIssues,
           },
         );
@@ -1937,6 +2151,12 @@ export function registerMopsfinTools(server: McpServer): void {
               from: data.period,
               through: data.period,
             },
+            freshnessDetails: selectorFreshness({
+              selector: input.period === "latest" ? "latest" : "explicit",
+              observedAsOf: data.period,
+              latestPolicy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
+              sources: [data],
+            }),
           },
         );
       } catch (error) {
@@ -1973,6 +2193,12 @@ export function registerMopsfinTools(server: McpServer): void {
               from: data.period,
               through: data.period,
             },
+            freshnessDetails: selectorFreshness({
+              selector: input.period === "latest" ? "latest" : "explicit",
+              observedAsOf: data.period,
+              latestPolicy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
+              sources: [data],
+            }),
           },
         );
       } catch (error) {
@@ -2020,6 +2246,19 @@ export function registerMopsfinTools(server: McpServer): void {
             )
               ? "partial"
               : "complete",
+            freshnessDetails: selectorFreshness({
+              selector:
+                input.mode === "statistics"
+                  ? input.period === "latest"
+                    ? "latest"
+                    : "explicit"
+                  : input.start_period || input.end_period
+                    ? "range"
+                    : "latest",
+              observedAsOf: data.periods.at(-1) ?? null,
+              latestPolicy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
+              sources: [data],
+            }),
           },
         );
       } catch (error) {
@@ -2062,6 +2301,13 @@ export function registerMopsfinTools(server: McpServer): void {
             )
               ? "partial"
               : "complete",
+            freshnessDetails: selectorFreshness({
+              selector:
+                input.start_period || input.end_period ? "range" : "latest",
+              observedAsOf: data.periods.at(-1) ?? null,
+              latestPolicy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
+              sources: [data],
+            }),
           },
         );
       } catch (error) {

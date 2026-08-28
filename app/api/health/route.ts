@@ -9,14 +9,20 @@ export function GET() {
   return NextResponse.json(
     {
       status: "ok",
+      liveness: "ok",
       service: "mopsfin-taiwan-equities",
-      version: "0.6.2",
+      version: "0.6.3",
       resultContractVersion: "mopsfin.result.v1",
       toolCount: 18,
+      applicationReadiness: "ready",
       readiness: {
         status: "ready",
         upstreamChecks: "not_run",
-        note: "深度官方來源契約由低頻 synthetic workflow 驗證；此端點不放大上游流量。",
+        note: "這是 shallow application readiness；深度官方來源契約由低頻 synthetic workflow 驗證，此端點不放大上游流量。",
+      },
+      upstreamContracts: {
+        status: "not_checked",
+        lastCheckedAt: null,
       },
       telemetry: telemetrySnapshot(),
       upstreamReliability: getUpstreamReliabilitySnapshot(),
@@ -86,7 +92,7 @@ export function GET() {
           "https://openapi.twse.com.tw/v1/opendata/t187ap45_L",
       },
       checkedAt: new Date().toISOString(),
-      note: "此端點只確認應用程式可回應，不會為健康檢查呼叫 Mopsfin、TWSE 或 TPEx 財務／行情來源。",
+      note: "此 shallow health 端點只確認應用程式可回應且可接受請求，不會為健康檢查呼叫 Mopsfin、TWSE 或 TPEx 財務／行情來源；ready 不代表上游資料契約已在本次請求驗證。",
     },
     {
       headers: {

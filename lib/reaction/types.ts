@@ -4,6 +4,7 @@ import type {
   CorporateActionSource,
 } from "@/lib/corporate-actions/types";
 import type { PriceSource } from "@/lib/price/types";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 import type {
   MopsfinErrorAction,
   MopsfinErrorCode,
@@ -34,6 +35,7 @@ export interface BenchmarkSource {
   dataMonth: string;
   retrievedAt: string;
   rowCount: number;
+  cache?: CacheProvenance;
 }
 
 export interface BenchmarkHistory {

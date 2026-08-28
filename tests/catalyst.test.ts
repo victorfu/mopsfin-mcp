@@ -455,13 +455,15 @@ describe("CatalystClient selected-company history", () => {
 
 describe("OfficialHtmlPostLoader", () => {
   it("single-flights and caches normalized POST fields for five minutes", async () => {
+    let clockMs = Date.parse("2026-08-26T00:00:00.000Z");
+    const clock = () => new Date(clockMs);
     const fetchMock = vi.fn(async () =>
       new Response(materialEmpty, {
         status: 200,
         headers: { "Content-Type": "text/html" },
       }),
     );
-    const loader = new OfficialHtmlPostLoader(fetchMock as typeof fetch, now, {
+    const loader = new OfficialHtmlPostLoader(fetchMock as typeof fetch, clock, {
       maxAttempts: 1,
     });
     const url = "https://mopsov.twse.com.tw/mops/web/ajax_t05st01";
@@ -470,6 +472,7 @@ describe("OfficialHtmlPostLoader", () => {
       loader.post("fixture", url, { co_id: "2330", year: "114" }),
       loader.post("fixture", url, { year: "114", co_id: "2330" }),
     ]);
+    clockMs += 3_000;
     const third = await loader.post("fixture", url, {
       co_id: "2330",
       year: "114",
@@ -478,6 +481,22 @@ describe("OfficialHtmlPostLoader", () => {
     expect(first.body).toBe(materialEmpty);
     expect(second.body).toBe(materialEmpty);
     expect(third.body).toBe(materialEmpty);
+    expect(first.cache).toMatchObject({
+      status: "miss",
+      storedAt: "2026-08-26T00:00:00.000Z",
+      ageMs: 0,
+      ttlMs: 300_000,
+    });
+    expect(second.cache?.status).toBe("shared");
+    expect(third).toMatchObject({
+      retrievedAt: first.retrievedAt,
+      cache: {
+        status: "hit",
+        observedAt: "2026-08-26T00:00:03.000Z",
+        storedAt: "2026-08-26T00:00:00.000Z",
+        ageMs: 3_000,
+      },
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

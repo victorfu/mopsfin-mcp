@@ -2,6 +2,7 @@ import type {
   CompanyMarket,
   CompanyMarketSelection,
 } from "@/lib/company-master/types";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 
 export type CatalystEventType =
   | "material_information"
@@ -93,6 +94,7 @@ export interface CatalystCurrentSource {
   officialDeclaredRowCount: null;
   rowsetCompleteness: "unverified_no_official_declared_count";
   snapshotIdentity: string;
+  cache?: CacheProvenance;
 }
 
 export interface CurrentMaterialInformationResult {
@@ -192,6 +194,7 @@ export interface CatalystResultSource {
   rawRowCount: number;
   acceptedEventCount: number;
   snapshotIdentity: string;
+  cache?: CacheProvenance;
 }
 
 export interface CatalystAggregateFamilyCoverage {

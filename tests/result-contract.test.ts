@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { evaluateFreshness } from "@/lib/freshness/evaluate";
+import { FRESHNESS_POLICIES } from "@/lib/freshness/policies";
 import { paginateByCompany } from "@/lib/mcp/cursor";
 import { buildResultMeta, structuredError } from "@/lib/mcp/result-contract";
 import { MopsfinError } from "@/lib/mopsfin/errors";
@@ -29,6 +31,8 @@ describe("mopsfin.result.v1", () => {
       selector: "latest",
       resolved: { granularity: "date", from: "2026-08-25", through: "2026-08-25" },
       timezone: "Asia/Taipei",
+      servedAt: "2026-08-26T00:00:00.000Z",
+      assembledAt: "2026-08-26T00:00:00.000Z",
     });
     expect(meta.quality).toMatchObject({
       status: "partial",
@@ -198,7 +202,7 @@ describe("mopsfin.result.v1", () => {
     ]);
   });
 
-  it("uses catalyst sourceSnapshotDate as the source cutoff", () => {
+  it("uses catalyst sourceSnapshotDate as cutoff without inventing publishedAt", () => {
     const meta = buildResultMeta(
       {
         sources: [
@@ -226,7 +230,14 @@ describe("mopsfin.result.v1", () => {
         from: "2026-08-27",
         through: "2026-08-27",
       },
-      publishedAt: "2026-08-27",
+      publishedAt: null,
+      cache: {
+        status: "unknown",
+        observedAt: null,
+        storedAt: null,
+        ageMs: null,
+        ttlMs: null,
+      },
     });
   });
 
@@ -274,9 +285,164 @@ describe("mopsfin.result.v1", () => {
       expect.objectContaining({
         sourceUrl: "https://example.test/success",
         retrievedAt: "2026-08-28T00:00:00.000Z",
-        publishedAt: "2026-08-27",
+        publishedAt: null,
       }),
     ]);
+  });
+
+  it("preserves only an explicitly supplied source publishedAt", () => {
+    const meta = buildResultMeta(
+      {
+        sources: [
+          {
+            sourceUrl: "https://example.test/explicit-publication",
+            retrievedAt: "2026-08-28T00:00:00.000Z",
+            reportDate: "2026-08-27",
+            publishedAt: "2026-08-27T18:00:00+08:00",
+          },
+        ],
+      },
+      { freshness: "not_applicable" },
+      "2026-08-28T01:00:00.000Z",
+    );
+
+    expect(meta.asOf.sourceCutoffs[0]).toMatchObject({
+      resolved: {
+        granularity: "date",
+        from: "2026-08-27",
+        through: "2026-08-27",
+      },
+      publishedAt: "2026-08-27T18:00:00+08:00",
+    });
+  });
+
+  it("aggregates freshness evidence and adds stable quality issues once", () => {
+    const stale = evaluateFreshness({
+      policy: FRESHNESS_POLICIES.monthlyRevenueLatestCommon,
+      observedAsOf: "2026-06",
+      expectedAsOf: "2026-07",
+      sourceUrls: ["https://example.test/revenue"],
+    });
+    const unknown = evaluateFreshness({
+      policy: FRESHNESS_POLICIES.completedOfficialSession,
+      observedAsOf: "2026-08-27",
+      expectedAsOf: null,
+      sourceUrls: ["https://example.test/market"],
+    });
+    const meta = buildResultMeta(
+      {
+        dataDate: "2026-08-27",
+        dataQualityComplete: true,
+      },
+      {
+        values: "complete",
+        freshnessDetails: [stale, unknown],
+        issues: [
+          {
+            code: "DATA_STALE",
+            severity: "warning",
+            scope: "source",
+            message: "domain-specific stale warning",
+            refs: {
+              companyCodes: [],
+              fields: [],
+              periods: ["2026-06"],
+              sourceUrls: ["https://example.test/revenue"],
+            },
+          },
+        ],
+      },
+      "2026-08-28T00:00:00.000Z",
+    );
+
+    expect(meta.quality).toMatchObject({
+      status: "partial",
+      freshness: "stale",
+      freshnessDetails: [
+        expect.objectContaining({ policyId: "official.monthly-revenue.latest-common.v1" }),
+        expect.objectContaining({ policyId: "official.completed-session.v1" }),
+      ],
+    });
+    expect(
+      meta.quality.issues.filter((issue) => issue.code === "DATA_STALE"),
+    ).toHaveLength(1);
+    expect(
+      meta.quality.issues.filter(
+        (issue) => issue.code === "FRESHNESS_UNVERIFIED",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps source retrieval in the fingerprint but excludes servedAt and cache caller state", () => {
+    const data = (
+      cache: {
+        status: "miss" | "hit";
+        observedAt: string;
+        storedAt: string;
+        ageMs: number;
+        ttlMs: number;
+      },
+      retrievedAt = "2026-08-28T00:00:00.000Z",
+    ) => ({
+      dataDate: "2026-08-27",
+      sources: [
+        {
+          sourceUrl: "https://example.test/market",
+          dataDate: "2026-08-27",
+          retrievedAt,
+          cache,
+        },
+      ],
+    });
+    const miss = buildResultMeta(
+      data({
+        status: "miss",
+        observedAt: "2026-08-28T00:00:01.000Z",
+        storedAt: "2026-08-28T00:00:00.000Z",
+        ageMs: 0,
+        ttlMs: 300_000,
+      }),
+      { freshness: "unknown" },
+      "2026-08-28T00:00:01.000Z",
+    );
+    const hit = buildResultMeta(
+      data({
+        status: "hit",
+        observedAt: "2026-08-28T00:02:00.000Z",
+        storedAt: "2026-08-28T00:00:00.000Z",
+        ageMs: 120_000,
+        ttlMs: 300_000,
+      }),
+      { freshness: "unknown" },
+      "2026-08-28T00:02:01.000Z",
+    );
+    const refetched = buildResultMeta(
+      data(
+        {
+          status: "miss",
+          observedAt: "2026-08-28T00:03:00.500Z",
+          storedAt: "2026-08-28T00:03:00.000Z",
+          ageMs: 0,
+          ttlMs: 300_000,
+        },
+        "2026-08-28T00:03:00.000Z",
+      ),
+      { freshness: "unknown" },
+      "2026-08-28T00:03:01.000Z",
+    );
+
+    expect(miss.asOf.snapshotId).toBe(hit.asOf.snapshotId);
+    expect(miss.asOf.snapshotId).not.toBe(refetched.asOf.snapshotId);
+    expect(miss.asOf.sourceCutoffs[0].cache.status).toBe("miss");
+    expect(hit.asOf.sourceCutoffs[0].cache).toMatchObject({
+      status: "hit",
+      observedAt: "2026-08-28T00:02:00.000Z",
+      ageMs: 120_000,
+    });
+    expect(miss.asOf.servedAt).not.toBe(hit.asOf.servedAt);
+    expect(miss.asOf.sourceCutoffs[0].retrievedAt).toBe(
+      hit.asOf.sourceCutoffs[0].retrievedAt,
+    );
   });
 });
 

@@ -127,6 +127,7 @@ describe("single-flight request cancellation isolation", () => {
     );
 
     expect(result.payload).toEqual([{ Code: "2330" }]);
+    expect(result.cache?.status).toBe("shared");
   });
 
   it("keeps a company-master normalization flight alive for a healthy follower", async () => {
@@ -151,6 +152,7 @@ describe("single-flight request cancellation isolation", () => {
     );
 
     expect(result.companies.map((company) => company.code)).toContain("2330");
+    expect(result.sources[0].cache?.status).toBe("shared");
   });
 
   it("keeps a MOPS revenue CSV flight alive for a healthy follower", async () => {
@@ -176,6 +178,7 @@ describe("single-flight request cancellation isolation", () => {
 
     expect(result.dataMonth).toBe("2026-07");
     expect(result.rows.length).toBeGreaterThan(0);
+    expect(result.sources[0].cache?.status).toBe("shared");
   });
 
   it("keeps a Mopsfin identity flight alive for a healthy follower", async () => {
@@ -215,5 +218,6 @@ describe("single-flight request cancellation isolation", () => {
     );
 
     expect(result.metrics.length).toBeGreaterThan(0);
+    expect(result.cache?.status).toBe("shared");
   });
 });

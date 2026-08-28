@@ -634,6 +634,7 @@ export class CompanyMetricsBatchClient {
         retrievedAt: result.retrievedAt,
         upstreamRoute: result.upstreamRoute,
         freshnessNote: result.freshnessNote,
+        ...(result.cache ? { cache: result.cache } : {}),
       }));
     const normalizedQuery = {
       companyCodes,
@@ -690,7 +691,9 @@ export class CompanyMetricsBatchClient {
       identityLookupUpperBound: companyCodes.length,
       unitDefinition: "one_metric_by_up_to_ten_companies_request" as const,
     };
-    const retrievedAt = this.now().toISOString();
+    const retrievedAt =
+      sources.map((source) => source.retrievedAt).sort().at(-1) ??
+      this.now().toISOString();
     const snapshotId = createHash("sha256")
       .update(
         JSON.stringify({

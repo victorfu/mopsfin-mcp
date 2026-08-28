@@ -242,7 +242,7 @@ describe("company catalyst snapshots MCP contract", () => {
     const parsed = companyCatalystSnapshotsOutputSchema.safeParse(envelope);
     expect(parsed.success).toBe(true);
     expect(envelope.meta.asOf.sourceCutoffs[0]).toMatchObject({
-      publishedAt: "2026-08-27",
+      publishedAt: null,
       resolved: {
         granularity: "date",
         from: "2026-08-27",

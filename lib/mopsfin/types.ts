@@ -1,3 +1,5 @@
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
+
 export type EndpointFamily =
   | "data"
   | "report"
@@ -32,6 +34,10 @@ export interface Catalog {
   years: number[];
   quarters: number[];
   discoveredAt: string;
+  /** Actual completion time of the upstream catalog fetch. */
+  retrievedAt?: string;
+  /** Acquisition-layer metadata; public tool schemas wire this separately. */
+  cache?: CacheProvenance;
 }
 
 export interface CompanySuggestion {
@@ -121,4 +127,5 @@ export interface SourceMetadata {
   retrievedAt: string;
   upstreamRoute: string;
   freshnessNote: string;
+  cache?: CacheProvenance;
 }

@@ -169,6 +169,7 @@ export function normalizeTwseBenchmarkMonth(
           sourceUrl,
           dataMonth: month,
           retrievedAt: snapshot.retrievedAt,
+          ...(snapshot.cache ? { cache: snapshot.cache } : {}),
           rowCount: 0,
         },
       };
@@ -208,6 +209,7 @@ export function normalizeTwseBenchmarkMonth(
       sourceUrl,
       dataMonth: month,
       retrievedAt: snapshot.retrievedAt,
+      ...(snapshot.cache ? { cache: snapshot.cache } : {}),
       rowCount: bars.length,
     },
   };
@@ -266,6 +268,7 @@ export function normalizeTpexBenchmarkMonth(
       sourceUrl,
       dataMonth: month,
       retrievedAt: snapshot.retrievedAt,
+      ...(snapshot.cache ? { cache: snapshot.cache } : {}),
       rowCount: bars.length,
     },
   };

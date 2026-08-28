@@ -4,6 +4,10 @@ import { CATALOG_TTL_MS } from "./constants";
 import { MopsfinError } from "./errors";
 import { MopsfinHttpClient } from "./http";
 import {
+  observeCache,
+  type CacheStatus,
+} from "@/lib/upstream/cache-provenance";
+import {
   createSharedUpstreamFlight,
   getCurrentDeadline,
   UpstreamReliabilityError,
@@ -19,6 +23,11 @@ import type {
 } from "./types";
 
 const CATALOG_FLIGHT_DEADLINE_MS = 50_000;
+
+interface StoredCatalog {
+  value: Omit<Catalog, "cache">;
+  storedAtMs: number;
+}
 
 function inferFamily(classes: string[]): EndpointFamily {
   if (classes.includes("qaClass")) return "bcode";
@@ -133,28 +142,40 @@ export function parseCatalogHtml(html: string, now = new Date()): Catalog {
 }
 
 export class CatalogService {
-  private cached?: { expiresAt: number; value: Catalog };
-  private pending?: SharedUpstreamFlight<Catalog>;
+  private cached?: { expiresAt: number; stored: StoredCatalog };
+  private pending?: SharedUpstreamFlight<StoredCatalog>;
 
-  constructor(private readonly http: MopsfinHttpClient) {}
+  constructor(
+    private readonly http: MopsfinHttpClient,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   async getCatalog(force = false): Promise<Catalog> {
-    const now = Date.now();
+    const now = this.now().getTime();
     const callerDeadline = getCurrentDeadline();
     if (!force && this.cached && this.cached.expiresAt > now) {
-      return this.cached.value;
+      return this.observe(this.cached.stored, "hit", now);
     }
     if (this.pending) {
-      return this.waitForCatalog(this.pending, callerDeadline);
+      const stored = await this.waitForCatalog(this.pending, callerDeadline);
+      return this.observe(stored, "shared", this.now().getTime());
     }
 
     const request = createSharedUpstreamFlight(
       CATALOG_FLIGHT_DEADLINE_MS,
       async () => {
-        const { body } = await this.http.get("/");
-        const catalog = parseCatalogHtml(body);
-        this.cached = { value: catalog, expiresAt: Date.now() + CATALOG_TTL_MS };
-        return catalog;
+        const response = await this.http.get("/");
+        const value = {
+          ...parseCatalogHtml(response.body, new Date(response.retrievedAt)),
+          retrievedAt: response.retrievedAt,
+        };
+        const storedAtMs = this.now().getTime();
+        const stored = { value, storedAtMs };
+        this.cached = {
+          stored,
+          expiresAt: storedAtMs + CATALOG_TTL_MS,
+        };
+        return stored;
       },
     );
     this.pending = request;
@@ -163,13 +184,18 @@ export class CatalogService {
     };
     void request.promise.then(clearRequest, clearRequest);
 
-    return this.waitForCatalog(request, callerDeadline);
+    const stored = await this.waitForCatalog(request, callerDeadline);
+    return this.observe(
+      stored,
+      force ? "bypass" : "miss",
+      this.now().getTime(),
+    );
   }
 
   private async waitForCatalog(
-    request: SharedUpstreamFlight<Catalog>,
+    request: SharedUpstreamFlight<StoredCatalog>,
     deadline: AbsoluteDeadline | undefined,
-  ): Promise<Catalog> {
+  ): Promise<StoredCatalog> {
     try {
       return await request.wait(deadline);
     } catch (error) {
@@ -195,5 +221,21 @@ export class CatalogService {
       }
       throw error;
     }
+  }
+
+  private observe(
+    stored: StoredCatalog,
+    status: CacheStatus,
+    observedAtMs: number,
+  ): Catalog {
+    return {
+      ...stored.value,
+      cache: observeCache({
+        status,
+        observedAtMs,
+        storedAtMs: stored.storedAtMs,
+        ttlMs: CATALOG_TTL_MS,
+      }),
+    };
   }
 }

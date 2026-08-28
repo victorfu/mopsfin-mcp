@@ -22,6 +22,11 @@ import type {
 } from "@/lib/market-data/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import {
+  observeCache,
+  type CacheProvenance,
+  type CacheStatus,
+} from "@/lib/upstream/cache-provenance";
+import {
   AbsoluteDeadline,
   assertRowCount,
   BoundedSemaphore,
@@ -68,13 +73,20 @@ interface ParsedRevenueSource {
   sourceKind: "openapi" | "archive";
 }
 
-interface CsvSnapshot {
+export interface RevenueCsvSnapshot {
   payload: Array<Record<string, string>>;
   retrievedAt: string;
+  /** Acquisition-layer metadata; public tool schemas wire this separately. */
+  cache?: CacheProvenance;
 }
 
-interface RevenueCsvSourceConfig extends OfficialSourceConfig {
+export interface RevenueCsvSourceConfig extends OfficialSourceConfig {
   dataMonth: string;
+}
+
+interface StoredRevenueCsvSnapshot {
+  snapshot: Omit<RevenueCsvSnapshot, "cache">;
+  storedAtMs: number | null;
 }
 
 interface LoadedRevenueSources {
@@ -260,6 +272,7 @@ function normalizeMonthlyRevenueRecords(
   config: OfficialSourceConfig,
   sourceKind: ParsedRevenueSource["sourceKind"],
   expectedDataMonth?: string,
+  cache?: CacheProvenance,
 ): ParsedRevenueSource {
   if (records.length === 0) {
     fail("NO_DATA", `${config.exchange} 月營收資料為空。`, {
@@ -377,6 +390,7 @@ function normalizeMonthlyRevenueRecords(
       sourceAmountUnit: "thousand_TWD",
       outputAmountUnit: "TWD",
       amountMultiplier: 1000,
+      ...(cache ? { cache } : {}),
       integrity: {
         format: sourceKind === "archive" ? "rfc4180_csv" : "json_array",
         structure: "verified",
@@ -414,11 +428,13 @@ export function normalizeMonthlyRevenuePayload(
     snapshot.retrievedAt,
     config,
     "openapi",
+    undefined,
+    snapshot.cache,
   );
 }
 
 export function normalizeMonthlyRevenueCsv(
-  snapshot: CsvSnapshot,
+  snapshot: RevenueCsvSnapshot,
   config: RevenueCsvSourceConfig,
 ): ParsedRevenueSource {
   const records = snapshot.payload.map((record) => {
@@ -436,10 +452,11 @@ export function normalizeMonthlyRevenueCsv(
     config,
     "archive",
     config.dataMonth,
+    snapshot.cache,
   );
 }
 
-class OfficialRevenueCsvLoader {
+export class OfficialRevenueCsvLoader {
   private readonly timeoutMs: number;
   private readonly retryDelayMs: number;
   private readonly maxAttempts: number;
@@ -448,8 +465,11 @@ class OfficialRevenueCsvLoader {
   private readonly maxResponseBytes: number;
   private readonly maxRows: number;
   private readonly semaphore: BoundedSemaphore;
-  private readonly cache: BoundedTtlLru<string, CsvSnapshot>;
-  private readonly pending = new Map<string, SharedUpstreamFlight<CsvSnapshot>>();
+  private readonly cache: BoundedTtlLru<string, StoredRevenueCsvSnapshot>;
+  private readonly pending = new Map<
+    string,
+    SharedUpstreamFlight<StoredRevenueCsvSnapshot>
+  >();
 
   constructor(
     private readonly fetchImpl: typeof fetch,
@@ -473,16 +493,18 @@ class OfficialRevenueCsvLoader {
   async get(
     config: RevenueCsvSourceConfig,
     operationDeadline?: AbsoluteDeadline,
-  ): Promise<CsvSnapshot> {
+  ): Promise<RevenueCsvSnapshot> {
     const deadline = operationDeadline ?? new AbsoluteDeadline(this.deadlineMs);
     const ownsDeadline = operationDeadline === undefined;
     const now = this.now().getTime();
     try {
       deadline.throwIfExpired();
       const cached = this.cache.get(config.sourceUrl, now);
-      if (cached) return cached;
+      if (cached) return this.observe(cached, "hit", now);
       let flight = this.pending.get(config.sourceUrl);
+      let status: CacheStatus = "shared";
       if (!flight) {
+        status = this.cacheTtlMs > 0 ? "miss" : "bypass";
         flight = createSharedUpstreamFlight(
           this.deadlineMs,
           async (sharedDeadline) => {
@@ -490,12 +512,17 @@ class OfficialRevenueCsvLoader {
               config,
               sharedDeadline,
             );
-            this.cache.set(config.sourceUrl, snapshot, {
-              ttlMs: this.cacheTtlMs,
-              weight: byteLength,
-              nowMs: this.now().getTime(),
-            });
-            return snapshot;
+            const storedAtMs =
+              this.cacheTtlMs > 0 ? this.now().getTime() : null;
+            const stored = { snapshot, storedAtMs };
+            if (storedAtMs !== null) {
+              this.cache.set(config.sourceUrl, stored, {
+                ttlMs: this.cacheTtlMs,
+                weight: byteLength,
+                nowMs: storedAtMs,
+              });
+            }
+            return stored;
           },
         );
         this.pending.set(config.sourceUrl, flight);
@@ -507,7 +534,8 @@ class OfficialRevenueCsvLoader {
         };
         void flight.promise.then(clearFlight, clearFlight);
       }
-      return await flight.wait(deadline);
+      const stored = await flight.wait(deadline);
+      return this.observe(stored, status, this.now().getTime());
     } catch (error) {
       if (error instanceof UpstreamReliabilityError) {
         throw this.timeoutError(config, error);
@@ -518,10 +546,29 @@ class OfficialRevenueCsvLoader {
     }
   }
 
+  private observe(
+    stored: StoredRevenueCsvSnapshot,
+    status: CacheStatus,
+    observedAtMs: number,
+  ): RevenueCsvSnapshot {
+    return {
+      ...stored.snapshot,
+      cache: observeCache({
+        status,
+        observedAtMs,
+        storedAtMs: stored.storedAtMs,
+        ttlMs: this.cacheTtlMs,
+      }),
+    };
+  }
+
   private async requestCsv(
     config: RevenueCsvSourceConfig,
     deadline: AbsoluteDeadline,
-  ): Promise<{ snapshot: CsvSnapshot; byteLength: number }> {
+  ): Promise<{
+    snapshot: Omit<RevenueCsvSnapshot, "cache">;
+    byteLength: number;
+  }> {
     let lastError: MopsfinError | undefined;
 
     for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
@@ -538,7 +585,7 @@ class OfficialRevenueCsvLoader {
           signal: scope.signal,
           headers: {
             Accept: "text/csv,text/plain;q=0.9,*/*;q=0.1",
-            "User-Agent": "mopsfin-mcp/0.6.2 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": "mopsfin-mcp/0.6.3 (+https://mopsfin.twse.com.tw/)",
           },
         });
         const body = await readResponseTextWithLimit(

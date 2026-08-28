@@ -1,4 +1,5 @@
 import type { CompanyMarket, CompanyMarketSelection } from "@/lib/company-master/types";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 
 export type OhlcStatus = "traded" | "no_trade";
 export type OhlcQualityStatus = "complete" | "partial" | "official_no_trade";
@@ -40,6 +41,7 @@ export interface PriceSource {
   sourceName: string;
   sourceUrl: string;
   retrievedAt: string;
+  cache?: CacheProvenance;
   /**
    * Whether the upstream response itself exposed enough identity metadata to
    * bind it to the requested date/month. Older injected test doubles may omit

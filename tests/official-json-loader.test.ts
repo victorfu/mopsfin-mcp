@@ -14,6 +14,91 @@ const config: OfficialSourceConfig = {
 const now = () => new Date("2026-08-26T00:00:00.000Z");
 
 describe("OfficialJsonLoader reliability", () => {
+  it("preserves upstream retrieval time and observes cache age per caller", async () => {
+    let clockMs = Date.parse("2026-08-26T00:00:00.000Z");
+    const clock = () => new Date(clockMs);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ Code: "2330" }]), {
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const loader = new OfficialJsonLoader(fetchMock as typeof fetch, clock, {
+      cacheTtlMs: 60_000,
+      maxAttempts: 1,
+    });
+
+    const first = await loader.get(config);
+    clockMs += 5_000;
+    const second = await loader.get(config);
+
+    expect(first).toMatchObject({
+      retrievedAt: "2026-08-26T00:00:00.000Z",
+      cache: {
+        status: "miss",
+        observedAt: "2026-08-26T00:00:00.000Z",
+        storedAt: "2026-08-26T00:00:00.000Z",
+        ageMs: 0,
+        ttlMs: 60_000,
+      },
+    });
+    expect(second).toMatchObject({
+      retrievedAt: first.retrievedAt,
+      cache: {
+        status: "hit",
+        observedAt: "2026-08-26T00:00:05.000Z",
+        storedAt: "2026-08-26T00:00:00.000Z",
+        ageMs: 5_000,
+        ttlMs: 60_000,
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels a concurrent follower shared without mutating the owner metadata", async () => {
+    let release: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const loader = new OfficialJsonLoader(fetchMock as typeof fetch, now, {
+      cacheTtlMs: 60_000,
+      maxAttempts: 1,
+    });
+
+    const owner = loader.get(config);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const follower = loader.get(config);
+    release?.(new Response(JSON.stringify([{ Code: "2330" }])));
+    const [ownerResult, followerResult] = await Promise.all([owner, follower]);
+
+    expect(ownerResult.cache?.status).toBe("miss");
+    expect(followerResult.cache?.status).toBe("shared");
+    expect(followerResult.retrievedAt).toBe(ownerResult.retrievedAt);
+    expect(followerResult.cache?.storedAt).toBe(ownerResult.cache?.storedAt);
+  });
+
+  it("reports cache bypass when caching is disabled", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response("{}"));
+    const loader = new OfficialJsonLoader(fetchMock as typeof fetch, now, {
+      cacheTtlMs: 0,
+      maxAttempts: 1,
+    });
+
+    const first = await loader.get(config);
+    const second = await loader.get(config);
+
+    expect(first.cache).toMatchObject({
+      status: "bypass",
+      storedAt: null,
+      ageMs: null,
+      ttlMs: 0,
+    });
+    expect(second.cache?.status).toBe("bypass");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("returns structured retryable metadata for an exhausted 5xx", async () => {
     const loader = new OfficialJsonLoader(
       vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 })) as typeof fetch,

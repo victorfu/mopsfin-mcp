@@ -10,6 +10,7 @@ import type {
 } from "@/lib/company-master/types";
 import {
   MonthlyRevenueClient,
+  OfficialRevenueCsvLoader,
   normalizeMonthlyRevenueCsv,
 } from "@/lib/revenue/client";
 import { parseRevenueCsv } from "@/lib/revenue/csv";
@@ -196,6 +197,44 @@ function archiveMonthFromUrl(input: URL | RequestInfo): string {
 }
 
 describe("MOPS monthly revenue CSV", () => {
+  it("preserves archive retrieval time and wires per-caller cache provenance", async () => {
+    let clockMs = Date.parse("2026-08-26T00:00:00.000Z");
+    const clock = () => new Date(clockMs);
+    const fetchMock = vi.fn().mockResolvedValue(
+      response(listedArchiveFixture, 200, "text/csv"),
+    );
+    const loader = new OfficialRevenueCsvLoader(
+      fetchMock as typeof fetch,
+      clock,
+      { cacheTtlMs: 60_000, maxAttempts: 1 },
+    );
+    const config = {
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      sourceName: "fixture",
+      sourceUrl:
+        "https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_115_7.csv",
+      dataMonth: "2026-07",
+    };
+
+    const first = await loader.get(config);
+    clockMs += 4_000;
+    const second = await loader.get(config);
+    const normalized = normalizeMonthlyRevenueCsv(second, config);
+
+    expect(first.cache?.status).toBe("miss");
+    expect(second.retrievedAt).toBe(first.retrievedAt);
+    expect(second.cache).toMatchObject({
+      status: "hit",
+      observedAt: "2026-08-26T00:00:04.000Z",
+      storedAt: "2026-08-26T00:00:00.000Z",
+      ageMs: 4_000,
+      ttlMs: 60_000,
+    });
+    expect(normalized.source.cache).toEqual(second.cache);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("parses BOM, CRLF, quoted commas/newlines and escaped quotes as RFC 4180", () => {
     const record = archiveRecord("2026-07");
     record.備註 = '跨\r\n行，且有"引號"';

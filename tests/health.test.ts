@@ -13,11 +13,17 @@ describe("health route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toMatchObject({
       status: "ok",
-      version: "0.6.2",
+      liveness: "ok",
+      version: "0.6.3",
       toolCount: 18,
+      applicationReadiness: "ready",
       readiness: {
         status: "ready",
         upstreamChecks: "not_run",
+      },
+      upstreamContracts: {
+        status: "not_checked",
+        lastCheckedAt: null,
       },
       telemetry: {
         requests: expect.any(Number),
@@ -75,6 +81,8 @@ describe("health route", () => {
           "https://openapi.twse.com.tw/v1/opendata/t187ap45_L",
       },
     });
+    expect(body.note).toContain("shallow health");
+    expect(body.note).toContain("不代表上游資料契約已在本次請求驗證");
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
   });

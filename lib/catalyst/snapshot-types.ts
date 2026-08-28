@@ -1,4 +1,5 @@
 import type { CompanyMarket } from "@/lib/company-master/types";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 
 export type CompanyCatalystSnapshotsType =
   | "forecast_achievement"
@@ -215,6 +216,7 @@ export interface CompanyCatalystSnapshotsSource {
     | "not_applicable";
   snapshotIdentity: string | null;
   failureId: string | null;
+  cache?: CacheProvenance;
 }
 
 export interface CompanyCatalystSnapshotsCoverageItem {

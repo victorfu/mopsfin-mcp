@@ -2135,6 +2135,19 @@ describe("MCP protocol integration", () => {
     vi.spyOn(mopsfinClient, "findCompanies").mockResolvedValue([
       { code: "2330", name: "台積電", displayName: "2330 台積電" },
     ]);
+    vi.spyOn(mopsfinClient, "findCompaniesWithSource").mockResolvedValue({
+      companies: [
+        { code: "2330", name: "台積電", displayName: "2330 台積電" },
+      ],
+      retrievedAt: "2026-08-24T00:00:00.000Z",
+      cache: {
+        status: "bypass",
+        observedAt: "2026-08-24T00:00:00.000Z",
+        storedAt: null,
+        ageMs: null,
+        ttlMs: 0,
+      },
+    });
     vi.spyOn(mopsfinClient, "getCatalog").mockResolvedValue(catalog);
     const companyMetricSpy = vi
       .spyOn(mopsfinClient, "getCompanyMetric")
@@ -2218,7 +2231,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.6.2" },
+      { name: "mopsfin-test", version: "0.6.3" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -2232,7 +2245,7 @@ describe("MCP protocol integration", () => {
     await client.connect(clientTransport);
 
     expect(client.getServerVersion()?.name).toBe("mopsfin-test");
-    expect(client.getServerVersion()?.version).toBe("0.6.2");
+    expect(client.getServerVersion()?.version).toBe("0.6.3");
     expect(client.getInstructions()).toContain("IFRSs");
     expect(client.getInstructions()).toContain("NO_DATA");
     expect(client.getInstructions()).toContain("cumulative_yoy");
@@ -2558,7 +2571,7 @@ describe("MCP protocol integration", () => {
           end_date: "2026-01-31",
         },
       ],
-      ["get_daily_market_ohlc", { market: "all", date: "2026-08-24" }],
+      ["get_daily_market_ohlc", { market: "all", date: "latest" }],
       [
         "get_stock_reaction_signals",
         {
@@ -2644,9 +2657,23 @@ describe("MCP protocol integration", () => {
         ok: true,
         meta: {
           contractVersion: "mopsfin.result.v1",
-          asOf: { timezone: "Asia/Taipei" },
+          asOf: {
+            timezone: "Asia/Taipei",
+            servedAt: expect.any(String),
+            assembledAt: expect.any(String),
+            sourceCutoffs: expect.any(Array),
+          },
           quality: {
             status: expect.stringMatching(/^(complete|partial)$/),
+            freshness: expect.stringMatching(
+              /^(within_expected_window|stale|unknown|not_applicable)$/,
+            ),
+            freshnessDetails: expect.arrayContaining([
+              expect.objectContaining({
+                policyId: expect.any(String),
+                reasonCode: expect.any(String),
+              }),
+            ]),
           },
           page: {
             mode: expect.stringMatching(/^(none|offset|cursor)$/),
@@ -2761,6 +2788,12 @@ describe("MCP protocol integration", () => {
       }
       if (name === "get_daily_market_ohlc") {
         const structured = result.structuredContent as {
+          meta: {
+            quality: {
+              freshness: string;
+              issues: Array<{ code: string }>;
+            };
+          };
           dataDate: string;
           coverageComplete: boolean;
           universeCoverageVerified: boolean;
@@ -2776,6 +2809,10 @@ describe("MCP protocol integration", () => {
           selectionComplete: true,
           counts: { returned: 2 },
         });
+        expect(structured.meta.quality.freshness).toBe("unknown");
+        expect(structured.meta.quality.issues).toContainEqual(
+          expect.objectContaining({ code: "FRESHNESS_UNVERIFIED" }),
+        );
       }
       if (name === "get_daily_market_valuation") {
         const structured = result.structuredContent as {
@@ -2833,6 +2870,15 @@ describe("MCP protocol integration", () => {
       }
       if (name === "get_monthly_revenue") {
         const structured = result.structuredContent as {
+          meta: {
+            quality: {
+              freshness: string;
+              freshnessDetails: Array<{
+                policyId: string;
+                expectedAsOf: string | null;
+              }>;
+            };
+          };
           dataMonth: string;
           amountUnit: string;
           filingCoverage: {
@@ -2857,6 +2903,13 @@ describe("MCP protocol integration", () => {
           code: "2330",
           sourceIndustryName: "半導體業",
           currentMonthRevenueTwd: 323_000_000_000,
+        });
+        expect(structured.meta.quality.freshness).toBe(
+          "within_expected_window",
+        );
+        expect(structured.meta.quality.freshnessDetails[0]).toMatchObject({
+          policyId: "official.monthly-revenue.latest-common.v1",
+          expectedAsOf: "2026-07",
         });
       }
       if (name === "get_stock_reaction_signals") {

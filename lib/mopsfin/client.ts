@@ -14,6 +14,7 @@ import {
 } from "./guidance";
 import { parseHtmlTables, paginateTables } from "./html";
 import { MopsfinHttpClient } from "./http";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 import { normalizeTrendJson } from "./normalize";
 import {
   assertJsonWithinLimits,
@@ -553,7 +554,7 @@ export class MopsfinClient {
     options: MopsfinClientOptions = {},
   ) {
     this.http = http;
-    this.catalog = new CatalogService(http);
+    this.catalog = new CatalogService(http, now);
     this.identityLookupConcurrency = this.positiveIntegerOption(
       options.identityLookupConcurrency,
       DEFAULT_IDENTITY_LOOKUP_CONCURRENCY,
@@ -592,6 +593,17 @@ export class MopsfinClient {
   }
 
   async findCompanies(query: string, limit = 10): Promise<CompanySuggestion[]> {
+    return (await this.findCompaniesWithSource(query, limit)).companies;
+  }
+
+  async findCompaniesWithSource(
+    query: string,
+    limit = 10,
+  ): Promise<{
+    companies: CompanySuggestion[];
+    retrievedAt: string;
+    cache: CacheProvenance;
+  }> {
     const normalized = query.trim();
     if (!normalized || normalized.length > 30) {
       throw new MopsfinError(
@@ -618,7 +630,7 @@ export class MopsfinClient {
       );
     }
 
-    return suggestions
+    const companies = suggestions
       .flatMap((item): CompanySuggestion[] => {
         if (typeof item !== "string") return [];
         const displayName = item.replace(/\s+/g, " ").trim();
@@ -627,6 +639,11 @@ export class MopsfinClient {
         return [{ code: match[1], name: match[2], displayName }];
       })
       .slice(0, limit);
+    return {
+      companies,
+      retrievedAt: response.retrievedAt,
+      cache: response.cache,
+    };
   }
 
   async resolveCompanies(
@@ -702,7 +719,7 @@ export class MopsfinClient {
     }
 
     return {
-      ...this.source("/compare/data"),
+      ...this.source("/compare/data", response.retrievedAt, response.cache),
       query: {
         metricCode: metric.code,
         metricName: metric.name,
@@ -819,7 +836,7 @@ export class MopsfinClient {
         requestedPeriod: options.period,
       });
       return {
-        ...this.source("/compare/bcode"),
+        ...this.source("/compare/bcode", result.retrievedAt, result.cache),
         query: {
           mode: options.mode,
           measure: options.measure,
@@ -844,7 +861,7 @@ export class MopsfinClient {
     const trend = sliceTrend(normalizeTrendJson(parseJson(response.body)), options.range);
     this.assertTrendHasData(trend);
     return {
-      ...this.source("/compare/bcode"),
+      ...this.source("/compare/bcode", response.retrievedAt, response.cache),
       query: {
         mode: options.mode,
         measure: options.measure,
@@ -902,7 +919,7 @@ export class MopsfinClient {
     this.assertTrendHasData(trend);
 
     return {
-      ...this.source(route),
+      ...this.source(route, response.retrievedAt, response.cache),
       query: {
         metricCode: metric.code,
         metricName: metric.name,
@@ -1091,7 +1108,7 @@ export class MopsfinClient {
     const paginated = paginateTables(result.parsed, options.page.offset, options.page.limit);
 
     return {
-      ...this.source(options.route),
+      ...this.source(options.route, result.retrievedAt, result.cache),
       query: {
         ...options.query,
         companyCodes: companies.map((company) => company.code),
@@ -1122,7 +1139,12 @@ export class MopsfinClient {
     route: "/compare/report" | "/compare/xb";
     companyDisplayNames: string[];
     requestedPeriod: "latest" | string;
-  }): Promise<{ period: string; parsed: ParsedHtmlResponse }> {
+  }): Promise<{
+    period: string;
+    parsed: ParsedHtmlResponse;
+    retrievedAt: string;
+    cache: CacheProvenance;
+  }> {
     const candidates =
       options.requestedPeriod === "latest"
         ? latestPeriodCandidates(this.now())
@@ -1141,7 +1163,12 @@ export class MopsfinClient {
           matchesReturnedPeriod(parsed.period, period) &&
           parsed.totalRows > 0
         ) {
-          return { period, parsed };
+          return {
+            period,
+            parsed,
+            retrievedAt: response.retrievedAt,
+            cache: response.cache,
+          };
         }
       } catch (error) {
         const normalized = asMopsfinError(error);
@@ -1162,7 +1189,12 @@ export class MopsfinClient {
     industries: Array<{ code: string; name: string }>;
     measure: IndustryMeasure;
     requestedPeriod: "latest" | string;
-  }): Promise<{ period: string; trend: NormalizedTrend }> {
+  }): Promise<{
+    period: string;
+    trend: NormalizedTrend;
+    retrievedAt: string;
+    cache: CacheProvenance;
+  }> {
     const candidates =
       options.requestedPeriod === "latest"
         ? latestPeriodCandidates(this.now())
@@ -1183,7 +1215,12 @@ export class MopsfinClient {
           trend.quarter === expected.quarter &&
           trend.series.some((series) => series.points.length > 0)
         ) {
-          return { period: toPeriod(expected.year, expected.quarter), trend };
+          return {
+            period: toPeriod(expected.year, expected.quarter),
+            trend,
+            retrievedAt: response.retrievedAt,
+            cache: response.cache,
+          };
         }
       } catch (error) {
         const normalized = asMopsfinError(error);
@@ -1268,11 +1305,16 @@ export class MopsfinClient {
     return warnings.map((warning) => warning.trim());
   }
 
-  private source(route: string): SourceMetadata {
+  private source(
+    route: string,
+    retrievedAt: string,
+    cache?: CacheProvenance,
+  ): SourceMetadata {
     return {
       sourceName: "公開資訊觀測站－財務比較 E 點通",
       sourceUrl: MOPSFIN_SOURCE_URL,
-      retrievedAt: new Date().toISOString(),
+      retrievedAt,
+      ...(cache ? { cache } : {}),
       upstreamRoute: route,
       freshnessNote: "原站每日更新一次，資料可能較最新申報落後約一日。",
     };

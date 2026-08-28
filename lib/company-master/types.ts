@@ -1,3 +1,5 @@
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
+
 export type CompanyMarket = "listed" | "otc";
 export type CompanyMarketSelection = CompanyMarket | "all";
 export type CompanyProfileValueStatus = "reported" | "missing" | "invalid_upstream";
@@ -38,6 +40,7 @@ export interface CompanyMasterSource {
   excludedTdrCount: number;
   companyCount: number;
   minimumExpectedCount: number;
+  cache?: CacheProvenance;
 }
 
 export interface CompanyMasterCoverageVerification {
@@ -49,6 +52,8 @@ export interface CompanyMasterCoverageVerification {
 export interface CompanyMarketSnapshot {
   source: CompanyMasterSource;
   companies: MasterCompany[];
+  /** Acquisition-layer metadata; public tool schemas wire this separately. */
+  cache?: CacheProvenance;
 }
 
 export interface CompanyMasterQuery {

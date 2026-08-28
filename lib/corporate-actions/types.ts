@@ -1,4 +1,5 @@
 import type { CompanyMarket } from "@/lib/company-master/types";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 
 export type CorporateActionFamily =
   | "ex_right_dividend"
@@ -57,6 +58,7 @@ export interface CorporateActionSource {
   companyEventCount: number;
   officialDeclaredRowCount: number | null;
   officialDeclaredRowCountAvailable: boolean;
+  cache?: CacheProvenance;
 }
 
 interface CorporateActionCoverageGapBase {
