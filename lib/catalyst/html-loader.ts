@@ -1,4 +1,5 @@
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import { UPSTREAM_HTTP_USER_AGENT } from "@/lib/server/identity";
 import {
   observeCache,
   type CacheProvenance,
@@ -189,8 +190,7 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
                 "application/x-www-form-urlencoded;charset=UTF-8",
               Origin: MOPS_ORIGIN,
               Referer: `${MOPS_ORIGIN}/mops/web/index`,
-              "User-Agent":
-                "mopsfin-mcp/0.6.3 (+https://mopsfin.twse.com.tw/)",
+              "User-Agent": UPSTREAM_HTTP_USER_AGENT,
               "X-Requested-With": "XMLHttpRequest",
             },
           });

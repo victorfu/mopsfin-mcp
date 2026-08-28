@@ -3,6 +3,9 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { PUBLIC_TOOL_NAMES, TOOL_COUNT } from "@/lib/mcp/tool-manifest";
+import { SERVER_VERSION } from "@/lib/server/identity";
+
 const readme = readFileSync(
   fileURLToPath(new URL("../README.md", import.meta.url)),
   "utf8",
@@ -42,29 +45,11 @@ describe("README example prompts", () => {
     expect(readme).not.toContain("列出最近完成交易日全部上市櫃公司的 OHLC");
   });
 
-  it("documents the v0.6.3 eighteen-tool contract and official sources", () => {
-    const tools = [
-      "find_companies",
-      "get_stock_ohlc",
-      "get_daily_market_ohlc",
-      "get_stock_reaction_signals",
-      "get_daily_market_valuation",
-      "get_monthly_revenue",
-      "get_monthly_revenue_trend",
-      "get_company_catalyst_events",
-      "get_company_catalyst_snapshots",
-      "screen_taiwan_stock_candidates",
-      "list_companies",
-      "list_catalog",
-      "get_company_metric",
-      "get_company_metrics_batch",
-      "get_financial_statement",
-      "get_financial_note",
-      "get_industry_data",
-      "get_financial_institution_metric",
-    ];
-    expect(readme).toContain("目前版本 `0.6.3`");
-    expect(readme).toContain("十八個工具");
+  it("documents the canonical server and tool contract with official sources", () => {
+    expect(readme).toContain(`目前版本 \`${SERVER_VERSION}\``);
+    expect(readme).toContain(`${TOOL_COUNT} 個工具`);
+    expect(readme).toContain("browser-safe server identity");
+    expect(readme).toContain("dependency-free tool manifest");
     expect(readme).toContain("liveness=ok");
     expect(readme).toContain("applicationReadiness=ready");
     expect(readme).toContain("upstreamContracts.status=not_checked");
@@ -77,7 +62,7 @@ describe("README example prompts", () => {
     expect(readme).toContain("DATA_STALE");
     expect(readme).toContain("cache.status/observedAt/storedAt/ageMs/ttlMs");
     expect(readme).toContain("cache hit 不會用 `servedAt` 覆寫原始 `retrievedAt`");
-    for (const tool of tools) expect(readme).toContain(`\`${tool}\``);
+    for (const tool of PUBLIC_TOOL_NAMES) expect(readme).toContain(`\`${tool}\``);
     expect(readme).toContain("meta.contractVersion=mopsfin.result.v1");
     expect(readme).toContain("meta.asOf");
     expect(readme).toContain("action=restart_pagination");

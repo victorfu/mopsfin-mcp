@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { TOOL_COUNT } from "@/lib/mcp/tool-manifest";
 import { telemetrySnapshot } from "@/lib/observability/telemetry";
+import { SERVER_IDENTITY } from "@/lib/server/identity";
 import { getUpstreamReliabilitySnapshot } from "@/lib/upstream/reliability";
 
 export const runtime = "nodejs";
@@ -10,10 +12,10 @@ export function GET() {
     {
       status: "ok",
       liveness: "ok",
-      service: "mopsfin-taiwan-equities",
-      version: "0.6.3",
-      resultContractVersion: "mopsfin.result.v1",
-      toolCount: 18,
+      service: SERVER_IDENTITY.name,
+      version: SERVER_IDENTITY.version,
+      resultContractVersion: SERVER_IDENTITY.resultContractVersion,
+      toolCount: TOOL_COUNT,
       applicationReadiness: "ready",
       readiness: {
         status: "ready",
@@ -26,7 +28,7 @@ export function GET() {
       },
       telemetry: telemetrySnapshot(),
       upstreamReliability: getUpstreamReliabilitySnapshot(),
-      mcpEndpoint: "/api/mcp",
+      mcpEndpoint: SERVER_IDENTITY.mcpEndpoint,
       sourceUrls: {
         mopsfin: "https://mopsfin.twse.com.tw/",
         twseCompanies:

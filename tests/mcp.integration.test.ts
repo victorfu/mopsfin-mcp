@@ -26,6 +26,7 @@ import {
   stockReactionSignalsOutputSchema,
 } from "@/lib/mcp/schemas";
 import { buildResultMeta } from "@/lib/mcp/result-contract";
+import { PUBLIC_TOOL_NAMES, TOOL_COUNT } from "@/lib/mcp/tool-manifest";
 import { mopsfinClient } from "@/lib/mopsfin/client";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { MOPSFIN_SERVER_INSTRUCTIONS } from "@/lib/mopsfin/guidance";
@@ -35,6 +36,7 @@ import { reactionClient } from "@/lib/reaction/client";
 import type { StockReactionSignalsResult } from "@/lib/reaction/types";
 import { monthlyRevenueClient } from "@/lib/revenue/client";
 import type { MonthlyRevenueTrendResult } from "@/lib/revenue/types";
+import { SERVER_VERSION } from "@/lib/server/identity";
 import { valuationClient } from "@/lib/valuation/client";
 
 const source = {
@@ -2231,7 +2233,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.6.3" },
+      { name: "mopsfin-test", version: SERVER_VERSION },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -2245,7 +2247,7 @@ describe("MCP protocol integration", () => {
     await client.connect(clientTransport);
 
     expect(client.getServerVersion()?.name).toBe("mopsfin-test");
-    expect(client.getServerVersion()?.version).toBe("0.6.3");
+    expect(client.getServerVersion()?.version).toBe(SERVER_VERSION);
     expect(client.getInstructions()).toContain("IFRSs");
     expect(client.getInstructions()).toContain("NO_DATA");
     expect(client.getInstructions()).toContain("cumulative_yoy");
@@ -2269,27 +2271,8 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("get_company_metrics_batch");
     expect(client.getInstructions()).toContain("filingCoverage");
     const listed = await client.listTools();
-    expect(listed.tools).toHaveLength(18);
-    expect(listed.tools.map((tool) => tool.name)).toEqual([
-      "find_companies",
-      "get_stock_ohlc",
-      "get_daily_market_ohlc",
-      "get_stock_reaction_signals",
-      "get_company_catalyst_events",
-      "get_company_catalyst_snapshots",
-      "screen_taiwan_stock_candidates",
-      "get_daily_market_valuation",
-      "get_monthly_revenue",
-      "get_monthly_revenue_trend",
-      "list_companies",
-      "list_catalog",
-      "get_company_metric",
-      "get_company_metrics_batch",
-      "get_financial_statement",
-      "get_financial_note",
-      "get_industry_data",
-      "get_financial_institution_metric",
-    ]);
+    expect(listed.tools).toHaveLength(TOOL_COUNT);
+    expect(listed.tools.map((tool) => tool.name)).toEqual(PUBLIC_TOOL_NAMES);
     expect(
       listed.tools.every(
         (tool) =>

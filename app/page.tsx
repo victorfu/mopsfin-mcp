@@ -1,12 +1,18 @@
 import { CopyButton } from "./copy-button";
+import {
+  PUBLIC_TOOL_NAMES,
+  TOOL_COUNT,
+  type McpToolName,
+} from "@/lib/mcp/tool-manifest";
+import { PUBLIC_MCP_URL, SERVER_VERSION } from "@/lib/server/identity";
 
-const endpoint = "https://mopsfin-mcp.vercel.app/api/mcp";
+const endpoint = PUBLIC_MCP_URL;
 
 const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MCP Server／自訂連接器。
 
 連線資訊：
 - 名稱：Mopsfin 台股財務
-- 版本：0.6.3
+- 版本：${SERVER_VERSION}
 - 說明：篩選台股研究候選，並查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、公司行動實際結果、benchmark reaction signals、重大訊息與法說會、current official catalyst snapshots，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
@@ -18,30 +24,37 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 2. 如果你能操作目前應用程式的設定介面，請帶我完成新增，並在任何會改變帳號設定的步驟前讓我確認。
 3. 如果你不能直接操作設定，請不要聲稱已完成；請按照目前平台的最新介面名稱，一次只告訴我一個清楚步驟，等我完成後再繼續。
 4. URL 必須完整使用 /api/mcp，請勿改成網站首頁、/mcp 或其他路徑；若出現 OAuth 進階欄位，請保持空白。
-5. 連線後確認可以看到 18 個唯讀工具，包含 screen_taiwan_stock_candidates、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
+5. 連線後確認可以看到 ${TOOL_COUNT} 個唯讀工具，包含 screen_taiwan_stock_candidates、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
 6. 最後在新對話啟用此連接器，並測試：「請先找出 2330 對應的公司，再查詢最近 12 季營業收入；標示期別、單位、來源與資料擷取時間。」
 7. 若我的方案或工作區政策不允許新增自訂 MCP，請明確告訴我限制及需要聯絡的管理員角色。`;
 
-const tools = [
-  ["find_companies", "用代號或名稱尋找台灣公司"],
-  ["get_stock_ohlc", "查詢單一台股跨期原始日線價量"],
-  ["get_daily_market_ohlc", "查詢單日上市、上櫃或全部市場價量"],
-  ["get_stock_reaction_signals", "比較個股原始／price-index-compatible 報酬、量能與市場價格指數"],
-  ["get_company_catalyst_events", "查詢官方重大訊息與法說會事件"],
-  ["get_company_catalyst_snapshots", "查詢財測達成／差異、股東會與股利決議的 current official snapshot evidence"],
-  ["get_daily_market_valuation", "查詢官方 latest 或指定日估值與參考財報欄位"],
-  ["get_monthly_revenue", "查詢官方 latest 或指定月份營收"],
-  ["get_monthly_revenue_trend", "查詢 3–24 個月營收序列與透明衍生趨勢"],
-  ["screen_taiwan_stock_candidates", "以四柱 latest 資料分流最多 5 個非金融研究候選"],
-  ["list_companies", "列出目前上市／上櫃公司母體，並揭露 heuristic coverage"],
-  ["list_catalog", "查看可用指標、報表、附註與期別"],
-  ["get_company_metric", "查詢公司財務趨勢、比率與年增率"],
-  ["get_company_metrics_batch", "批次取得多家公司 × 多項基本面指標"],
-  ["get_financial_statement", "取得資產負債、損益與現金流量表"],
-  ["get_financial_note", "取得財報附註與重要明細"],
-  ["get_industry_data", "查詢產業統計與產業趨勢"],
-  ["get_financial_institution_metric", "查詢金融業資產品質與資本適足性"],
-] as const;
+const toolSummaries = {
+  find_companies: "用代號或名稱尋找台灣公司",
+  get_stock_ohlc: "查詢單一台股跨期原始日線價量",
+  get_daily_market_ohlc: "查詢單日上市、上櫃或全部市場價量",
+  get_stock_reaction_signals:
+    "比較個股原始／price-index-compatible 報酬、量能與市場價格指數",
+  get_company_catalyst_events: "查詢官方重大訊息與法說會事件",
+  get_company_catalyst_snapshots:
+    "查詢財測達成／差異、股東會與股利決議的 current official snapshot evidence",
+  screen_taiwan_stock_candidates:
+    "以四柱 latest 資料分流最多 5 個非金融研究候選",
+  get_daily_market_valuation: "查詢官方 latest 或指定日估值與參考財報欄位",
+  get_monthly_revenue: "查詢官方 latest 或指定月份營收",
+  get_monthly_revenue_trend: "查詢 3–24 個月營收序列與透明衍生趨勢",
+  list_companies: "列出目前上市／上櫃公司母體，並揭露 heuristic coverage",
+  list_catalog: "查看可用指標、報表、附註與期別",
+  get_company_metric: "查詢公司財務趨勢、比率與年增率",
+  get_company_metrics_batch: "批次取得多家公司 × 多項基本面指標",
+  get_financial_statement: "取得資產負債、損益與現金流量表",
+  get_financial_note: "取得財報附註與重要明細",
+  get_industry_data: "查詢產業統計與產業趨勢",
+  get_financial_institution_metric: "查詢金融業資產品質與資本適足性",
+} satisfies Record<McpToolName, string>;
+
+const tools = PUBLIC_TOOL_NAMES.map(
+  (name) => [name, toolSummaries[name]] as const,
+);
 
 export default function Home() {
   return (
@@ -59,7 +72,7 @@ export default function Home() {
       </header>
 
       <section className="hero" id="top">
-        <p className="eyebrow">V0.6.3 · REMOTE MCP · TAIWAN EQUITY RESEARCH</p>
+        <p className="eyebrow">V{SERVER_VERSION} · REMOTE MCP · TAIWAN EQUITY RESEARCH</p>
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
@@ -78,7 +91,7 @@ export default function Home() {
           <li><span aria-hidden="true">●</span> 服務已上線</li>
           <li>Streamable HTTP</li>
           <li>免登入、免 API Key</li>
-          <li>18 個唯讀工具</li>
+          <li>{TOOL_COUNT} 個唯讀工具</li>
         </ul>
       </section>
 
@@ -122,7 +135,7 @@ export default function Home() {
             </li>
             <li>
               <span className="stepNumber">4</span>
-              <div><strong>檢查並開始使用</strong><p>建立後確認辨識出 18 個工具。開啟新對話，從工具選單加入這個 MCP 連線。</p></div>
+              <div><strong>檢查並開始使用</strong><p>建立後確認辨識出 {TOOL_COUNT} 個工具。開啟新對話，從工具選單加入這個 MCP 連線。</p></div>
             </li>
           </ol>
 
@@ -277,7 +290,7 @@ export default function Home() {
       </section>
 
       <footer>
-        <span>Mopsfin 台股 MCP · v0.6.3</span>
+        <span>Mopsfin 台股 MCP · v{SERVER_VERSION}</span>
         <span>公開 · 唯讀 · 無資料庫</span>
       </footer>
     </main>

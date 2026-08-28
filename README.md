@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.6.3`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十八個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收、大盤指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
+目前版本 `0.6.4`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 18 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收、大盤指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -27,6 +27,7 @@ Next.js /api/mcp on Vercel
 - 網路錯誤、429、5xx 或暫時性非 JSON 回應只做有限次重試；重試會尊重上游 `Retry-After`（設安全上限），否則使用 exponential backoff 與 jitter，其他 4xx 不重試。
 - 上游 response bytes、JSON／CSV row 與 HTML table 展開都有上限；所有官方來源共用有界併發與等待佇列，超載時回結構化 backpressure 錯誤，不讓記憶體或排隊量無界成長。
 - 行程內 telemetry 只彙總 MCP method、tool name、延遲、狀態、結構化錯誤碼及 reliability counters；不記錄 tool arguments、request body、認證資料或使用者查詢值，也不持久化。`/api/health` 是不呼叫上游的 shallow health：保留既有 `status`／`readiness`，並以 `liveness=ok`、`applicationReadiness=ready` 表示應用程式可回應及接受請求；`upstreamContracts.status=not_checked` 與 `lastCheckedAt=null` 明示本次 health request 沒有驗證官方資料契約。
+- 版本由 `package.json` 經 browser-safe server identity 單向提供給 MCP initialize、health、首頁、guidance 與上游 User-Agent；公開工具名稱與數量則由 dependency-free tool manifest 提供。外部 surfaces 不各自保存另一份 runtime 版本或工具數量。
 - 不保留或轉送 Mopsfin cookies。
 - 報表的 `latest` 會從上一個完成季度往前探測最多 12 季，並核對回應期別，避免原站靜默退回其他季度。
 - Vercel 使用 Node.js `24.x`、東京 `hnd1`、60 秒 function duration 與 Fluid Compute。
@@ -56,7 +57,7 @@ Next.js /api/mcp on Vercel
 
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。成功結果固定包含 `ok=true` 與 `meta`；`meta.asOf`、`meta.quality`、`meta.page` 分別揭露實際資料時間、來源／母體／selection／值品質與續頁狀態。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
-LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對十八個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 18 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
 
 需要目前上市櫃代號母體或全市場掃描候選代號時使用 `list_companies`；只知道特定公司名稱或代號時使用 `find_companies`，不要以 `find_companies` 枚舉全市場。不知道資料指標或期間時使用 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
@@ -84,7 +85,7 @@ deep batch 會逐公司解析 identity，並在 24-unit 預算內嘗試隔離 me
 
 單次呼叫的 catalyst 計畫查詢工作單位上限為 40；重大訊息每個 company×month 為一單位，歷史法說每個 company×month 會分上市與上櫃兩單位，另加近期 market snapshot。這是執行前的 logical work budget，不包含 company-master hint、cache hit、single-flight 或 retry attempts，也不是實際 HTTP attempt 計數；超限時應縮小公司、日期或 event family 範圍。執行時的 failure isolation 是 `per_company_event_type_calendar_month`：上游錯誤、security block 或 parser failure 只標記對應單位並保留其他結果，不得解讀為無事件。`familyCoverage` 只計 selected-company 歷史月份，近期補強另列於 `coverage.currentSnapshots`。只有官方回應的明確空結果可核對、所有 requested families 完成、`companies[].eventCount=0`、沒有 failures，且 `meta.quality.selection=complete` 已確認公司 identity，才能說該公司在指定範圍「已驗證無事件」。
 
-`publishedAt`、`factDate`、`scheduledAt` 與 `effectiveAt` 分開保留，官方未提供的日期不會互相代填。`dateConfidence=confirmed` 只表示時間直接來自官方證據，不代表事件為正面、負面或市場尚未反應。事件只作為 screening 後的人工查核證據；v0.6.3 不把它納入 `screen_taiwan_stock_candidates` 分數，也不產生情緒、impact score、目標價或買賣建議。
+`publishedAt`、`factDate`、`scheduledAt` 與 `effectiveAt` 分開保留，官方未提供的日期不會互相代填。`dateConfidence=confirmed` 只表示時間直接來自官方證據，不代表事件為正面、負面或市場尚未反應。事件只作為 screening 後的人工查核證據；v0.6.4 不把它納入 `screen_taiwan_stock_candidates` 分數，也不產生情緒、impact score、目標價或買賣建議。
 
 事件使用 stateless offset 分頁：每頁會重新查詢並組裝官方來源，不是 pinned point-in-time snapshot。續頁必須沿用完全相同的公司、日期與 event types，並在 `fingerprint` 或 `meta.asOf.snapshotId` 改變時由 `offset=0` 重查。
 
@@ -224,7 +225,7 @@ ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` �
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
 4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
-5. 建立後確認 ChatGPT 能辨識十八個工具。
+5. 建立後確認 ChatGPT 能辨識 18 個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
 Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流程見 [OpenAI 官方連接說明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。

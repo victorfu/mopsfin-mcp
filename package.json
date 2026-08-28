@@ -1,6 +1,6 @@
 {
   "name": "mopsfin-mcp",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "type": "module",
   "description": "A read-only MCP server for Taiwan equity research triage, TWSE/TPEx company universes, market data, and financial data from Mopsfin.",

@@ -21,6 +21,7 @@ import type {
   OfficialMarketClientOptions,
 } from "@/lib/market-data/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import { UPSTREAM_HTTP_USER_AGENT } from "@/lib/server/identity";
 import {
   observeCache,
   type CacheProvenance,
@@ -585,7 +586,7 @@ export class OfficialRevenueCsvLoader {
           signal: scope.signal,
           headers: {
             Accept: "text/csv,text/plain;q=0.9,*/*;q=0.1",
-            "User-Agent": "mopsfin-mcp/0.6.3 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": UPSTREAM_HTTP_USER_AGENT,
           },
         });
         const body = await readResponseTextWithLimit(

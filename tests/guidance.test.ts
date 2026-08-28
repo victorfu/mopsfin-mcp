@@ -7,7 +7,9 @@ import {
   financialInstitutionWarnings,
   metricGuidance,
 } from "@/lib/mopsfin/guidance";
+import { TOOL_COUNT } from "@/lib/mcp/tool-manifest";
 import type { MetricDefinition } from "@/lib/mopsfin/types";
+import { SERVER_VERSION } from "@/lib/server/identity";
 
 function metric(
   name: string,
@@ -24,8 +26,10 @@ function metric(
 
 describe("LLM-facing official guidance", () => {
   it("routes the new market tools and preserves completeness semantics", () => {
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("v0.6.3");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("共提供 18 個工具");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(`v${SERVER_VERSION}`);
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      `共提供 ${TOOL_COUNT} 個工具`,
+    );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_daily_market_valuation");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_monthly_revenue");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("成交量正規化為股");

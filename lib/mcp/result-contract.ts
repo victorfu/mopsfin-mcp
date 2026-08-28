@@ -7,8 +7,9 @@ import type {
   SourceCacheObservation,
 } from "@/lib/freshness/types";
 import type { MopsfinError, MopsfinErrorCode } from "@/lib/mopsfin/errors";
+import { RESULT_CONTRACT_VERSION } from "@/lib/server/identity";
 
-export const RESULT_CONTRACT_VERSION = "mopsfin.result.v1" as const;
+export { RESULT_CONTRACT_VERSION } from "@/lib/server/identity";
 
 export type ResultAsOfSelector =
   | "latest"

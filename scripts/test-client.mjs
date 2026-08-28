@@ -2,49 +2,47 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+import packageMetadata from "../package.json" with { type: "json" };
 
 const endpoint = new URL(
   process.argv[2] ??
     process.env.MOPSFIN_MCP_URL ??
     "http://localhost:3000/api/mcp",
 );
-const client = new Client({ name: "mopsfin-smoke-test", version: "0.6.3" });
+const healthEndpoint = new URL("/api/health", endpoint);
+const client = new Client({
+  name: "mopsfin-smoke-test",
+  version: packageMetadata.version,
+});
 
 try {
   await client.connect(new StreamableHTTPClientTransport(endpoint));
   const { tools } = await client.listTools();
-  const expected = [
-    "find_companies",
-    "get_stock_ohlc",
-    "get_daily_market_ohlc",
-    "get_stock_reaction_signals",
-    "get_company_catalyst_events",
-    "get_company_catalyst_snapshots",
-    "get_daily_market_valuation",
-    "get_monthly_revenue",
-    "get_monthly_revenue_trend",
-    "screen_taiwan_stock_candidates",
-    "list_companies",
-    "list_catalog",
-    "get_company_metric",
-    "get_company_metrics_batch",
-    "get_financial_statement",
-    "get_financial_note",
-    "get_industry_data",
-    "get_financial_institution_metric",
-  ];
   const names = tools.map((tool) => tool.name);
-  if (names.length !== expected.length) {
+  const healthResponse = await fetch(healthEndpoint, {
+    headers: { Accept: "application/json" },
+  });
+  if (!healthResponse.ok) {
     throw new Error(
-      `Expected exactly ${expected.length} tools, received ${names.length}: ${names.join(", ")}`,
+      `Health request failed (${healthResponse.status}) at ${healthEndpoint.href}`,
     );
   }
-  for (const name of expected) {
-    if (!names.includes(name)) throw new Error(`Missing tool: ${name}`);
-  }
+  const health = await healthResponse.json();
   const server = client.getServerVersion();
-  if (server?.version !== "0.6.3") {
-    throw new Error(`Expected server version 0.6.3, received ${server?.version ?? "unknown"}`);
+  if (server?.name !== health.service || server?.version !== health.version) {
+    throw new Error(
+      `MCP initialize does not match health identity: ${JSON.stringify({ server, healthService: health.service, healthVersion: health.version })}`,
+    );
+  }
+  if (!Number.isInteger(health.toolCount) || names.length !== health.toolCount) {
+    throw new Error(
+      `tools/list returned ${names.length} tools but health reports ${String(health.toolCount)}: ${names.join(", ")}`,
+    );
+  }
+  if (health.mcpEndpoint !== endpoint.pathname) {
+    throw new Error(
+      `Health MCP endpoint ${String(health.mcpEndpoint)} does not match ${endpoint.pathname}`,
+    );
   }
 
   const result = await client.callTool({
@@ -59,7 +57,15 @@ try {
     `${JSON.stringify(
       {
         endpoint: endpoint.href,
+        healthEndpoint: healthEndpoint.href,
         server,
+        health: {
+          version: health.version,
+          toolCount: health.toolCount,
+          liveness: health.liveness,
+          applicationReadiness: health.applicationReadiness,
+          upstreamContracts: health.upstreamContracts,
+        },
         tools: names,
         findCompanies: result.structuredContent,
       },

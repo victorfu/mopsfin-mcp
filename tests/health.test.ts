@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { GET } from "@/app/api/health/route";
+import { TOOL_COUNT } from "@/lib/mcp/tool-manifest";
+import { SERVER_IDENTITY } from "@/lib/server/identity";
 
 describe("health route", () => {
   it("stays shallow while exposing bounded in-process reliability state", async () => {
@@ -14,8 +16,10 @@ describe("health route", () => {
     expect(body).toMatchObject({
       status: "ok",
       liveness: "ok",
-      version: "0.6.3",
-      toolCount: 18,
+      service: SERVER_IDENTITY.name,
+      version: SERVER_IDENTITY.version,
+      resultContractVersion: SERVER_IDENTITY.resultContractVersion,
+      toolCount: TOOL_COUNT,
       applicationReadiness: "ready",
       readiness: {
         status: "ready",
@@ -25,6 +29,7 @@ describe("health route", () => {
         status: "not_checked",
         lastCheckedAt: null,
       },
+      mcpEndpoint: SERVER_IDENTITY.mcpEndpoint,
       telemetry: {
         requests: expect.any(Number),
         toolErrors: expect.any(Number),

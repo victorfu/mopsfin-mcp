@@ -6,6 +6,7 @@ import {
   observeMcpRequest,
   recordMcpSdkEvent,
 } from "@/lib/observability/telemetry";
+import { SERVER_IDENTITY } from "@/lib/server/identity";
 import { runWithRequestDeadline } from "@/lib/upstream/reliability";
 
 const MCP_REQUEST_DEADLINE_MS = 52_000;
@@ -16,8 +17,8 @@ const handler = createMcpHandler(
   },
   {
     serverInfo: {
-      name: "mopsfin-taiwan-equities",
-      version: "0.6.3",
+      name: SERVER_IDENTITY.name,
+      version: SERVER_IDENTITY.version,
     },
     instructions: MOPSFIN_SERVER_INSTRUCTIONS,
     maxSubscriptions: 0,

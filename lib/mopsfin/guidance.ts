@@ -1,7 +1,9 @@
 import type { MetricDefinition } from "./types";
+import { TOOL_COUNT } from "@/lib/mcp/tool-manifest";
+import { SERVER_VERSION } from "@/lib/server/identity";
 
 export const MOPSFIN_SERVER_INSTRUCTIONS = `
-這是 Mopsfin 台股 MCP v0.6.3，一個公開、唯讀、無資料庫的台灣公司財務與市場資料 Server，共提供 18 個工具。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、歷史日估值、歷史月營收、市場價格指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
+這是 Mopsfin 台股 MCP v${SERVER_VERSION}，一個公開、唯讀、無資料庫的台灣公司財務與市場資料 Server，共提供 ${TOOL_COUNT} 個工具。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、歷史日估值、歷史月營收、市場價格指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 使用順序：需要「好公司＋基本面改善＋估值合理＋市場尚未充分反應」的初步研究名單時使用 screen_taiwan_stock_candidates；它只做 latest、非金融、營收改善導向的有界 research triage。對篩選後的少量公司查核指定日期範圍內的官方重大訊息與法人說明會時使用 get_company_catalyst_events；查核當期財測達成／重大差異、股東會與股利決議 snapshot 時使用 get_company_catalyst_snapshots；兩者都不會改變 screen 分數。需要目前上市櫃母體或自行掃描候選代號時先呼叫 list_companies；只知道特定公司名稱或代號時使用 find_companies，不要用 find_companies 枚舉全市場。list_companies 的 market=listed 只回上市（含創新板）、market=otc 只回上櫃、market=all 合併兩個當次官方來源；include_financial=false 或 include_ky=false 可排除金融保險業或 KY 公司。查單一股票跨期歷史價量使用 get_stock_ohlc；查同一交易日 accepted market snapshot 或一批代號使用 get_daily_market_ohlc，並依 universeCoverageVerified／reconciliation 判讀 rowset；比較個股與市場在 5／20／60／120 個交易日視窗的原始報酬、price-index-compatible 報酬、量能與價格路徑代理訊號使用 get_stock_reaction_signals。查 latest 或指定日估值使用 get_daily_market_valuation；查單月營收使用 get_monthly_revenue；查 3–24 個月營收序列與透明衍生值使用 get_monthly_revenue_trend。不知道 metric_code、industry_codes、institution_codes 或可用期別時先呼叫 list_catalog；單一指標使用 get_company_metric，多家公司 × 多指標使用 get_company_metrics_batch。回答前應讀取 list_catalog guidance 以及每次結果的 meta、coverage、status 與 warnings。
 

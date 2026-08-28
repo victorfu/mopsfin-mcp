@@ -7,6 +7,7 @@ import {
   type AllowedPostPath,
 } from "./constants";
 import { MopsfinError } from "./errors";
+import { UPSTREAM_HTTP_USER_AGENT } from "@/lib/server/identity";
 import {
   observeCache,
   type CacheProvenance,
@@ -122,7 +123,7 @@ export class MopsfinHttpClient {
             signal: scope.signal,
             headers: {
               Accept: "application/json, text/html;q=0.9, */*;q=0.8",
-              "User-Agent": "mopsfin-mcp/0.6.3 (+https://mopsfin.twse.com.tw/)",
+              "User-Agent": UPSTREAM_HTTP_USER_AGENT,
               ...init.headers,
             },
           });
