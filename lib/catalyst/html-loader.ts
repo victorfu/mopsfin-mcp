@@ -146,7 +146,7 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
               Origin: MOPS_ORIGIN,
               Referer: `${MOPS_ORIGIN}/mops/web/index`,
               "User-Agent":
-                "mopsfin-mcp/0.6.1 (+https://mopsfin.twse.com.tw/)",
+                "mopsfin-mcp/0.6.2 (+https://mopsfin.twse.com.tw/)",
               "X-Requested-With": "XMLHttpRequest",
             },
           });

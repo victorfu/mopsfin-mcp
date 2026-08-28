@@ -512,6 +512,48 @@ const catalog: Catalog = {
       category: "獲利能力",
       family: "data",
     },
+    {
+      code: "NetProfit",
+      name: "稅後純益",
+      unit: "新台幣仟元",
+      category: "一般公司指標",
+      family: "data",
+    },
+    {
+      code: "OperatingCashflow",
+      name: "營業活動現金流量",
+      unit: "新台幣仟元",
+      category: "一般公司指標",
+      family: "data",
+    },
+    {
+      code: "DebtRatio",
+      name: "負債佔資產比率",
+      unit: "%",
+      category: "財務結構",
+      family: "data",
+    },
+    {
+      code: "GrossMargin",
+      name: "毛利率",
+      unit: "%",
+      category: "獲利能力",
+      family: "data",
+    },
+    {
+      code: "OperatingMargin",
+      name: "營業利益率",
+      unit: "%",
+      category: "獲利能力",
+      family: "data",
+    },
+    {
+      code: "EPS",
+      name: "每股盈餘",
+      unit: "元",
+      category: "一般公司指標",
+      family: "data",
+    },
   ],
   industries: [{ code: "24", name: "半導體業" }],
   financialInstitutions: [
@@ -1184,6 +1226,70 @@ const companyMetricsBatch = {
   },
   sources: [source],
   warnings: [],
+} satisfies CompanyMetricsBatchResult;
+
+const screenMetricDefinitions = catalog.metrics.map(
+  ({ code, name, unit, category }) => ({ code, name, unit, category }),
+);
+const screenMetricValues: Record<string, number> = {
+  ROE: 20.5,
+  NetProfit: 100,
+  OperatingCashflow: 120,
+  DebtRatio: 35,
+  GrossMargin: 55,
+  OperatingMargin: 45,
+  EPS: 10,
+};
+const screenCompanyMetricsBatch = {
+  ...companyMetricsBatch,
+  query: {
+    ...companyMetricsBatch.query,
+    metricCodes: screenMetricDefinitions.map((metric) => metric.code),
+  },
+  snapshotId: "screen-batch-fixture",
+  metricDefinitions: screenMetricDefinitions,
+  companies: companyMetricsBatch.companies.map((company) => ({
+    ...company,
+    metrics: screenMetricDefinitions.map((definition) => ({
+      metricCode: definition.code,
+      metricName: definition.name,
+      unit: definition.unit,
+      availability: "available" as const,
+      periods: ["2026Q1"],
+      points: [
+        {
+          period: "2026Q1",
+          value: screenMetricValues[definition.code] as number,
+          valueStatus: "reported" as const,
+        },
+      ],
+      coverage: {
+        seriesReturned: true,
+        nonNullPoints: 1,
+        missingPoints: 0,
+        invalidPoints: 0,
+        firstReportedPeriod: "2026Q1",
+        latestReportedPeriod: "2026Q1",
+        missingPeriods: [],
+      },
+      failure: null,
+    })),
+  })),
+  coverage: {
+    ...companyMetricsBatch.coverage,
+    metrics: screenMetricDefinitions.map((metric) => ({
+      metricCode: metric.code,
+      returnedCompanyCodes: ["2330"],
+      missingCompanyCodes: [],
+      noValidDataCompanyCodes: [],
+      unavailableCompanyCodes: [],
+    })),
+  },
+  workBudget: {
+    ...companyMetricsBatch.workBudget,
+    comparisonPlanUnits: 7,
+    comparisonExecutedUnits: 7,
+  },
 } satisfies CompanyMetricsBatchResult;
 
 const unavailableMetricFailure = {
@@ -2036,7 +2142,11 @@ describe("MCP protocol integration", () => {
     const companyMetricsBatchSpy = vi.spyOn(
       companyMetricsBatchClient,
       "getCompanyMetricsBatch",
-    ).mockResolvedValue(companyMetricsBatch);
+    ).mockImplementation(async (query) =>
+      query.metricCodes.length === 7
+        ? screenCompanyMetricsBatch
+        : companyMetricsBatch,
+    );
     vi.spyOn(mopsfinClient, "getFinancialStatement").mockResolvedValue(table);
     vi.spyOn(mopsfinClient, "getFinancialNote").mockResolvedValue({
       ...table,
@@ -2108,7 +2218,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.6.1" },
+      { name: "mopsfin-test", version: "0.6.2" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -2122,7 +2232,7 @@ describe("MCP protocol integration", () => {
     await client.connect(clientTransport);
 
     expect(client.getServerVersion()?.name).toBe("mopsfin-test");
-    expect(client.getServerVersion()?.version).toBe("0.6.1");
+    expect(client.getServerVersion()?.version).toBe("0.6.2");
     expect(client.getInstructions()).toContain("IFRSs");
     expect(client.getInstructions()).toContain("NO_DATA");
     expect(client.getInstructions()).toContain("cumulative_yoy");
@@ -2370,6 +2480,9 @@ describe("MCP protocol integration", () => {
     expect(screenTool?.description).toContain("unknown 也不等於 0");
     expect(screenTool?.description).toContain("24 comparison units");
     expect(screenTool?.description).toContain("company_metrics_unavailable");
+    expect(screenTool?.description).toContain("semantic roles");
+    expect(screenTool?.description).toContain("CATALOG_CONTRACT_MISMATCH");
+    expect(screenTool?.description).toContain("generic metric tools");
     expect(screenTool?.description).toContain("notReactionScored");
     expect(screenTool?.description).toContain("price-index-compatible");
     expect(screenTool?.description).toContain("mixed as-of");
@@ -3022,6 +3135,17 @@ describe("MCP protocol integration", () => {
             latestOnly: boolean;
             financialCompanies: string;
             scoreCompensationAcrossPillars: boolean;
+            evidencePolicies: {
+              requiredFinancialMetricRoles: string[];
+              financialMetricCodes: string[];
+              resolvedFinancialMetrics: Array<{
+                role: string;
+                metricCode: string;
+                family: string;
+              }>;
+              catalogDiscoveredAt: string;
+              catalogSnapshotId: string;
+            };
           };
           workBudget: {
             deepCompanyLimit: number;
@@ -3050,6 +3174,37 @@ describe("MCP protocol integration", () => {
           latestOnly: true,
           financialCompanies: "excluded",
           scoreCompensationAcrossPillars: false,
+          evidencePolicies: {
+            requiredFinancialMetricRoles: [
+              "roe",
+              "net_profit",
+              "operating_cashflow",
+              "debt_ratio",
+              "gross_margin",
+              "operating_margin",
+              "eps",
+            ],
+            financialMetricCodes: [
+              "ROE",
+              "NetProfit",
+              "OperatingCashflow",
+              "DebtRatio",
+              "GrossMargin",
+              "OperatingMargin",
+              "EPS",
+            ],
+            resolvedFinancialMetrics: expect.arrayContaining([
+              expect.objectContaining({
+                role: "net_profit",
+                metricCode: "NetProfit",
+                family: "data",
+              }),
+            ]),
+            catalogDiscoveredAt: "2026-08-24T00:00:00.000Z",
+            catalogSnapshotId: expect.stringMatching(
+              /^mopsfin-catalog-[a-f0-9]{64}$/,
+            ),
+          },
         });
         expect(structured.workBudget).toMatchObject({
           deepCompanyLimit: 10,

@@ -13,7 +13,7 @@ describe("health route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toMatchObject({
       status: "ok",
-      version: "0.6.1",
+      version: "0.6.2",
       toolCount: 18,
       readiness: {
         status: "ready",

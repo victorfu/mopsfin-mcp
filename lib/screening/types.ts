@@ -2,6 +2,10 @@ import type {
   CompanyMarket,
   CompanyMarketSelection,
 } from "@/lib/company-master/types";
+import type {
+  ResolvedScreenFinancialMetric,
+  ScreenMetricRole,
+} from "./metric-roles";
 
 export const TAIWAN_STOCK_SCREEN_PRESET = "balanced_non_financial_v2" as const;
 export const TAIWAN_STOCK_SCREEN_DEFINITION = "taiwan_stock_screen.v2" as const;
@@ -166,7 +170,11 @@ export interface TaiwanStockScreenDefinition {
     tieBreak: string[];
   };
   evidencePolicies: {
+    requiredFinancialMetricRoles: ScreenMetricRole[];
     financialMetricCodes: string[];
+    resolvedFinancialMetrics: ResolvedScreenFinancialMetric[];
+    catalogDiscoveredAt: string;
+    catalogSnapshotId: string;
     financialAlignment: "exact_common_quarter_no_substitution";
     valuationPeerMinimum: 20;
     valuationPeerFallback: "same_industry_then_same_market";

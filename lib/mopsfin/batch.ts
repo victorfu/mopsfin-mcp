@@ -378,7 +378,20 @@ export class CompanyMetricsBatchClient {
     const metrics = metricCodes.map((code) => {
       const metric = catalog.metrics.find((candidate) => candidate.code === code && candidate.family === "data");
       if (!metric) {
-        throw new MopsfinError("NOT_FOUND", `找不到 family=data 的 metric_code ${code}；請先呼叫 list_catalog。`);
+        throw new MopsfinError(
+          "NOT_FOUND",
+          `找不到 family=data 的 metric_code ${code}；請先呼叫 list_catalog。`,
+          {
+            reason: "CATALOG_METRIC_NOT_FOUND",
+            retryable: false,
+            action: "change_query",
+            details: {
+              metricCode: code,
+              family: "data",
+              catalogDiscoveredAt: catalog.discoveredAt,
+            },
+          },
+        );
       }
       return metric;
     });

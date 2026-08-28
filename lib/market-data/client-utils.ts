@@ -417,7 +417,7 @@ export class OfficialJsonLoader {
           signal: scope.signal,
           headers: {
             Accept: "application/json",
-            "User-Agent": "mopsfin-mcp/0.6.1 (+https://mopsfin.twse.com.tw/)",
+            "User-Agent": "mopsfin-mcp/0.6.2 (+https://mopsfin.twse.com.tw/)",
           },
         });
         const body = await readResponseTextWithLimit(

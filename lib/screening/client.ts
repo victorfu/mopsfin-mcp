@@ -8,6 +8,7 @@ import {
   type CompanyMetricsBatchClient,
   type CompanyMetricsBatchCompany,
 } from "@/lib/mopsfin/batch";
+import { mopsfinClient, type MopsfinClient } from "@/lib/mopsfin/client";
 import { asMopsfinError, MopsfinError } from "@/lib/mopsfin/errors";
 import {
   reactionClient,
@@ -43,9 +44,16 @@ import {
   latestAnnualRoe,
   nextDiligenceSteps,
   rejectionReasons,
-  SCREEN_METRIC_CODES,
   valuationPeerContext,
 } from "./calculations";
+import {
+  assertScreenMetricBatchContract,
+  resolveScreenMetricRoles,
+  resolvedMetricCodes,
+  SCREEN_METRIC_ROLES,
+  throwCatalogContractMismatch,
+  type ScreenMetricCatalogResolution,
+} from "./metric-roles";
 import {
   TAIWAN_STOCK_SCREEN_DEFINITION,
   TAIWAN_STOCK_SCREEN_PRESET,
@@ -66,6 +74,7 @@ type RevenueLike = Pick<
 >;
 type ValuationLike = Pick<ValuationClient, "getDailyMarketValuation">;
 type MetricsLike = Pick<CompanyMetricsBatchClient, "getCompanyMetricsBatch">;
+type CatalogLike = Pick<MopsfinClient, "getCatalog">;
 type ReactionLike = Pick<ReactionClient, "getStockReactionSignals">;
 
 interface ScreenClientDependencies {
@@ -73,6 +82,7 @@ interface ScreenClientDependencies {
   revenue?: RevenueLike;
   valuation?: ValuationLike;
   metrics?: MetricsLike;
+  catalog?: CatalogLike;
   reaction?: ReactionLike;
 }
 
@@ -96,7 +106,10 @@ const DEEP_COMPANY_LIMIT = 10 as const;
 const REACTION_COMPANY_LIMIT = 5 as const;
 const SUMMARY_LIMIT = 25 as const;
 
-export const TAIWAN_STOCK_SCREEN_DEFINITION_VALUE: TaiwanStockScreenDefinition = {
+export function buildTaiwanStockScreenDefinition(
+  metricResolution: ScreenMetricCatalogResolution,
+): TaiwanStockScreenDefinition {
+  return {
   id: TAIWAN_STOCK_SCREEN_DEFINITION,
   preset: TAIWAN_STOCK_SCREEN_PRESET,
   posture: "research_triage_not_recommendation",
@@ -148,7 +161,11 @@ export const TAIWAN_STOCK_SCREEN_DEFINITION_VALUE: TaiwanStockScreenDefinition =
     ],
   },
   evidencePolicies: {
-    financialMetricCodes: [...SCREEN_METRIC_CODES],
+    requiredFinancialMetricRoles: [...SCREEN_METRIC_ROLES],
+    financialMetricCodes: resolvedMetricCodes(metricResolution),
+    resolvedFinancialMetrics: metricResolution.resolvedFinancialMetrics,
+    catalogDiscoveredAt: metricResolution.catalogDiscoveredAt,
+    catalogSnapshotId: metricResolution.catalogSnapshotId,
     financialAlignment: "exact_common_quarter_no_substitution",
     valuationPeerMinimum: 20,
     valuationPeerFallback: "same_industry_then_same_market",
@@ -172,7 +189,8 @@ export const TAIWAN_STOCK_SCREEN_DEFINITION_VALUE: TaiwanStockScreenDefinition =
     "不含市場共識、盈餘預估修正、法人持股／籌碼、新聞與催化劑資料。",
     "一般公司指標不適用金融業，因此產業代號 17 固定排除。",
   ],
-};
+  };
+}
 
 function normalizeQuery(query: TaiwanStockScreenQuery): TaiwanStockScreenQuery {
   if (!(["all", "listed", "otc"] as const).includes(query.market)) {
@@ -308,6 +326,7 @@ export class TaiwanStockScreenClient {
   private readonly revenue: RevenueLike;
   private readonly valuation: ValuationLike;
   private readonly metrics: MetricsLike;
+  private readonly catalog: CatalogLike;
   private readonly reaction: ReactionLike;
 
   constructor(
@@ -318,6 +337,7 @@ export class TaiwanStockScreenClient {
     this.revenue = dependencies.revenue ?? monthlyRevenueClient;
     this.valuation = dependencies.valuation ?? valuationClient;
     this.metrics = dependencies.metrics ?? companyMetricsBatchClient;
+    this.catalog = dependencies.catalog ?? mopsfinClient;
     this.reaction = dependencies.reaction ?? reactionClient;
   }
 
@@ -325,7 +345,7 @@ export class TaiwanStockScreenClient {
     rawQuery: TaiwanStockScreenQuery,
   ): Promise<TaiwanStockScreenResult> {
     const query = normalizeQuery(rawQuery);
-    const [master, latestRevenue, latestValuation] = await Promise.all([
+    const [master, latestRevenue, latestValuation, catalog] = await Promise.all([
       this.companyMaster.listCompanies({
         market: query.market,
         includeFinancial: true,
@@ -342,7 +362,11 @@ export class TaiwanStockScreenClient {
         date: "latest",
         universePolicy: "compatible",
       }),
+      this.catalog.getCatalog(),
     ]);
+    const metricResolution = resolveScreenMetricRoles(catalog);
+    const screenDefinition = buildTaiwanStockScreenDefinition(metricResolution);
+    const metricCodes = resolvedMetricCodes(metricResolution);
 
     const masterByCode = new Map(master.companies.map((company) => [company.code, company]));
     const missingRequestedCodes = (query.companyCodes ?? []).filter(
@@ -459,7 +483,7 @@ export class TaiwanStockScreenClient {
         }),
         this.metrics.getCompanyMetricsBatch({
           companyCodes: deepCodes,
-          metricCodes: [...SCREEN_METRIC_CODES],
+          metricCodes,
           basis: "quarterly",
         }),
       ]);
@@ -491,6 +515,7 @@ export class TaiwanStockScreenClient {
         );
       }
       if (metricsSettled.status === "fulfilled") {
+        assertScreenMetricBatchContract(metricResolution, metricsSettled.value);
         metricsResult = metricsSettled.value;
         const affectedCompanyCodes = [
           ...new Set([
@@ -517,6 +542,20 @@ export class TaiwanStockScreenClient {
           }),
         );
       } else {
+        const metricError = asMopsfinError(metricsSettled.reason);
+        if (
+          metricError.code === "NOT_FOUND" &&
+          metricError.reason === "CATALOG_METRIC_NOT_FOUND"
+        ) {
+          throwCatalogContractMismatch(metricResolution, [
+            {
+              kind: "batch_catalog_race_or_metric_missing",
+              requestedMetricCodes: metricCodes,
+              upstreamCode: metricError.code,
+              upstreamMessage: metricError.message,
+            },
+          ]);
+        }
         dependencyStatus.push(
           dependency({
             stage: "deep",
@@ -556,19 +595,21 @@ export class TaiwanStockScreenClient {
       const metrics = metricsByCode.get(coarse.company.code) ?? null;
       const revenueTrend = trendByCode.get(coarse.company.code) ?? null;
       const financialThroughPeriod = metrics
-        ? financialCommonThroughPeriod(metrics)
+        ? financialCommonThroughPeriod(metrics, metricResolution)
         : null;
       const companyQuality = buildCompanyQualityPillar(
         metrics,
         financialThroughPeriod,
+        metricResolution,
       );
       const fundamentalImprovement = buildFundamentalImprovementPillar(
         metrics,
         revenueTrend,
         financialThroughPeriod,
+        metricResolution,
       );
       const annualRoe = metrics && financialThroughPeriod
-        ? latestAnnualRoe(metrics, financialThroughPeriod)
+        ? latestAnnualRoe(metrics, financialThroughPeriod, metricResolution)
         : null;
       const peerContext = valuationPeerContext(
         coarse.company,
@@ -884,7 +925,7 @@ export class TaiwanStockScreenClient {
           (candidate) => candidate.pillars.marketUnderreactionProxy.status !== "unknown",
         ));
     const warnings = [
-      ...TAIWAN_STOCK_SCREEN_DEFINITION_VALUE.limitations,
+      ...screenDefinition.limitations,
       "四柱是決策 gate；overallScore 只協助排序，不能抵銷任一柱的 fail 或 unknown。",
       "估值百分位採當次 accepted latest rowset 的 deterministic mid-rank；同產業有效樣本不足 20 筆時退回同市場，仍不是歷史估值分位。",
       "粗篩只用最新月營收成長與官方 trailing PE／PB／殖利率；不等於完整基本面評估。",
@@ -910,7 +951,7 @@ export class TaiwanStockScreenClient {
       query,
       generatedAt: this.now().toISOString(),
       timezone: "Asia/Taipei",
-      screenDefinition: TAIWAN_STOCK_SCREEN_DEFINITION_VALUE,
+      screenDefinition,
       asOf: {
         selector: "latest",
         granularity: "mixed",
@@ -952,11 +993,11 @@ export class TaiwanStockScreenClient {
         coarseCompanies: eligibleCompanies.length,
         deepCompanyLimit: DEEP_COMPANY_LIMIT,
         deepCompaniesRequested: deepCodes.length,
-        financialMetricCount: SCREEN_METRIC_CODES.length,
+        financialMetricCount: SCREEN_METRIC_ROLES.length,
         financialMetricComparisonUnits:
           deepCodes.length === 0
             ? 0
-            : Math.ceil(deepCodes.length / 10) * SCREEN_METRIC_CODES.length,
+            : Math.ceil(deepCodes.length / 10) * SCREEN_METRIC_ROLES.length,
         revenueTrendMonths: 6,
         reactionCompanyLimit: REACTION_COMPANY_LIMIT,
         reactionCompaniesRequested: reactionSelected.length,

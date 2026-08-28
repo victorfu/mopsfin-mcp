@@ -9,6 +9,7 @@ on:
         default: corporate-actions
         type: choice
         options:
+          - catalog-screen
           - corporate-actions
           - catalysts
           - all
@@ -33,6 +34,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Run the screening semantic catalog contract
+        if: github.event_name == 'schedule' || inputs.suite == 'catalog-screen'
+        run: npm run test:live:catalog-screen
       - name: Run the focused corporate-action contracts
         if: github.event_name == 'schedule' || inputs.suite == 'corporate-actions'
         run: npm run test:live:corporate-actions

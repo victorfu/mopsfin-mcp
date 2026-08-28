@@ -4659,9 +4659,55 @@ export const screenTaiwanStockCandidatesOutputSchema = z
           .describe("決定哪些公司進入 top-10 深篩的完整透明粗篩規則"),
         evidencePolicies: z
           .object({
+            requiredFinancialMetricRoles: z
+              .tuple([
+                z.literal("roe"),
+                z.literal("net_profit"),
+                z.literal("operating_cashflow"),
+                z.literal("debt_ratio"),
+                z.literal("gross_margin"),
+                z.literal("operating_margin"),
+                z.literal("eps"),
+              ])
+              .describe("screening 內部固定依賴、與上游裸代號解耦的七項財務語意角色"),
             financialMetricCodes: z
               .array(z.string())
-              .describe("深篩固定要求的七項 Mopsfin metric codes"),
+              .length(7)
+              .describe("本次由即時 catalog semantic resolver 解析出的七項正式 Mopsfin metric codes；保留此欄位供相容讀取"),
+            resolvedFinancialMetrics: z
+              .array(
+                z
+                  .object({
+                    role: z.enum([
+                      "roe",
+                      "net_profit",
+                      "operating_cashflow",
+                      "debt_ratio",
+                      "gross_margin",
+                      "operating_margin",
+                      "eps",
+                    ]).describe("screening 內部穩定財務語意角色"),
+                    metricCode: z.string().describe("本次即時 catalog 的正式 metric code"),
+                    metricName: z.string().describe("用於語意核對的 catalog 正式名稱"),
+                    family: z.literal("data").describe("screening 財務指標只允許 family=data"),
+                    unit: z.string().describe("catalog 宣告的來源單位"),
+                    category: z.string().describe("catalog 宣告的指標分類"),
+                    resolutionBasis: z
+                      .enum(["exact_name", "known_code_alias"])
+                      .describe("優先以正式名稱精確解析；已知代號 alias 只作 fallback"),
+                  })
+                  .strict(),
+              )
+              .length(7)
+              .describe("本次七項 role 到正式 catalog metric 的逐項解析證據"),
+            catalogDiscoveredAt: z
+              .string()
+              .datetime({ offset: true })
+              .describe("本次使用的 Mopsfin catalog 在來源端解析完成時間"),
+            catalogSnapshotId: z
+              .string()
+              .regex(/^mopsfin-catalog-[a-f0-9]{64}$/)
+              .describe("由 catalog metric definitions 與期間內容計算的 deterministic SHA-256 identity"),
             financialAlignment: z
               .literal("exact_common_quarter_no_substitution")
               .describe("七項財務指標必須對齊同一季度，缺值不以鄰季代填"),
@@ -4679,6 +4725,36 @@ export const screenTaiwanStockCandidatesOutputSchema = z
               .describe("第四柱只使用 official actual-result factor 移除股數變動機械斷點後的個股報酬與 price index；現金股利效果保留，非 total return"),
           })
           .strict()
+          .superRefine((value, context) => {
+            const roles = value.resolvedFinancialMetrics.map((item) => item.role);
+            const codes = value.resolvedFinancialMetrics.map(
+              (item) => item.metricCode,
+            );
+            if (
+              roles.some(
+                (role, index) =>
+                  role !== value.requiredFinancialMetricRoles[index],
+              )
+            ) {
+              context.addIssue({
+                code: "custom",
+                path: ["resolvedFinancialMetrics"],
+                message: "resolvedFinancialMetrics 必須依 requiredFinancialMetricRoles 唯一且同序排列",
+              });
+            }
+            if (
+              new Set(codes).size !== codes.length ||
+              codes.some(
+                (code, index) => code !== value.financialMetricCodes[index],
+              )
+            ) {
+              context.addIssue({
+                code: "custom",
+                path: ["financialMetricCodes"],
+                message: "financialMetricCodes 必須與 resolvedFinancialMetrics 唯一且同序一致",
+              });
+            }
+          })
           .describe("深度財務、估值同業與 reaction 的固定證據政策"),
         decisionPolicy: z
           .object({

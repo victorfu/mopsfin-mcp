@@ -1,6 +1,6 @@
 {
   "name": "mopsfin-mcp",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
   "description": "A read-only MCP server for Taiwan equity research triage, TWSE/TPEx company universes, market data, and financial data from Mopsfin.",
@@ -14,6 +14,7 @@
     "test:watch": "vitest",
     "test:client": "node scripts/test-client.mjs",
     "test:live": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live",
+    "test:live:catalog-screen": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live/catalog-screen.live.test.ts",
     "test:live:corporate-actions": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live/corporate-actions.live.test.ts",
     "test:live:catalysts": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live/catalysts.live.test.ts tests/live/catalyst-snapshots.live.test.ts"
   },

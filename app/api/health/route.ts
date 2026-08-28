@@ -10,7 +10,7 @@ export function GET() {
     {
       status: "ok",
       service: "mopsfin-taiwan-equities",
-      version: "0.6.1",
+      version: "0.6.2",
       resultContractVersion: "mopsfin.result.v1",
       toolCount: 18,
       readiness: {

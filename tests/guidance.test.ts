@@ -24,7 +24,7 @@ function metric(
 
 describe("LLM-facing official guidance", () => {
   it("routes the new market tools and preserves completeness semantics", () => {
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("v0.6.1");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("v0.6.2");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("共提供 18 個工具");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_daily_market_valuation");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_monthly_revenue");
@@ -33,6 +33,8 @@ describe("LLM-facing official guidance", () => {
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("valueStatus");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("filingCoverage");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("INCOMPLETE_COVERAGE");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("CATALOG_CONTRACT_MISMATCH");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("net_profit");
   });
 
   it("explains official catalyst scope without upgrading disclosures into signals", () => {

@@ -8,6 +8,8 @@ import type {
   CompanyMetricsBatchCompany,
   CompanyMetricsBatchResult,
 } from "@/lib/mopsfin/batch";
+import { MopsfinError } from "@/lib/mopsfin/errors";
+import type { Catalog } from "@/lib/mopsfin/types";
 import type { CompanyReactionSignals } from "@/lib/reaction/types";
 import type {
   MonthlyRevenueResult,
@@ -25,6 +27,7 @@ import {
   valuationPeerContext,
 } from "@/lib/screening/calculations";
 import { TaiwanStockScreenClient } from "@/lib/screening/client";
+import { resolveScreenMetricRoles } from "@/lib/screening/metric-roles";
 import {
   TAIWAN_STOCK_SCREEN_PRESET,
   type ScreenPillar,
@@ -42,6 +45,31 @@ const PERIODS = [
   "2026Q1",
   "2026Q2",
 ] as const;
+
+const SCREEN_CATALOG: Catalog = {
+  metrics: [
+    ["ROE", "權益報酬率", "%"],
+    ["NetProfit", "稅後純益", "新台幣仟元"],
+    ["OperatingCashflow", "營業活動現金流量", "新台幣仟元"],
+    ["DebtRatio", "負債佔資產比率", "%"],
+    ["GrossMargin", "毛利率", "%"],
+    ["OperatingMargin", "營業利益率", "%"],
+    ["EPS", "每股盈餘", "元"],
+  ].map(([code, name, unit]) => ({
+    code: code as string,
+    name: name as string,
+    unit: unit as string,
+    category: "一般公司指標",
+    family: "data" as const,
+  })),
+  industries: [{ code: "24", name: "半導體業" }],
+  financialInstitutions: [],
+  years: [2025, 2026],
+  quarters: [1, 2, 3, 4],
+  discoveredAt: "2026-08-28T00:00:00.000Z",
+};
+
+const SCREEN_METRIC_RESOLUTION = resolveScreenMetricRoles(SCREEN_CATALOG);
 
 function company(code: string, industryCode = "24"): MasterCompany {
   return {
@@ -121,8 +149,8 @@ function metrics(
 ): CompanyMetricsBatchCompany {
   const defaults: Record<string, number[]> = {
     ROE: [10, 10, 12, 12, 12],
-    NetIncome: [8, 10, 10, 10, 10],
-    OperatingCashFlow: [8, 9, 9, 9, 9],
+    NetProfit: [8, 10, 10, 10, 10],
+    OperatingCashflow: [8, 9, 9, 9, 9],
     DebtRatio: [50, 50, 50, 50, 50],
     GrossMargin: [30, 30, 30, 30, 31],
     OperatingMargin: [10, 10, 10, 10, 11],
@@ -134,6 +162,12 @@ function metrics(
     displayName: `${code} 公司${code}`,
     evaluationStatus: "complete",
     metrics: Object.entries(defaults).map(([metricCode, defaultValues]) => {
+      const definition = SCREEN_METRIC_RESOLUTION.resolvedFinancialMetrics.find(
+        (metric) => metric.metricCode === metricCode,
+      );
+      if (!definition) {
+        throw new Error(`Missing screen metric fixture definition for ${metricCode}`);
+      }
       const values = overrides[metricCode] ?? defaultValues;
       const points = PERIODS.map((period, index) => ({
         period,
@@ -143,10 +177,8 @@ function metrics(
       const reported = points.filter((point) => point.valueStatus === "reported");
       return {
         metricCode,
-        metricName: metricCode,
-        unit: ["ROE", "DebtRatio", "GrossMargin", "OperatingMargin"].includes(metricCode)
-          ? "%"
-          : "TWD",
+        metricName: definition.metricName,
+        unit: definition.unit,
         availability: "available",
         periods: [...PERIODS],
         points,
@@ -438,19 +470,25 @@ function candidate(
 
 describe("Taiwan stock screen calculations", () => {
   it("makes company quality pass, fail, or unknown without coercing missing evidence to zero", () => {
-    const passing = buildCompanyQualityPillar(metrics("1101"), "2026Q2");
+    const passing = buildCompanyQualityPillar(
+      metrics("1101"),
+      "2026Q2",
+      SCREEN_METRIC_RESOLUTION,
+    );
     const failing = buildCompanyQualityPillar(
       metrics("1102", {
         ROE: [-1, -1, -1, -1, -1],
-        NetIncome: [-5, -5, -5, -5, -5],
-        OperatingCashFlow: [-5, -5, -5, -5, -5],
+        NetProfit: [-5, -5, -5, -5, -5],
+        OperatingCashflow: [-5, -5, -5, -5, -5],
         DebtRatio: [90, 90, 90, 90, 90],
       }),
       "2026Q2",
+      SCREEN_METRIC_RESOLUTION,
     );
     const withMissingCashFlow = buildCompanyQualityPillar(
-      metrics("1103", { OperatingCashFlow: [8, 9, 9, 9, null] }),
+      metrics("1103", { OperatingCashflow: [8, 9, 9, 9, null] }),
       "2026Q2",
+      SCREEN_METRIC_RESOLUTION,
     );
 
     expect(passing.status).toBe("pass");
@@ -480,7 +518,11 @@ describe("Taiwan stock screen calculations", () => {
       valueStatus: "reported",
     });
 
-    const result = buildCompanyQualityPillar(staleAnnual, "2026Q2");
+    const result = buildCompanyQualityPillar(
+      staleAnnual,
+      "2026Q2",
+      SCREEN_METRIC_RESOLUTION,
+    );
 
     expect(result.status).toBe("unknown");
     expect(result.criteria.find((item) => item.code === "annual_roe")).toMatchObject({
@@ -495,16 +537,19 @@ describe("Taiwan stock screen calculations", () => {
       metrics("1201"),
       trend("1201"),
       "2026Q2",
+      SCREEN_METRIC_RESOLUTION,
     );
     const failing = buildFundamentalImprovementPillar(
       metrics("1202"),
       trend("1202", -5),
       "2026Q2",
+      SCREEN_METRIC_RESOLUTION,
     );
     const unknown = buildFundamentalImprovementPillar(
       metrics("1203", { EPS: [null, 1.2, 1.4, 1.5, 2] }),
       trend("1203"),
       "2026Q2",
+      SCREEN_METRIC_RESOLUTION,
     );
 
     expect(passing.status).toBe("pass");
@@ -869,8 +914,8 @@ function metricsResult(
       companyCodes: codes,
       metricCodes: [
         "ROE",
-        "NetIncome",
-        "OperatingCashFlow",
+        "NetProfit",
+        "OperatingCashflow",
         "DebtRatio",
         "GrossMargin",
         "OperatingMargin",
@@ -881,7 +926,14 @@ function metricsResult(
     },
     retrievedAt: "2026-08-01T00:00:00.000Z",
     snapshotId: "metrics-snapshot",
-    metricDefinitions: [],
+    metricDefinitions: SCREEN_METRIC_RESOLUTION.resolvedFinancialMetrics.map(
+      ({ metricCode: code, metricName: name, unit, category }) => ({
+        code,
+        name,
+        unit,
+        category,
+      }),
+    ),
     companies: resolvedCodes.map((code) => {
       const company = metrics(code);
       if (code !== options.metricUnavailableCompanyCode) return company;
@@ -1057,6 +1109,8 @@ function screenClientFixture(
     reactionCorporateActionIncompleteCompanyCode?: string;
     reactionStockDataUnavailableCompanyCode?: string;
     companyCount?: number;
+    catalog?: Catalog;
+    metricsDefinitionNameDrift?: boolean;
   } = {},
 ) {
   const companies = Array.from({ length: options.companyCount ?? 12 }, (_, index) =>
@@ -1067,12 +1121,20 @@ function screenClientFixture(
   );
   const getCompanyMetricsBatch = options.metricsFailure
     ? vi.fn().mockRejectedValue(options.metricsFailure)
-    : vi.fn(async (query: { companyCodes: string[] }) =>
-        metricsResult(query.companyCodes, {
+    : vi.fn(async (query: { companyCodes: string[] }) => {
+        const result = metricsResult(query.companyCodes, {
           identityUnavailableCompanyCode: options.metricsPartialCompanyCode,
           metricUnavailableCompanyCode: options.metricsPartialMetricCompanyCode,
-        }),
-      );
+        });
+        if (options.metricsDefinitionNameDrift) {
+          result.metricDefinitions = result.metricDefinitions.map((definition) =>
+            definition.code === "NetProfit"
+              ? { ...definition, name: "漂移後獲利名稱" }
+              : definition,
+          );
+        }
+        return result;
+      });
   const getStockReactionSignals = vi.fn(async (query: { companyCodes: string[] }) =>
     reactionResult(query.companyCodes, {
       corporateActionIncompleteCompanyCode:
@@ -1090,6 +1152,7 @@ function screenClientFixture(
       },
       valuation: { getDailyMarketValuation: vi.fn(async () => latestValuation(companies)) },
       metrics: { getCompanyMetricsBatch },
+      catalog: { getCatalog: vi.fn(async () => options.catalog ?? SCREEN_CATALOG) },
       reaction: { getStockReactionSignals },
     },
     () => new Date("2026-08-01T00:00:00.000Z"),
@@ -1133,6 +1196,34 @@ describe("TaiwanStockScreenClient", () => {
       evidencePolicies: {
         reactionPriceBasis:
           "price_index_compatible_corporate_action_adjusted_vs_price_index",
+        requiredFinancialMetricRoles: [
+          "roe",
+          "net_profit",
+          "operating_cashflow",
+          "debt_ratio",
+          "gross_margin",
+          "operating_margin",
+          "eps",
+        ],
+        financialMetricCodes: [
+          "ROE",
+          "NetProfit",
+          "OperatingCashflow",
+          "DebtRatio",
+          "GrossMargin",
+          "OperatingMargin",
+          "EPS",
+        ],
+        resolvedFinancialMetrics: expect.arrayContaining([
+          expect.objectContaining({
+            role: "net_profit",
+            metricCode: "NetProfit",
+            metricName: "稅後純益",
+            family: "data",
+          }),
+        ]),
+        catalogDiscoveredAt: "2026-08-28T00:00:00.000Z",
+        catalogSnapshotId: expect.stringMatching(/^mopsfin-catalog-[a-f0-9]{64}$/),
       },
     });
     expect(result.workBudget.reactionCorporateActionRequests).toBe(3);
@@ -1146,11 +1237,68 @@ describe("TaiwanStockScreenClient", () => {
       expect.objectContaining({ companyCodes: Array.from({ length: 10 }, (_, index) => String(1001 + index)) }),
     );
     expect(fixture.getCompanyMetricsBatch).toHaveBeenCalledWith(
-      expect.objectContaining({ companyCodes: Array.from({ length: 10 }, (_, index) => String(1001 + index)) }),
+      expect.objectContaining({
+        companyCodes: Array.from({ length: 10 }, (_, index) => String(1001 + index)),
+        metricCodes: [
+          "ROE",
+          "NetProfit",
+          "OperatingCashflow",
+          "DebtRatio",
+          "GrossMargin",
+          "OperatingMargin",
+          "EPS",
+        ],
+      }),
     );
     expect(fixture.getStockReactionSignals).toHaveBeenCalledWith(
       expect.objectContaining({ companyCodes: ["1001", "1002"] }),
     );
+  });
+
+  it("fails closed before deep metrics when a required catalog role cannot resolve", async () => {
+    const catalog: Catalog = {
+      ...SCREEN_CATALOG,
+      metrics: SCREEN_CATALOG.metrics.filter(
+        (metric) => metric.code !== "NetProfit",
+      ),
+    };
+    const fixture = screenClientFixture({ catalog });
+
+    await expect(
+      fixture.client.screenTaiwanStockCandidates(SCREEN_QUERY),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "CATALOG_CONTRACT_MISMATCH",
+    });
+    expect(fixture.getCompanyMetricsBatch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a fulfilled batch no longer matches its catalog resolution", async () => {
+    const fixture = screenClientFixture({ metricsDefinitionNameDrift: true });
+
+    await expect(
+      fixture.client.screenTaiwanStockCandidates(SCREEN_QUERY),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "CATALOG_CONTRACT_MISMATCH",
+    });
+  });
+
+  it("converts a batch catalog race into the semantic contract error", async () => {
+    const fixture = screenClientFixture({
+      metricsFailure: new MopsfinError(
+        "NOT_FOUND",
+        "找不到 family=data 的 metric_code NetProfit；請先呼叫 list_catalog。",
+        { reason: "CATALOG_METRIC_NOT_FOUND" },
+      ),
+    });
+
+    await expect(
+      fixture.client.screenTaiwanStockCandidates(SCREEN_QUERY),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "CATALOG_CONTRACT_MISMATCH",
+    });
   });
 
   it("retains the coarse funnel but never ranks companies after a deep dependency failure", async () => {

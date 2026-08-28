@@ -14,16 +14,10 @@ import type {
   ScreenPillar,
   TaiwanStockScreenCandidate,
 } from "./types";
-
-export const SCREEN_METRIC_CODES = [
-  "ROE",
-  "NetIncome",
-  "OperatingCashFlow",
-  "DebtRatio",
-  "GrossMargin",
-  "OperatingMargin",
-  "EPS",
-] as const;
+import type {
+  ScreenMetricCatalogResolution,
+  ScreenMetricRole,
+} from "./metric-roles";
 
 const EPSILON = 1e-9;
 
@@ -192,11 +186,16 @@ export function shiftQuarter(period: string, delta: number): string | null {
   return index === null ? null : quarterFromIndex(index + delta);
 }
 
-function metricByCode(
+export function metricByRole(
   company: CompanyMetricsBatchCompany,
-  code: (typeof SCREEN_METRIC_CODES)[number],
+  resolution: ScreenMetricCatalogResolution,
+  role: ScreenMetricRole,
 ): CompanyMetricsBatchMetric | null {
-  return company.metrics.find((metric) => metric.metricCode === code) ?? null;
+  const metricCode = resolution.resolvedFinancialMetrics.find(
+    (metric) => metric.role === role,
+  )?.metricCode;
+  if (!metricCode) return null;
+  return company.metrics.find((metric) => metric.metricCode === metricCode) ?? null;
 }
 
 function reportedValue(metric: CompanyMetricsBatchMetric | null, period: string): number | null {
@@ -217,8 +216,11 @@ function reportedPeriods(metric: CompanyMetricsBatchMetric): Set<string> {
 
 export function financialCommonThroughPeriod(
   company: CompanyMetricsBatchCompany,
+  resolution: ScreenMetricCatalogResolution,
 ): string | null {
-  const metrics = SCREEN_METRIC_CODES.map((code) => metricByCode(company, code));
+  const metrics = resolution.requiredFinancialMetricRoles.map((role) =>
+    metricByRole(company, resolution, role)
+  );
   if (metrics.some((metric) => metric === null)) return null;
   const [first, ...rest] = metrics as CompanyMetricsBatchMetric[];
   const common = [...reportedPeriods(first)].filter((period) =>
@@ -230,9 +232,10 @@ export function financialCommonThroughPeriod(
 export function latestAnnualRoe(
   company: CompanyMetricsBatchCompany,
   throughPeriod: string,
+  resolution: ScreenMetricCatalogResolution,
 ): { period: string; value: number } | null {
   const through = quarterIndex(throughPeriod);
-  const metric = metricByCode(company, "ROE");
+  const metric = metricByRole(company, resolution, "roe");
   if (through === null || !metric) return null;
   const throughYear = Math.floor(through / 4);
   const throughQuarter = (through % 4) + 1;
@@ -262,18 +265,25 @@ function exactValues(
 export function buildCompanyQualityPillar(
   company: CompanyMetricsBatchCompany | null,
   throughPeriod: string | null,
+  resolution: ScreenMetricCatalogResolution,
 ): ScreenPillar {
   if (!company || !throughPeriod) {
     return unknownPillar("company_quality", "好公司", "financial_common_period_unavailable");
   }
   const ttmPeriods = exactTrailingPeriods(throughPeriod, 4) as string[];
-  const roe = latestAnnualRoe(company, throughPeriod);
-  const netIncome = exactValues(metricByCode(company, "NetIncome"), ttmPeriods);
-  const operatingCashFlow = exactValues(
-    metricByCode(company, "OperatingCashFlow"),
+  const roe = latestAnnualRoe(company, throughPeriod, resolution);
+  const netIncome = exactValues(
+    metricByRole(company, resolution, "net_profit"),
     ttmPeriods,
   );
-  const debtRatio = reportedValue(metricByCode(company, "DebtRatio"), throughPeriod);
+  const operatingCashFlow = exactValues(
+    metricByRole(company, resolution, "operating_cashflow"),
+    ttmPeriods,
+  );
+  const debtRatio = reportedValue(
+    metricByRole(company, resolution, "debt_ratio"),
+    throughPeriod,
+  );
   const ttmNetIncome = netIncome?.reduce((sum, value) => sum + value, 0) ?? null;
   const positiveNetIncomeQuarters = netIncome?.filter((value) => value > 0).length ?? null;
   const ttmOperatingCashFlow =
@@ -305,7 +315,7 @@ export function buildCompanyQualityPillar(
             ? "pass"
             : "fail",
       value: ttmNetIncome,
-      unit: metricByCode(company, "NetIncome")?.unit ?? "source_unit",
+      unit: metricByRole(company, resolution, "net_profit")?.unit ?? "source_unit",
       periods: ttmPeriods,
       rule: "TTM > 0 且至少三季為正",
       weight: 25,
@@ -390,6 +400,7 @@ export function buildFundamentalImprovementPillar(
   company: CompanyMetricsBatchCompany | null,
   trend: MonthlyRevenueTrendCompany | null,
   throughPeriod: string | null,
+  resolution: ScreenMetricCatalogResolution,
 ): ScreenPillar {
   if (!company || !trend || !throughPeriod) {
     return unknownPillar(
@@ -414,16 +425,17 @@ export function buildFundamentalImprovementPillar(
     ? derived.yoyAccelerationVs3MonthsAgoPp
     : null;
   const operatingMargin = exactYearOverYearChange(
-    metricByCode(company, "OperatingMargin"),
+    metricByRole(company, resolution, "operating_margin"),
     throughPeriod,
   );
   const grossMargin = exactYearOverYearChange(
-    metricByCode(company, "GrossMargin"),
+    metricByRole(company, resolution, "gross_margin"),
     throughPeriod,
   );
   const priorYearPeriod = shiftQuarter(throughPeriod, -4) as string;
-  const epsLatest = reportedValue(metricByCode(company, "EPS"), throughPeriod);
-  const epsPriorYear = reportedValue(metricByCode(company, "EPS"), priorYearPeriod);
+  const epsMetric = metricByRole(company, resolution, "eps");
+  const epsLatest = reportedValue(epsMetric, throughPeriod);
+  const epsPriorYear = reportedValue(epsMetric, priorYearPeriod);
   const epsKnown = epsLatest !== null && epsPriorYear !== null;
 
   const criteria = [
@@ -496,7 +508,7 @@ export function buildFundamentalImprovementPillar(
           ? "pass"
           : "fail",
       value: epsLatest,
-      unit: metricByCode(company, "EPS")?.unit ?? "source_unit",
+      unit: epsMetric?.unit ?? "source_unit",
       periods: epsKnown ? [priorYearPeriod, throughPeriod] : [],
       rule: "EPS > 0 且高於去年同季",
       weight: 20,
