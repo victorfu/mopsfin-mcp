@@ -757,6 +757,11 @@ export const financialStatementOutputSchema = z
       .strict()
       .describe("實際執行的財報查詢條件"),
     unit: z.string().describe("Mopsfin 報表金額單位；常見為新台幣仟元，回答時必須保留"),
+    unitSource: z
+      .enum(["response_html", "catalog", "unavailable"])
+      .describe(
+        "報表金額單位的解析來源；response_html 優先代表本次回應明示，catalog 為目錄 fallback，unavailable 表示上游兩處都未宣告",
+      ),
     period: periodSchema.describe("已核對上游回應後的實際期別"),
     reportNames: z.array(z.string()).describe("上游回應內辨識出的報表名稱"),
     tables: z.array(tableSchema).describe("本頁正規化並展開合併儲存格後的表格"),
@@ -831,4 +836,3 @@ export const financialInstitutionOutputSchema = z
     ...warningShape,
   })
   .strict();
-

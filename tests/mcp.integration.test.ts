@@ -26,6 +26,7 @@ import {
   stockPriceSeriesOutputSchema,
   stockReactionSignalsInputSchema,
   stockReactionSignalsOutputSchema,
+  valuationModelInputsInputSchema,
 } from "@/lib/mcp/schemas";
 import { buildResultMeta } from "@/lib/mcp/result-contract";
 import { PUBLIC_TOOL_NAMES, TOOL_COUNT } from "@/lib/mcp/tool-manifest";
@@ -42,6 +43,13 @@ import { monthlyRevenueClient } from "@/lib/revenue/client";
 import type { MonthlyRevenueTrendResult } from "@/lib/revenue/types";
 import { SERVER_VERSION } from "@/lib/server/identity";
 import { valuationClient } from "@/lib/valuation/client";
+import { valuationModelInputsClient } from "@/lib/valuation-model/client";
+import type {
+  ValuationModelFieldId,
+  ValuationModelInputFields,
+  ValuationModelInputsResult,
+  ValuationModelUnit,
+} from "@/lib/valuation-model/types";
 
 const source = {
   sourceName: "公開資訊觀測站－財務比較 E 點通",
@@ -49,6 +57,215 @@ const source = {
   retrievedAt: "2026-08-24T00:00:00.000Z",
   upstreamRoute: "/compare/data",
   freshnessNote: "原站每日更新一次，資料可能較最新申報落後約一日。",
+};
+
+const valuationModelFieldIds = [
+  "ttmRevenue",
+  "ttmOperatingIncomeEbitProxy",
+  "cashTaxRatePercent",
+  "ttmDepreciationAndAmortization",
+  "ttmCapitalExpenditure",
+  "ttmDeltaNetWorkingCapital",
+  "normalizedFcff",
+  "cashAndCashEquivalents",
+  "interestBearingDebt",
+  "netDebt",
+  "issuedShares",
+  "latestOfficialClose",
+  "marketCapitalization",
+  "enterpriseValue",
+] as const satisfies readonly ValuationModelFieldId[];
+
+function valuationModelUnit(id: ValuationModelFieldId): ValuationModelUnit {
+  if (id === "cashTaxRatePercent") return "percent";
+  if (id === "issuedShares") return "share";
+  if (id === "latestOfficialClose") return "TWD_per_share";
+  return "TWD";
+}
+
+const valuationModelDataGapFields = Object.fromEntries(
+  valuationModelFieldIds.map((id) => [
+    id,
+    {
+      id,
+      value: null,
+      unit: valuationModelUnit(id),
+      status: "data_gap" as const,
+      evidenceClass: "UNAVAILABLE" as const,
+      formula: null,
+      inputFieldIds: [],
+      inputLineageIds: ["lineage:001"],
+      dataGapReason: "SOURCE_DEPENDENCY_FAILED" as const,
+      notes: ["fixture dependency gap; value remains null and is not zero-filled"],
+    },
+  ]),
+) as unknown as ValuationModelInputFields;
+
+const valuationModelInputs: ValuationModelInputsResult = {
+  query: {
+    companyCode: "2330",
+    financialPeriod: "latest",
+    priceDate: "latest_completed_official_session",
+  },
+  generatedAt: "2026-08-28T02:00:00.000Z",
+  timezone: "Asia/Taipei",
+  currency: "TWD",
+  scope: "normalized_valuation_model_inputs",
+  posture: "research_model_input_evidence_only",
+  applicability: { status: "applicable", reason: null },
+  company: {
+    code: "2330",
+    name: "台灣積體電路製造股份有限公司",
+    shortName: "台積電",
+    market: "listed",
+    exchange: "TWSE",
+    industryCode: "24",
+    isFinancial: false,
+  },
+  periods: {
+    latestReportedPeriod: "2026Q2",
+    ttmMethod: "current_ytd_plus_prior_fy_minus_prior_year_ytd",
+    currentYtdPeriod: "2026Q2",
+    priorFiscalYearPeriod: "2025Q4",
+    priorYearYtdPeriod: "2025Q2",
+    fiscalYearBasis: "mopsfin_calendar_year_quarters",
+    consolidationScope: "consolidated",
+  },
+  fields: valuationModelDataGapFields,
+  lineage: [
+    {
+      lineageId: "lineage:001",
+      role: "fixture_dependency_attempt",
+      status: "missing",
+      sourceId: "statement:income_statement:2026Q2",
+      statement: "income_statement",
+      period: "2026Q2",
+      rowLabel: null,
+      rawValue: null,
+      normalizedValue: null,
+      unit: "TWD",
+      candidateRowLabels: [],
+      notes: ["fixture search attempt"],
+    },
+  ],
+  sources: [
+    {
+      sourceId: "company_master:listed:2026-08-28",
+      stage: "company_master",
+      market: "listed",
+      exchange: "TWSE",
+      sourceName: "TWSE company master fixture",
+      sourceUrl: "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+      reportDate: "2026-08-28",
+      asOf: "2026-08-28",
+      asOfGranularity: "date",
+      retrievedAt: "2026-08-28T01:00:00.000Z",
+    },
+    {
+      sourceId: "statement:income_statement:2026Q2",
+      stage: "statement",
+      sourceName: "Mopsfin statement fixture",
+      sourceUrl: "https://mopsfin.twse.com.tw/",
+      retrievedAt: "2026-08-28T01:02:03.000Z",
+      upstreamRoute: "/compare/report",
+      statement: "income_statement",
+      period: "2026Q2",
+      asOf: "2026Q2",
+      asOfGranularity: "quarter",
+      reportName: "2330 台積電 (上市半導體業)",
+      rawUnit: "新台幣仟元",
+      unitSource: "response_html",
+      normalizedUnit: "TWD",
+      amountMultiplier: 1000,
+      consolidationScope: "consolidated",
+    },
+    {
+      sourceId: "market_valuation:listed:2026-08-27:1",
+      stage: "market_valuation",
+      market: "listed",
+      exchange: "TWSE",
+      sourceName: "TWSE exact-day valuation fixture",
+      sourceUrl: "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d",
+      retrievedAt: "2026-08-28T01:03:00.000Z",
+      dataDate: "2026-08-27",
+      asOf: "2026-08-27",
+      asOfGranularity: "date",
+    },
+  ],
+  quality: {
+    calculationComplete: false,
+    dataGapFields: [...valuationModelFieldIds],
+    notApplicableFields: [],
+  },
+  workBudget: {
+    requestedCompanies: 1,
+    orchestrationCompanyMasterCalls: 1,
+    statementCalls: { actual: 3, maximum: 7, rowsPerCallMaximum: 500 },
+    valuationDependencyCalls: {
+      actual: 1,
+      maximum: 1,
+      internalCurrentMasterPolicy: "strict_current_master",
+    },
+  },
+  warnings: ["fixture contains deliberate data gaps"],
+};
+
+const valuationModelNotApplicableFields = Object.fromEntries(
+  valuationModelFieldIds.map((id) => [
+    id,
+    {
+      id,
+      value: null,
+      unit: valuationModelUnit(id),
+      status: "not_applicable" as const,
+      evidenceClass: "UNAVAILABLE" as const,
+      formula: null,
+      inputFieldIds: [],
+      inputLineageIds: [],
+      dataGapReason: "NOT_APPLICABLE_FINANCIAL_COMPANY" as const,
+      notes: ["financial company requires a dedicated model"],
+    },
+  ]),
+) as unknown as ValuationModelInputFields;
+
+const financialValuationModelInputs: ValuationModelInputsResult = {
+  ...valuationModelInputs,
+  applicability: {
+    status: "not_applicable",
+    reason: "financial_company_requires_residual_income_or_dividend_model",
+  },
+  company: {
+    ...valuationModelInputs.company,
+    industryCode: "17",
+    isFinancial: true,
+  },
+  periods: {
+    latestReportedPeriod: null,
+    ttmMethod: "unavailable",
+    currentYtdPeriod: null,
+    priorFiscalYearPeriod: null,
+    priorYearYtdPeriod: null,
+    fiscalYearBasis: "mopsfin_calendar_year_quarters",
+    consolidationScope: null,
+  },
+  fields: valuationModelNotApplicableFields,
+  lineage: [],
+  sources: [valuationModelInputs.sources[0]],
+  quality: {
+    calculationComplete: false,
+    dataGapFields: [],
+    notApplicableFields: [...valuationModelFieldIds],
+  },
+  workBudget: {
+    ...valuationModelInputs.workBudget,
+    statementCalls: { actual: 0, maximum: 7, rowsPerCallMaximum: 500 },
+    valuationDependencyCalls: {
+      actual: 0,
+      maximum: 1,
+      internalCurrentMasterPolicy: "strict_current_master",
+    },
+  },
+  warnings: ["financial company is not applicable to FCFF DCF"],
 };
 
 const catalystEvents: CompanyCatalystEventsResult = {
@@ -629,6 +846,7 @@ const table = {
     period: "2026Q1",
   },
   unit: "新台幣仟元",
+  unitSource: "response_html" as const,
   period: "2026Q1",
   reportNames: ["資產負債表"],
   tables: [
@@ -2145,6 +2363,21 @@ describe("MCP protocol integration", () => {
       Array.from({ length: count }, (_, index) => String(1000 + index));
 
     expect(
+      valuationModelInputsInputSchema.safeParse({ company_code: "2330" })
+        .success,
+    ).toBe(true);
+    expect(
+      valuationModelInputsInputSchema.safeParse({ company_code: "TSMC" })
+        .success,
+    ).toBe(false);
+    expect(
+      valuationModelInputsInputSchema.safeParse({
+        company_code: "2330",
+        wacc: 9,
+      }).success,
+    ).toBe(false);
+
+    expect(
       companyMetricsBatchInputSchema.safeParse({
         company_codes: codes(100),
         metric_codes: Array.from({ length: 8 }, (_, index) => `M${index}`),
@@ -2433,6 +2666,10 @@ describe("MCP protocol integration", () => {
     vi.spyOn(valuationClient, "getDailyMarketValuation").mockResolvedValue(
       dailyMarketValuation,
     );
+    const valuationModelInputsSpy = vi.spyOn(
+      valuationModelInputsClient,
+      "getValuationModelInputs",
+    ).mockResolvedValue(valuationModelInputs);
     vi.spyOn(monthlyRevenueClient, "getMonthlyRevenue").mockResolvedValue(
       monthlyRevenue,
     );
@@ -2567,6 +2804,7 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("get_stock_price_series");
     expect(client.getInstructions()).toContain("raw_unadjusted");
     expect(client.getInstructions()).toContain("get_daily_market_valuation");
+    expect(client.getInstructions()).toContain("get_valuation_model_inputs");
     expect(client.getInstructions()).toContain("get_monthly_revenue");
     expect(client.getInstructions()).toContain("get_monthly_revenue_trend");
     expect(client.getInstructions()).toContain("get_stock_reaction_signals");
@@ -2750,6 +2988,18 @@ describe("MCP protocol integration", () => {
     });
     expect(valuationTool?.inputSchema.properties?.universe_policy).toMatchObject({
       default: "compatible",
+    });
+    const valuationModelTool = listed.tools.find(
+      (tool) => tool.name === "get_valuation_model_inputs",
+    );
+    expect(valuationModelTool?.description).toContain("data_gap/null");
+    expect(valuationModelTool?.description).toContain("point-in-time filing vintage");
+    expect(valuationModelTool?.description).toContain("fully diluted shares");
+    expect(valuationModelTool?.description).toContain("不執行 DCF");
+    expect(valuationModelTool?.inputSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["company_code"],
     });
     const revenueTool = listed.tools.find(
       (tool) => tool.name === "get_monthly_revenue",
@@ -3010,6 +3260,7 @@ describe("MCP protocol integration", () => {
         },
       ],
       ["get_daily_market_valuation", { market: "all" }],
+      ["get_valuation_model_inputs", { company_code: "2330" }],
       ["get_monthly_revenue", { market: "all" }],
       [
         "get_monthly_revenue_trend",
@@ -3429,6 +3680,79 @@ describe("MCP protocol integration", () => {
             dividendPerShareTwd: null,
             referenceFiscalPeriod: "2026Q2",
           },
+        });
+      }
+      if (name === "get_valuation_model_inputs") {
+        const structured = result.structuredContent as {
+          meta: {
+            asOf: {
+              selector: string;
+              resolved: {
+                granularity: string;
+                from: string | null;
+                through: string | null;
+              };
+            };
+            quality: {
+              source: string;
+              values: string;
+              freshness: string;
+              freshnessDetails: Array<{ policyId: string; status: string }>;
+              issues: Array<{ code: string }>;
+            };
+          };
+          quality: { dataGapFields: string[] };
+          fields: Record<string, { value: number | null; status: string }>;
+          workBudget: {
+            statementCalls: { actual: number; maximum: number };
+          };
+        };
+        expect(structured.meta.asOf).toMatchObject({
+          selector: "latest",
+          resolved: {
+            granularity: "mixed",
+            from: null,
+            through: null,
+          },
+        });
+        expect(structured.meta.quality).toMatchObject({
+          source: "partial",
+          values: "partial",
+          freshness: "unknown",
+        });
+        expect(structured.meta.quality.freshnessDetails).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              policyId: "mopsfin.latest-unverified.v1",
+              status: "unknown",
+            }),
+            expect.objectContaining({
+              policyId: "official.completed-session.v1",
+              status: "unknown",
+            }),
+          ]),
+        );
+        expect(structured.meta.quality.issues.map((issue) => issue.code)).toEqual(
+          expect.arrayContaining([
+            "VALUATION_MODEL_DATA_GAP",
+            "VALUATION_MODEL_EVIDENCE_CLASSES",
+            "FINANCIAL_STATEMENT_CURRENT_VIEW_NOT_POINT_IN_TIME",
+            "DATA_GAPS_NOT_ZERO_FILLED",
+            "ISSUED_SHARES_NOT_DILUTED",
+            "SOURCE_DEPENDENCY_INCOMPLETE",
+            "FRESHNESS_UNVERIFIED",
+          ]),
+        );
+        expect(structured.quality.dataGapFields).toHaveLength(14);
+        expect(
+          Object.values(structured.fields).every(
+            (field) => field.status === "data_gap" && field.value === null,
+          ),
+        ).toBe(true);
+        expect(structured.workBudget.statementCalls).toEqual({
+          actual: 3,
+          maximum: 7,
+          rowsPerCallMaximum: 500,
         });
       }
       if (name === "get_monthly_revenue") {
@@ -3993,6 +4317,42 @@ describe("MCP protocol integration", () => {
         ]);
       }
     }
+
+    valuationModelInputsSpy.mockResolvedValueOnce(
+      financialValuationModelInputs,
+    );
+    const financialModelResult = await client.callTool({
+      name: "get_valuation_model_inputs",
+      arguments: { company_code: "2881" },
+    });
+    const financialModelStructured = financialModelResult.structuredContent as {
+      applicability: { status: string };
+      meta: { quality: { values: string; issues: Array<{ code: string }> } };
+    };
+    expect(financialModelStructured.applicability.status).toBe(
+      "not_applicable",
+    );
+    expect(financialModelStructured.meta.quality.values).toBe(
+      "not_applicable",
+    );
+    const financialIssueCodes = financialModelStructured.meta.quality.issues.map(
+      (issue) => issue.code,
+    );
+    expect(financialIssueCodes).toEqual(
+      expect.arrayContaining([
+        "VALUATION_MODEL_NOT_APPLICABLE",
+        "VALUATION_MODEL_EVIDENCE_CLASSES",
+        "DATA_GAPS_NOT_ZERO_FILLED",
+      ]),
+    );
+    expect(financialIssueCodes).not.toEqual(
+      expect.arrayContaining([
+        "FINANCIAL_STATEMENT_CURRENT_VIEW_NOT_POINT_IN_TIME",
+        "ISSUED_SHARES_NOT_DILUTED",
+        "HISTORICAL_FCFF_PROXY_NOT_FORECAST",
+        "CAPEX_PPE_ACQUISITION_ONLY",
+      ]),
+    );
 
     expect(priceSeriesSpy).toHaveBeenCalledOnce();
     expect(priceSeriesSpy).toHaveBeenCalledWith({

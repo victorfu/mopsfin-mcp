@@ -10,6 +10,7 @@ export const PUBLIC_TOOL_NAMES = [
   "screen_taiwan_stock_candidates",
   "screen_taiwan_stock_candidates_with_catalyst_snapshots",
   "get_daily_market_valuation",
+  "get_valuation_model_inputs",
   "get_monthly_revenue",
   "get_monthly_revenue_trend",
   "list_companies",

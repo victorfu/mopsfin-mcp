@@ -258,6 +258,10 @@ function canonicalIdentity(value: string): string {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
+function canonicalReportUnit(value: string): string {
+  return canonicalIdentity(value).replace(/仟/g, "千");
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -1106,6 +1110,26 @@ export class MopsfinClient {
       companyDisplayNames: companies.map((company) => company.displayName),
     });
     const paginated = paginateTables(result.parsed, options.page.offset, options.page.limit);
+    const responseUnit = result.parsed.unit?.trim() ?? "";
+    const catalogUnit = options.metric.unit.trim();
+    if (
+      responseUnit &&
+      catalogUnit &&
+      canonicalReportUnit(responseUnit) !== canonicalReportUnit(catalogUnit)
+    ) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        "Mopsfin 報表 HTML 與 catalog 宣告的單位不一致。",
+        {
+          reason: "STATEMENT_UNIT_MISMATCH",
+          category: "upstream",
+          retryable: false,
+          action: "none",
+          details: { responseUnit, catalogUnit, period: result.period },
+        },
+      );
+    }
+    const unit = responseUnit || catalogUnit;
 
     return {
       ...this.source(options.route, result.retrievedAt, result.cache),
@@ -1115,7 +1139,12 @@ export class MopsfinClient {
         companies: companies.map((company) => company.displayName),
         period: result.period,
       },
-      unit: options.metric.unit,
+      unit,
+      unitSource: responseUnit
+        ? "response_html" as const
+        : catalogUnit
+          ? "catalog" as const
+          : "unavailable" as const,
       period: result.period,
       reportNames: result.parsed.reportNames,
       tables: paginated.tables,

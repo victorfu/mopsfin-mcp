@@ -15,6 +15,7 @@ describe("Mopsfin HTML table normalization", () => {
     const parsed = parseHtmlTables(fixture);
 
     expect(parsed.period).toBe("20261");
+    expect(parsed.unit).toBe("新台幣仟元");
     expect(parsed.reportNames).toEqual(["資產負債表"]);
     expect(parsed.tables).toHaveLength(1);
     expect(parsed.tables[0].headers).toEqual([
@@ -50,5 +51,21 @@ describe("Mopsfin HTML table normalization", () => {
     expect(() => parseHtmlTables("x".repeat(8_000_001))).toThrowError(
       /回應大小超出安全上限/,
     );
+  });
+
+  it("rejects conflicting units rendered in one upstream response", () => {
+    expect(() =>
+      parseHtmlTables(
+        "<body><span>金額單位：新台幣仟元</span><span>金額單位：美元</span></body>",
+      ),
+    ).toThrowError(/多個互相衝突的報表單位/);
+  });
+
+  it("does not mistake unrelated note units for the report amount unit", () => {
+    const parsed = parseHtmlTables(
+      "<body><p>數量單位：股</p><p>比率單位：%</p><table><tr><td>x</td></tr></table></body>",
+    );
+
+    expect(parsed.unit).toBeUndefined();
   });
 });

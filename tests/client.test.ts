@@ -62,6 +62,8 @@ describe("MopsfinClient", () => {
     });
 
     expect(result.period).toBe("2026Q1");
+    expect(result.unit).toBe("新台幣仟元");
+    expect(result.unitSource).toBe("response_html");
     expect(result.query.companies).toEqual(["2330 台積電"]);
     expect(result.pagination.totalRows).toBe(2);
     expect(result).toMatchObject({
@@ -99,6 +101,36 @@ describe("MopsfinClient", () => {
         page: { offset: 0, limit: 100 },
       }),
     ).rejects.toMatchObject({ code: "NO_DATA" });
+  });
+
+  it("rejects a report when catalog and response HTML declare conflicting units", async () => {
+    const conflictingCatalog = catalogHtml.replace(
+      'name="BalanceSheet" label="新台幣仟元"',
+      'name="BalanceSheet" label="美元"',
+    );
+    const fetchMock = vi.fn(async (url: URL | RequestInfo) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/") return response(conflictingCatalog);
+      if (parsed.pathname === "/suggestCompany") {
+        return response(JSON.stringify({ suggestions: ["2330 台積電"] }));
+      }
+      return response(reportHtml);
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, { retryDelayMs: 0 }),
+    );
+
+    await expect(
+      client.getFinancialStatement({
+        statement: "balance_sheet",
+        companyCodes: ["2330"],
+        period: "2026Q1",
+        page: { offset: 0, limit: 100 },
+      }),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "STATEMENT_UNIT_MISMATCH",
+    });
   });
 
   it("reports invalid company-search JSON as an upstream error", async () => {

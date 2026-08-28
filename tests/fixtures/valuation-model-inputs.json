@@ -1,0 +1,107 @@
+{
+  "company": {
+    "code": "2330",
+    "name": "台灣積體電路製造股份有限公司",
+    "shortName": "台積電",
+    "market": "listed",
+    "exchange": "TWSE",
+    "industryCode": "24",
+    "listingDate": "1994-09-05",
+    "incorporationDate": "1987-02-21",
+    "paidInCapitalTwd": 259320710000,
+    "issuedCommonShares": 25932071458,
+    "parValueText": "新台幣 10.0000元",
+    "financialReportTypeCode": "1",
+    "profileValueStatus": {
+      "incorporationDate": "reported",
+      "paidInCapitalTwd": "reported",
+      "issuedCommonShares": "reported",
+      "parValueText": "reported",
+      "financialReportTypeCode": "reported"
+    },
+    "domicileCode": "TW",
+    "isKy": false,
+    "isFinancial": false
+  },
+  "statementPeriods": {
+    "latest": "2026Q2",
+    "priorFiscalYear": "2025Q4",
+    "priorYearYtd": "2025Q2"
+  },
+  "statements": {
+    "2026Q2": {
+      "income_statement": {
+        "labels": [
+          "營業收入合計",
+          "營業利益（損失）",
+          "稅前淨利（淨損）"
+        ],
+        "values": ["2,400", "1,425", "1,550"]
+      },
+      "cash_flow": {
+        "labels": [
+          "退還（支付）之所得稅",
+          "折舊費用",
+          "攤銷費用",
+          "與營業活動相關之資產及負債之淨變動合計",
+          "取得不動產、廠房及設備"
+        ],
+        "values": ["-190", "359", "4", "-116", "-846"]
+      },
+      "balance_sheet": {
+        "labels": [
+          "現金及約當現金",
+          "應付公司債",
+          "長期借款",
+          "租賃負債－非流動"
+        ],
+        "values": ["3,134", "815", "49", "33"]
+      }
+    },
+    "2025Q4": {
+      "income_statement": {
+        "labels": [
+          "營業收入合計",
+          "營業利益（損失）",
+          "稅前淨利（淨損）"
+        ],
+        "values": ["3,809", "1,936", "2,041"]
+      },
+      "cash_flow": {
+        "labels": [
+          "退還（支付）之所得稅",
+          "折舊費用",
+          "攤銷費用",
+          "與營業活動相關之資產及負債之淨變動合計",
+          "取得不動產、廠房及設備"
+        ],
+        "values": ["-250", "679", "8", "-96", "-1,272"]
+      }
+    },
+    "2025Q2": {
+      "income_statement": {
+        "labels": [
+          "營業收入合計",
+          "營業利益（損失）",
+          "稅前淨利（淨損）"
+        ],
+        "values": ["1,773", "870", "923"]
+      },
+      "cash_flow": {
+        "labels": [
+          "退還（支付）之所得稅",
+          "折舊費用",
+          "攤銷費用",
+          "與營業活動相關之資產及負債之淨變動合計",
+          "取得不動產、廠房及設備"
+        ],
+        "values": ["-128", "359", "4", "24", "-628"]
+      }
+    }
+  },
+  "latestValuation": {
+    "dataDate": "2026-08-27",
+    "closePriceTwd": 2000,
+    "rawClosePrice": "2,000.00"
+  }
+}

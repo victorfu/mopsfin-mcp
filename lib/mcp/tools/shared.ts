@@ -71,6 +71,8 @@ export {
   stockReactionSignalsOutputSchema,
   stockOhlcInputSchema,
   stockOhlcOutputSchema,
+  valuationModelInputsInputSchema,
+  valuationModelInputsOutputSchema,
 } from "../schemas";
 
 export const annotations = {

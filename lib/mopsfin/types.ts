@@ -105,6 +105,8 @@ export interface NormalizedTable {
 
 export interface ParsedHtmlResponse {
   period?: string;
+  /** Amount unit explicitly rendered in the upstream HTML, when present. */
+  unit?: string;
   reportNames: string[];
   tables: NormalizedTable[];
   totalRows: number;

@@ -50,6 +50,32 @@ function cleanText(value: string): string {
   return value.replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function extractAmountUnit($: ReturnType<typeof load>): string | undefined {
+  const visibleText = cleanText($("body").text());
+  const candidates = [
+    ...visibleText.matchAll(
+      /金額單位\s*[：:]\s*([^()（）<>\s]*?(?:元|股|％|%))(?=金額單位|[()（）<>\s]|$)/g,
+    ),
+  ]
+    .map((match) => cleanText(match[1]))
+    .filter(Boolean);
+  const unique = [...new Set(candidates)];
+  if (unique.length > 1) {
+    throw new MopsfinError(
+      "UPSTREAM_BAD_RESPONSE",
+      "Mopsfin HTML 同時宣告多個互相衝突的報表單位。",
+      {
+        reason: "STATEMENT_UNIT_AMBIGUOUS",
+        category: "upstream",
+        retryable: false,
+        action: "none",
+        details: { units: unique },
+      },
+    );
+  }
+  return unique[0];
+}
+
 function expandRows(
   $: ReturnType<typeof load>,
   rowElements: ReturnType<ReturnType<typeof load>>,
@@ -185,8 +211,10 @@ export function parseHtmlTables(html: string): ParsedHtmlResponse {
       }
     });
 
+  const unit = extractAmountUnit($);
   return {
     period,
+    ...(unit ? { unit } : {}),
     reportNames,
     tables,
     totalRows: tables.reduce((sum, table) => sum + table.rows.length, 0),

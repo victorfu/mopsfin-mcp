@@ -37,6 +37,12 @@ export {
 } from "./schema/valuation";
 
 export {
+  valuationModelInputsDataSchema,
+  valuationModelInputsInputSchema,
+  valuationModelInputsOutputSchema,
+} from "./schema/valuation-model";
+
+export {
   stockPriceSeriesInputSchema,
   stockPriceSeriesOutputSchema,
 } from "./schema/price-series";

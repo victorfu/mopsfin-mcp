@@ -12,6 +12,7 @@ on:
           - catalog-screen
           - corporate-actions
           - catalysts
+          - valuation-model-inputs
           - all
   schedule:
     - cron: "23 20 * * 0"
@@ -43,6 +44,9 @@ jobs:
       - name: Run the focused catalyst event and snapshot contracts
         if: github.event_name == 'schedule' || inputs.suite == 'catalysts'
         run: npm run test:live:catalysts
+      - name: Run the focused valuation-model input contract
+        if: github.event_name == 'schedule' || inputs.suite == 'valuation-model-inputs'
+        run: npm run test:live:valuation-model-inputs
       - name: Run all live contracts
         if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
         run: npm run test:live

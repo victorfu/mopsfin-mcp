@@ -13,6 +13,7 @@ const readme = readFileSync(
 
 const verifiedExamplePrompts = [
   "查台積電最近 12 季營業收入，整理成表格並標示期別、單位與 warnings。",
+  "用 get_valuation_model_inputs 整理台積電的 TTM、歷史 FCFF proxy、net debt、目前 issued shares、最近完成官方收盤與 enterprise value；逐欄列出 evidenceClass、formula、lineage、data_gap 與 freshness，不補 0、不當成 point-in-time vintage，也不要執行 DCF。",
   "查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。",
   "用 get_stock_price_series 查台積電 2025-01-01 到 2026-08-24 的 price-index-compatible 公司行動調整日線並附 event ledger；同時保留 raw OHLC、標示 backward anchor、現金股利 factor=1 與 raw shares，任何 adjustment 證據不足請回 null，不要回退 raw，也不要稱為 adjusted close 或 total return。",
   "列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。",
@@ -134,10 +135,17 @@ describe("README example prompts", () => {
     expect(readme).toContain("每週一次");
     expect(readme).toContain("npm run test:live:corporate-actions");
     expect(readme).toContain("npm run test:live:catalog-screen");
+    expect(readme).toContain("npm run test:live:valuation-model-inputs");
     expect(readme).toContain("完整 live suite");
     expect(readme).toContain(
-      "`suite` 可選 `catalog-screen`、`corporate-actions`、`catalysts` 或 `all`",
+      "`suite` 可選 `catalog-screen`、`corporate-actions`、`catalysts`、`valuation-model-inputs` 或 `all`",
     );
+    expect(readme).toContain("### `get_valuation_model_inputs` 可追溯估值模型資料層");
+    expect(readme).toContain("source/sign-normalized historical FCFF proxy");
+    expect(readme).toContain("不是 point-in-time filing vintage");
+    expect(readme).toContain("不是歷史期末、加權平均或 fully diluted shares");
+    expect(readme).toContain("MIXED_OFFICIAL_CALC");
+    expect(readme).toContain("不執行 DCF");
     expect(readme).toContain("六組 range-family");
     expect(readme).toContain("TWSE `TWT49UDetail`");
     expect(readme).toContain("`verified_empty`");
@@ -181,7 +189,9 @@ describe("README example prompts", () => {
     expect(readme).toContain("isConsensus");
     expect(readme).toContain("CATALYST_OFFSET_PAGE_NOT_PINNED");
     expect(readme).toContain("npm run test:live:catalysts");
-    expect(readme).toContain("`corporate-actions`、`catalysts` 或 `all`");
+    expect(readme).toContain(
+      "`corporate-actions`、`catalysts`、`valuation-model-inputs` 或 `all`",
+    );
     expect(readme).toContain("https://openapi.twse.com.tw/v1/opendata/t187ap04_L");
     expect(readme).toContain("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O");
     expect(readme).toContain("https://mopsov.twse.com.tw/mops/web/ajax_t05st01");

@@ -11,6 +11,7 @@ import * as revenue from "@/lib/mcp/schema/revenue";
 import * as research from "@/lib/mcp/schema/research";
 import * as screening from "@/lib/mcp/schema/screening";
 import * as valuation from "@/lib/mcp/schema/valuation";
+import * as valuationModel from "@/lib/mcp/schema/valuation-model";
 
 const publicSchemaOwners = {
   sourceCacheObservationSchema: common.sourceCacheObservationSchema,
@@ -27,6 +28,8 @@ const publicSchemaOwners = {
   stockPriceSeriesInputSchema: priceSeries.stockPriceSeriesInputSchema,
   dailyMarketOhlcInputSchema: price.dailyMarketOhlcInputSchema,
   dailyMarketValuationInputSchema: valuation.dailyMarketValuationInputSchema,
+  valuationModelInputsInputSchema:
+    valuationModel.valuationModelInputsInputSchema,
   monthlyRevenueInputSchema: revenue.monthlyRevenueInputSchema,
   monthlyRevenueTrendInputSchema: revenue.monthlyRevenueTrendInputSchema,
   companyCatalystEventsInputSchema: catalysts.companyCatalystEventsInputSchema,
@@ -46,6 +49,10 @@ const publicSchemaOwners = {
   stockPriceSeriesOutputSchema: priceSeries.stockPriceSeriesOutputSchema,
   dailyMarketOhlcOutputSchema: price.dailyMarketOhlcOutputSchema,
   dailyMarketValuationOutputSchema: valuation.dailyMarketValuationOutputSchema,
+  valuationModelInputsDataSchema:
+    valuationModel.valuationModelInputsDataSchema,
+  valuationModelInputsOutputSchema:
+    valuationModel.valuationModelInputsOutputSchema,
   monthlyRevenueOutputSchema: revenue.monthlyRevenueOutputSchema,
   monthlyRevenueTrendOutputSchema: revenue.monthlyRevenueTrendOutputSchema,
   companyCatalystEventsOutputSchema:
