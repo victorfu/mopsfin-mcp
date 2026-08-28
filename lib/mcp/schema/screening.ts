@@ -560,3 +560,5 @@ export const screenTaiwanStockCandidatesOutputSchema = z
   })
   .strict();
 
+export const screenTaiwanStockCandidatesDataSchema =
+  screenTaiwanStockCandidatesOutputSchema.omit({ ok: true, meta: true });

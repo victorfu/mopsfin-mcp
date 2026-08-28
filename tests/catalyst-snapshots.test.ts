@@ -546,6 +546,45 @@ describe("CompanyCatalystSnapshotClient official current snapshots", () => {
     });
   });
 
+  it("can return isolated failure evidence when a composite caller opts into partial results", async () => {
+    const { client } = clientWith({
+      "https://openapi.twse.com.tw/v1/opendata/t187ap15_L": new Error(
+        "network down",
+      ),
+    });
+
+    const result = await client.getCompanyCatalystSnapshots(
+      {
+        companyCodes: ["2412"],
+        companyMarkets: [{ companyCode: "2412", market: "listed" }],
+        snapshotTypes: ["forecast_achievement"],
+      },
+      { allSourcesFailureMode: "return_partial" },
+    );
+
+    expect(result.records).toEqual([]);
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        snapshotType: "forecast_achievement",
+        affectedCompanyCodes: ["2412"],
+      }),
+    ]);
+    expect(result.companies).toEqual([
+      expect.objectContaining({ companyCode: "2412", status: "failed" }),
+    ]);
+    expect(result.coverage).toMatchObject({
+      sourceComplete: false,
+      selection: "partial",
+      snapshots: [
+        expect.objectContaining({
+          companyCode: "2412",
+          status: "failed",
+          disclosureStatus: "unknown_source_failure",
+        }),
+      ],
+    });
+  });
+
   it("fails closed on [], arbitrary blank objects, schema drift, and future snapshot dates", async () => {
     const cases: Array<{ payload: unknown; expectedReason: string }> = [
       { payload: [], expectedReason: "UPSTREAM_UNVERIFIED_EMPTY" },

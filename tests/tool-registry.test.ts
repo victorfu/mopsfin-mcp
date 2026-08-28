@@ -14,7 +14,7 @@ describe("canonical MCP tool registry", () => {
   it("matches the ordered dependency-free public manifest one-to-one", () => {
     const names = TOOL_REGISTRY.map((definition) => definition.name);
 
-    expect(TOOL_COUNT).toBe(18);
+    expect(TOOL_COUNT).toBe(19);
     expect(names).toEqual(PUBLIC_TOOL_NAMES);
     expect(new Set(names).size).toBe(TOOL_COUNT);
   });

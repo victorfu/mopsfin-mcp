@@ -23,6 +23,7 @@ const verifiedExamplePrompts = [
   "查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。",
   "比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始與 price-index-compatible 報酬、公司行動證據及量能訊號。",
   "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。",
+  "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，並只替實際最多 5 名 candidates 附 current catalyst snapshots；保留 affectsScreenScore=false，不要當成第五柱、分析師 consensus 或投資建議。",
   "查台積電與聯發科 2026-07-01 至 2026-08-24 的官方重大訊息與法說會；分開 publishedAt、factDate、scheduledAt、effectiveAt，並標示 failures 與 verified empty，不要當成 consensus 或正負面分數。",
   "查台積電與穩懋的 current official catalyst snapshots，分開財測達成、財測重大差異、股東會與股利決議；標示 sourceSnapshotDate、freshness、firstKnownAt、upcomingEligible 與 unsupported，不要當成歷史事件或分析師 consensus。",
   "列出全部上市公司代號，不要包含上櫃公司。",
@@ -50,6 +51,26 @@ describe("README example prompts", () => {
     expect(readme).toContain(`${TOOL_COUNT} 個工具`);
     expect(readme).toContain("browser-safe server identity");
     expect(readme).toContain("dependency-free tool manifest");
+    expect(readme).toContain(
+      "`screen_taiwan_stock_candidates_with_catalyst_snapshots`",
+    );
+    expect(readme).toContain("只取 screen 實際形成的 `candidates`");
+    expect(readme).toContain(
+      "不論其 bucket 是 `research_candidate`、`watchlist`、`insufficient_data` 或 `deprioritized`",
+    );
+    expect(readme).toContain("數量仍受 `candidate_limit` 限制且最多 5 家");
+    expect(readme).toContain(
+      "不因 bucket 排除其中的 `watchlist`、`insufficient_data` 或 `deprioritized`",
+    );
+    expect(readme).toContain(
+      "只排除 `notDeepScored`、`notReactionScored`、`excluded`",
+    );
+    expect(readme).toContain("進入 `deepSelected` 但未形成 candidate 的公司");
+    expect(readme).toContain("Current snapshots 不是歷史事件資料");
+    expect(readme).toContain("不是分析師 consensus／consensus revision");
+    expect(readme).toContain("`affectsScreenScore=false`");
+    expect(readme).toContain("不是第五柱、不會成為加分項");
+    expect(readme).toContain("standalone tools 全部保留");
     expect(readme).toContain("liveness=ok");
     expect(readme).toContain("applicationReadiness=ready");
     expect(readme).toContain("upstreamContracts.status=not_checked");

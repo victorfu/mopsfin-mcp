@@ -13,7 +13,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 連線資訊：
 - 名稱：Mopsfin 台股財務
 - 版本：${SERVER_VERSION}
-- 說明：篩選台股研究候選，並查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、公司行動實際結果、benchmark reaction signals、重大訊息與法說會、current official catalyst snapshots，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
+- 說明：篩選台股研究候選，可選擇只替實際入選的最多 5 家 candidates 附上不影響分數的 current official catalyst snapshots，並查詢 TWSE／TPEx 上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、公司行動實際結果、benchmark reaction signals、重大訊息與法說會，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
 - 驗證方式：不需要登入、API Key、Token 或 OAuth
@@ -24,7 +24,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 2. 如果你能操作目前應用程式的設定介面，請帶我完成新增，並在任何會改變帳號設定的步驟前讓我確認。
 3. 如果你不能直接操作設定，請不要聲稱已完成；請按照目前平台的最新介面名稱，一次只告訴我一個清楚步驟，等我完成後再繼續。
 4. URL 必須完整使用 /api/mcp，請勿改成網站首頁、/mcp 或其他路徑；若出現 OAuth 進階欄位，請保持空白。
-5. 連線後確認可以看到 ${TOOL_COUNT} 個唯讀工具，包含 screen_taiwan_stock_candidates、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
+5. 連線後確認可以看到 ${TOOL_COUNT} 個唯讀工具，包含 screen_taiwan_stock_candidates、screen_taiwan_stock_candidates_with_catalyst_snapshots、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
 6. 最後在新對話啟用此連接器，並測試：「請先找出 2330 對應的公司，再查詢最近 12 季營業收入；標示期別、單位、來源與資料擷取時間。」
 7. 若我的方案或工作區政策不允許新增自訂 MCP，請明確告訴我限制及需要聯絡的管理員角色。`;
 
@@ -39,6 +39,8 @@ const toolSummaries = {
     "查詢財測達成／差異、股東會與股利決議的 current official snapshot evidence",
   screen_taiwan_stock_candidates:
     "以四柱 latest 資料分流最多 5 個非金融研究候選",
+  screen_taiwan_stock_candidates_with_catalyst_snapshots:
+    "四柱篩選後只替實際最多 5 名 candidates 附 current snapshots，不改分數",
   get_daily_market_valuation: "查詢官方 latest 或指定日估值與參考財報欄位",
   get_monthly_revenue: "查詢官方 latest 或指定月份營收",
   get_monthly_revenue_trend: "查詢 3–24 個月營收序列與透明衍生趨勢",
@@ -76,7 +78,7 @@ export default function Home() {
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
-          上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、市場反應代理、重大訊息與法說會、current official catalyst snapshots，並用透明四柱規則產生待深入研究的台股候選，再查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
+          上市櫃公司母體、官方日線價量、歷史估值、月營收趨勢、市場反應代理、重大訊息與法說會、current official catalyst snapshots，並用透明四柱規則產生待深入研究的台股候選；需要時只替實際入選的最多 5 家 candidates 附上不影響分數的快照證據，再查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
         </p>
 
         <div className="endpointCard">
@@ -254,6 +256,7 @@ export default function Home() {
             <p><code>get_daily_market_valuation</code> 可查單一歷史交易日，<code>get_monthly_revenue</code> 與 trend 可查 2013-01 起月份；空白或 N/A 保留為 null 並附資料狀態，不會改寫成 0。歷史月營收是目前修訂後 archive，不是 point-in-time vintage。</p>
             <p><code>get_stock_reaction_signals</code> 保留原始未還原權值報酬，另以 TWSE／TPEx 除權息、減資與面額變更實際結果建立 price-index-compatible 報酬。現金股利的價格效果會保留以配合 price index；它不是 adjusted close 或 total return。coverage、調整因子、前收盤或 marker 證據不足時回 unknown，跨股數變動的 volume 不直接比較。</p>
             <p><code>screen_taiwan_stock_candidates</code> 固定使用 <code>balanced_non_financial_v2</code>／<code>taiwan_stock_screen.v2</code>，是 latest-only、有工作量上限的非金融研究分流：以月營收領先粗篩，再對有限名單評估 <code>companyQuality</code>、<code>fundamentalImprovement</code>、<code>reasonableValuation</code> 與 <code>marketUnderreactionProxy</code>，最多回傳 5 個候選。七項財務需求先由穩定 semantic roles 對即時 catalog 解析；缺少、重複或語意衝突會以 <code>CATALOG_CONTRACT_MISMATCH</code> fail closed，當次 role→code/name/family 證據則保留在 <code>screenDefinition.evidencePolicies</code>。market pillar 只接受可比的公司行動調整證據。deep stage 會在 24-unit 預算內隔離 company-level identity／metric errors；受影響代號以 <code>dependencyStatus</code> 與 <code>notReactionScored</code> 標示 unknown，不會被誤判為 fail 或 0 分。其餘 deepSelected 公司繼續，但不從 deepSelected 之外自動遞補。不同資料來源的 as-of 可能不同；結果不是完整全市場深篩、point-in-time 回測、錯價證明或投資建議。</p>
+            <p><code>screen_taiwan_stock_candidates_with_catalyst_snapshots</code> 先執行相同四柱 screen，再對 <code>screen.candidates</code> 中所有實際 candidates 查 current official catalyst snapshots，最多 5 家；不論 bucket 是 research_candidate、watchlist、insufficient_data 或 deprioritized 都會查。只有 notDeepScored、notReactionScored、excluded，以及進入 deepSelected 但未形成 candidate 的公司會排除。快照不是歷史事件，也不是分析師 consensus；<code>affectsScreenScore=false</code>，因此不是第五柱、加分項或投資建議。原本的 <code>screen_taiwan_stock_candidates</code>、<code>get_company_catalyst_snapshots</code> 與 <code>get_company_catalyst_events</code> standalone tools 都保留。</p>
             <p><code>get_company_catalyst_events</code> 依 selected company 與日期範圍即時查 MOPS 歷史重大訊息、法說會日曆，並用 TWSE／TPEx 每日重大訊息補強近期資料。<code>publishedAt</code>、<code>factDate</code>、<code>scheduledAt</code> 與 <code>effectiveAt</code> 分開；官方無事件、查詢失敗與 parser/security block 也分開。它不提供分析師 consensus、預估修正、情緒分數或投資建議，且不會改變四柱 screening 分數。</p>
             <p><code>get_company_catalyst_snapshots</code> 只讀取當次官方 snapshot evidence：<code>forecast_achievement</code>、<code>forecast_material_variance</code>、<code>shareholder_meeting</code> 與 <code>dividend_decision</code>，不是歷史事件查詢。應檢查 <code>sourceSnapshotDate</code>、<code>freshness</code>、<code>pointInTimeHistoryAvailable</code>、<code>firstKnownAt</code> 與 <code>upcomingEligible</code>；公司財測不是分析師 consensus，stale／unsupported 不是 current no-data。TPEx 沒有可用的 current dividend source，不會以舊的 <code>mopsfin_t187ap39_O</code> 冒充當期股利決議。此工具與現有 events 工具都不納入四柱 screening 評分。</p>
             <p>成功結果固定提供 <code>meta.asOf</code>、<code>meta.quality</code> 與 <code>meta.page</code>。<code>data cutoff</code>、<code>retrievedAt</code>、<code>servedAt</code> 與 cache age 分開保留；<code>freshnessDetails</code> 會列出逐來源 policy、observed/expected as-of 與 lag，無法驗證時是 <code>FRESHNESS_UNVERIFIED</code>，不會因查詢參數是 latest 就自動宣稱 fresh。reaction cursor v2 會把公司行動 range contracts/summaries 與 requested-company 權息 detail fingerprint 納入來源 snapshot，但不儲存在伺服器。若來源在續頁間改變，須依錯誤 <code>action=restart_pagination</code> 從第一頁重啟。</p>

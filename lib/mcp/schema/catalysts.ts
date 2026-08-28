@@ -979,9 +979,8 @@ const catalystSnapshotCompanyResultSchema = z
   })
   .strict();
 
-export const companyCatalystSnapshotsOutputSchema = z
+export const companyCatalystSnapshotsDataSchema = z
   .object({
-    ...successResultShape,
     query: z
       .object({
         companyCodes: z
@@ -1636,3 +1635,5 @@ export const companyCatalystSnapshotsOutputSchema = z
     }
   });
 
+export const companyCatalystSnapshotsOutputSchema =
+  companyCatalystSnapshotsDataSchema.safeExtend(successResultShape);

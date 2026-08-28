@@ -12,6 +12,7 @@ import type { ToolDefinition } from "./tools/definition";
 import { financialsTools } from "./tools/financials";
 import { marketTools } from "./tools/market";
 import { revenueTools } from "./tools/revenue";
+import { researchTools } from "./tools/research";
 import { screeningTools } from "./tools/screening";
 
 const definitions = [
@@ -19,6 +20,7 @@ const definitions = [
   ...marketTools,
   ...catalystTools,
   ...screeningTools,
+  ...researchTools,
   ...revenueTools,
   ...catalogTools,
   ...financialsTools,

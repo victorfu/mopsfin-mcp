@@ -113,6 +113,40 @@ describe("LLM-facing official guidance", () => {
     );
   });
 
+  it("routes candidate-only snapshot enrichment without changing screen scoring", () => {
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "screen_taiwan_stock_candidates_with_catalyst_snapshots",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "對 screen.candidates 中所有實際 candidates 查 snapshot",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("最多 5 家");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "不論 bucket 是 research_candidate、watchlist、insufficient_data 或 deprioritized 都會查",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "只有 notDeepScored、notReactionScored、excluded，以及進入 deepSelected 但未形成 candidate 的公司會排除",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "不是歷史事件，也不是分析師 consensus／consensus revision",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("affectsScreenScore=false");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "不是第五柱、加分項、目標價或投資建議",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "standalone tools 全部保留",
+    );
+    expect(MOPSFIN_OFFICIAL_GUIDANCE.interpretationNotes).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "screen_taiwan_stock_candidates_with_catalyst_snapshots 只對實際最多 5 名 candidates",
+        ),
+        expect.stringContaining("affectsScreenScore=false"),
+      ]),
+    );
+  });
+
   it("provides formulas and applicability for company and financial metrics", () => {
     expect(metricGuidance(metric("權益報酬率"))).toMatchObject({
       calculation: "（稅後純益 ÷ 平均權益總額）× 100%",

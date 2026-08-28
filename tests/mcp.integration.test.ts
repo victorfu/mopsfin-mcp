@@ -2106,7 +2106,7 @@ describe("MCP protocol integration", () => {
     ).toBe(true);
   });
 
-  it("initializes, lists eighteen tools and calls each tool with structured output", async () => {
+  it("initializes, lists all tools and calls each tool with structured output", async () => {
     const catalystSpy = vi
       .spyOn(catalystClient, "getCompanyCatalystEvents")
       .mockResolvedValue(catalystEvents);
@@ -2498,6 +2498,22 @@ describe("MCP protocol integration", () => {
       default: "balanced_non_financial_v2",
       const: "balanced_non_financial_v2",
     });
+    const researchTool = listed.tools.find(
+      (tool) =>
+        tool.name ===
+        "screen_taiwan_stock_candidates_with_catalyst_snapshots",
+    );
+    expect(researchTool?.description).toContain("ordered screen.candidates");
+    expect(researchTool?.description).toContain("affectsScreenScore=false");
+    expect(researchTool?.description).toContain("不是分析師 consensus");
+    expect(researchTool?.description).toContain("not_disclosed_in_snapshot");
+    expect(researchTool?.description).toContain("沒有 candidates 時不呼叫");
+    expect(researchTool?.inputSchema.properties?.screen).toHaveProperty(
+      "description",
+    );
+    expect(
+      researchTool?.inputSchema.properties?.catalyst_snapshots,
+    ).toHaveProperty("description");
     const batchTool = listed.tools.find(
       (tool) => tool.name === "get_company_metrics_batch",
     );
@@ -2584,6 +2600,20 @@ describe("MCP protocol integration", () => {
           market: "listed",
           company_codes: ["2330"],
           candidate_limit: 1,
+        },
+      ],
+      [
+        "screen_taiwan_stock_candidates_with_catalyst_snapshots",
+        {
+          screen: {
+            market: "listed",
+            company_codes: ["2330"],
+            candidate_limit: 1,
+          },
+          catalyst_snapshots: {
+            snapshot_types: ["shareholder_meeting"],
+            record_preview_limit: 10,
+          },
         },
       ],
       ["get_daily_market_valuation", { market: "all" }],
@@ -3248,6 +3278,39 @@ describe("MCP protocol integration", () => {
         });
         expect(structured.candidates.length).toBeLessThanOrEqual(1);
       }
+      if (
+        name ===
+        "screen_taiwan_stock_candidates_with_catalyst_snapshots"
+      ) {
+        const structured = result.structuredContent as {
+          meta: { quality: { issues: Array<{ code: string }> } };
+          posture: string;
+          screen: { candidates: Array<{ companyCode: string }> };
+          catalystSnapshots: {
+            stageStatus: string;
+            queriedCompanyCodes: string[];
+            workBudget: { snapshotCallCount: 0 | 1 };
+          };
+          compositionIntegrity: {
+            screenResultPreserved: boolean;
+            catalystEvidenceAffectsScreenRanking: boolean;
+          };
+        };
+        expect(structured).toMatchObject({
+          posture: "research_triage_evidence_only",
+          compositionIntegrity: {
+            screenResultPreserved: true,
+            catalystEvidenceAffectsScreenRanking: false,
+          },
+        });
+        expect(
+          structured.meta.quality.issues.map((issue) => issue.code),
+        ).toContain("CATALYST_EVIDENCE_DOES_NOT_AFFECT_SCREEN");
+        expect(structured.screen.candidates.length).toBeLessThanOrEqual(1);
+        expect(structured.catalystSnapshots.workBudget.snapshotCallCount).toBe(
+          structured.screen.candidates.length === 0 ? 0 : 1,
+        );
+      }
       if (name === "get_monthly_revenue_trend") {
         const structured = result.structuredContent as {
           startMonth: string;
@@ -3381,7 +3444,7 @@ describe("MCP protocol integration", () => {
       }
     }
 
-    expect(catalystSnapshotSpy).toHaveBeenCalledTimes(1);
+    expect(catalystSnapshotSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
     expect(catalystSnapshotSpy).toHaveBeenCalledWith({
       companyCodes: ["3105"],
       snapshotTypes: [

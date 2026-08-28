@@ -7,6 +7,7 @@ import * as company from "@/lib/mcp/schema/company";
 import * as financials from "@/lib/mcp/schema/financials";
 import * as price from "@/lib/mcp/schema/price";
 import * as revenue from "@/lib/mcp/schema/revenue";
+import * as research from "@/lib/mcp/schema/research";
 import * as screening from "@/lib/mcp/schema/screening";
 import * as valuation from "@/lib/mcp/schema/valuation";
 
@@ -61,9 +62,28 @@ const publicSchemaOwners = {
     screening.screenTaiwanStockCandidatesInputSchema,
   screenTaiwanStockCandidatesOutputSchema:
     screening.screenTaiwanStockCandidatesOutputSchema,
+  screenTaiwanStockCandidatesWithCatalystSnapshotsInputSchema:
+    research.screenTaiwanStockCandidatesWithCatalystSnapshotsInputSchema,
+  screenTaiwanStockCandidatesWithCatalystSnapshotsOutputSchema:
+    research.screenTaiwanStockCandidatesWithCatalystSnapshotsOutputSchema,
 } as const;
 
 describe("MCP schema modules", () => {
+  it("derives a strict screening data schema without the MCP envelope", () => {
+    expect(
+      Object.hasOwn(screening.screenTaiwanStockCandidatesDataSchema.shape, "ok"),
+    ).toBe(false);
+    expect(
+      Object.hasOwn(
+        screening.screenTaiwanStockCandidatesDataSchema.shape,
+        "meta",
+      ),
+    ).toBe(false);
+    expect(
+      screening.screenTaiwanStockCandidatesDataSchema.safeParse({}).success,
+    ).toBe(false);
+  });
+
   it("keeps the compatibility barrel public export surface exact", () => {
     expect(Object.keys(publicSchemas).sort()).toEqual(
       Object.keys(publicSchemaOwners).sort(),

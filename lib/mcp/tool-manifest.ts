@@ -7,6 +7,7 @@ export const PUBLIC_TOOL_NAMES = [
   "get_company_catalyst_events",
   "get_company_catalyst_snapshots",
   "screen_taiwan_stock_candidates",
+  "screen_taiwan_stock_candidates_with_catalyst_snapshots",
   "get_daily_market_valuation",
   "get_monthly_revenue",
   "get_monthly_revenue_trend",

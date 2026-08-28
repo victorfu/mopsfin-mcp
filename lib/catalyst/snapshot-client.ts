@@ -40,6 +40,14 @@ export interface CompanyCatalystSnapshotClientOptions
   jsonLoader?: CompanyCatalystSnapshotsJsonLoader;
 }
 
+export type CompanyCatalystSnapshotsAllSourcesFailureMode =
+  | "throw"
+  | "return_partial";
+
+export interface CompanyCatalystSnapshotsExecutionOptions {
+  allSourcesFailureMode?: CompanyCatalystSnapshotsAllSourcesFailureMode;
+}
+
 interface SupportedSourceConfig extends OfficialSourceConfig {
   snapshotType: CompanyCatalystSnapshotsType;
   sourceKey: Exclude<
@@ -1568,6 +1576,7 @@ export class CompanyCatalystSnapshotClient {
 
   async getCompanyCatalystSnapshots(
     query: CompanyCatalystSnapshotsQuery,
+    executionOptions: CompanyCatalystSnapshotsExecutionOptions = {},
   ): Promise<CompanyCatalystSnapshotsResult> {
     const validated = validateQuery(query);
     const routes = planRoutes(validated);
@@ -1580,6 +1589,7 @@ export class CompanyCatalystSnapshotClient {
       (execution) => execution.route.config !== null,
     );
     if (
+      (executionOptions.allSourcesFailureMode ?? "throw") === "throw" &&
       supportedExecutions.length > 0 &&
       supportedExecutions.every(
         (execution) => execution.source.status === "failed",

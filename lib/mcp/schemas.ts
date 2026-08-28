@@ -71,3 +71,8 @@ export {
   screenTaiwanStockCandidatesInputSchema,
   screenTaiwanStockCandidatesOutputSchema,
 } from "./schema/screening";
+
+export {
+  screenTaiwanStockCandidatesWithCatalystSnapshotsInputSchema,
+  screenTaiwanStockCandidatesWithCatalystSnapshotsOutputSchema,
+} from "./schema/research";

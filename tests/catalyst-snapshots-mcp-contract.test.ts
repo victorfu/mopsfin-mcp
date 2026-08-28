@@ -4,6 +4,7 @@ import {
   companyCatalystSnapshotsInputSchema,
   companyCatalystSnapshotsOutputSchema,
 } from "@/lib/mcp/schemas";
+import { companyCatalystSnapshotsDataSchema } from "@/lib/mcp/schema/catalysts";
 import { buildResultMeta } from "@/lib/mcp/result-contract";
 
 function fixtureData() {
@@ -163,6 +164,26 @@ function fixtureData() {
 }
 
 describe("company catalyst snapshots MCP contract", () => {
+  it("exposes a strict, refinement-preserving data schema for safe composite nesting", () => {
+    const data = fixtureData();
+
+    expect(companyCatalystSnapshotsDataSchema.safeParse(data).success).toBe(
+      true,
+    );
+    expect(
+      companyCatalystSnapshotsDataSchema.safeParse({
+        ...data,
+        counts: { ...data.counts, returnedRecords: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      companyCatalystSnapshotsDataSchema.safeParse({
+        ...data,
+        ok: true,
+      }).success,
+    ).toBe(false);
+  });
+
   it("defaults to latest, all four snapshot families and bounded pagination", () => {
     expect(
       companyCatalystSnapshotsInputSchema.parse({
