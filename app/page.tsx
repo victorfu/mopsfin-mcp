@@ -13,7 +13,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 連線資訊：
 - 名稱：Mopsfin 台股財務
 - 版本：${SERVER_VERSION}
-- 說明：篩選台股研究候選，可選擇只替實際入選的最多 5 家 candidates 附上不影響分數的 current official catalyst snapshots，並查詢 TWSE／TPEx 上市櫃公司母體、官方原始日線、可稽核的 price-index-compatible 公司行動調整價格序列、歷史估值、可追溯估值模型輸入、顯性假設的 market-implied Reverse DCF、月營收趨勢、benchmark reaction signals、重大訊息與法說會，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
+- 說明：篩選台股研究候選，可選擇只替實際入選的最多 5 家 candidates 附上不影響分數的 current official catalyst snapshots，並查詢 TWSE／TPEx 上市櫃公司母體、官方原始日線、比較 caller 觀察價與官方完成收盤、可稽核的 price-index-compatible 公司行動調整價格序列、歷史估值、可追溯估值模型輸入、顯性假設的 market-implied Reverse DCF、月營收趨勢、benchmark reaction signals、重大訊息與法說會，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
 - 驗證方式：不需要登入、API Key、Token 或 OAuth
@@ -24,7 +24,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 2. 如果你能操作目前應用程式的設定介面，請帶我完成新增，並在任何會改變帳號設定的步驟前讓我確認。
 3. 如果你不能直接操作設定，請不要聲稱已完成；請按照目前平台的最新介面名稱，一次只告訴我一個清楚步驟，等我完成後再繼續。
 4. URL 必須完整使用 /api/mcp，請勿改成網站首頁、/mcp 或其他路徑；若出現 OAuth 進階欄位，請保持空白。
-5. 連線後確認可以看到 ${TOOL_COUNT} 個唯讀工具，包含 screen_taiwan_stock_candidates、screen_taiwan_stock_candidates_with_catalyst_snapshots、get_stock_price_series、get_valuation_model_inputs、run_reverse_dcf、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
+5. 連線後確認可以看到 ${TOOL_COUNT} 個唯讀工具，包含 screen_taiwan_stock_candidates、screen_taiwan_stock_candidates_with_catalyst_snapshots、get_stock_price_series、analyze_observed_price、get_valuation_model_inputs、run_reverse_dcf、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
 6. 最後在新對話啟用此連接器，並測試：「請先找出 2330 對應的公司，再查詢最近 12 季營業收入；標示期別、單位、來源與資料擷取時間。」
 7. 若我的方案或工作區政策不允許新增自訂 MCP，請明確告訴我限制及需要聯絡的管理員角色。`;
 
@@ -34,6 +34,8 @@ const toolSummaries = {
   get_stock_price_series:
     "完整收齊最多 36 個月 raw 或 price-index-compatible 公司行動調整日線",
   get_daily_market_ohlc: "查詢單日上市、上櫃或全部市場價量",
+  analyze_observed_price:
+    "比較 caller 觀察價與官方最近完成交易日 raw 收盤價",
   get_stock_reaction_signals:
     "比較個股原始／price-index-compatible 報酬、量能與市場價格指數",
   get_company_catalyst_events: "查詢官方重大訊息與法說會事件",
@@ -84,7 +86,7 @@ export default function Home() {
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
-          上市櫃公司母體、官方原始日線、可稽核的公司行動調整價格序列、歷史估值、可追溯估值模型輸入、月營收趨勢、市場反應代理、重大訊息與法說會、current official catalyst snapshots，並用透明四柱規則產生待深入研究的台股候選；需要時只替實際入選的最多 5 家 candidates 附上不影響分數的快照證據，再查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
+          上市櫃公司母體、官方原始日線、caller 觀察價與官方完成收盤比較、可稽核的公司行動調整價格序列、歷史估值、可追溯估值模型輸入、月營收趨勢、市場反應代理、重大訊息與法說會、current official catalyst snapshots，並用透明四柱規則產生待深入研究的台股候選；需要時只替實際入選的最多 5 家 candidates 附上不影響分數的快照證據，再查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
         </p>
 
         <div className="endpointCard">
@@ -259,6 +261,7 @@ export default function Home() {
             <p>公司母體、原始日線價量、歷史估值、月營收與大盤指數直接讀取 MOPS／TWSE／TPEx 官方資料；財務查詢直接讀取公開資訊觀測站「財務比較 E 點通」。本服務不另建財務或市場資料庫。</p>
             <p><code>list_companies</code> 可用 <code>market=all</code>、<code>listed</code> 或 <code>otc</code> 合併或分別取得當次 TWSE／TPEx 公司名錄；TDR、ETF、ETN、權證與特別股不在公司母體內。官方來源沒有 declared row count，因此 <code>coverageComplete</code> 只代表 heuristic safety gate 通過，請一併讀取 <code>coverageVerification</code>、warnings 與 <code>meta.quality</code>，不可宣稱已證明完整 rowset。</p>
             <p><code>get_stock_ohlc</code> 維持原契約：回傳新台幣官方原始未還原權值日線、成交股數、成交金額、成交筆數與漲跌，不是盤中即時價；長區間需依 <code>coverageComplete</code> 與 <code>nextCursor</code> 續查。</p>
+            <p><code>analyze_observed_price</code> 接受 caller 明示的價格、觀察時間與來源標籤，再與官方最近完成交易日的 raw 收盤價做機械比較。價格來源使用 compatible 全市場 95% 防截斷門檻，指定公司另由外層 master 與行情列精確核對 code、name、market。caller 值固定標示為未驗證且不是官方／real-time quote；同一台北日期只有 13:33 之後才接受，輸出分開 caller、master、market 與 calculated evidence。這不是 fair value、合理進場區或投資建議。</p>
             <p><code>get_stock_price_series</code> 另提供單一公司、含頭含尾且最多 36 個日曆月份的完整序列。<code>raw_unadjusted</code> 不查公司行動；<code>price_index_compatible_corporate_action_adjusted</code> 以最後一根實際 raw bar 向後錨定，使用 TWSE／TPEx official actual-result factor，只移除股數變動的機械價格斷點。現金股利效果保留且 cash-only factor=1，因此不是 adjusted close、股息再投資或 total return；成交量永遠是 raw shares。coverage、factor、prior close、同日事件、identity 或 marker 證據不足時，受影響 adjusted OHLC 為 null，不會回退 raw。<code>include_event_ledger</code> 可輸出逐事件稽核證據，但 raw basis 不會因此查公司行動。單次呼叫最多收齊 3 個既有 OHLC cursor pages，並以 <code>workBudget</code> 揭露實際工作量。</p>
             <p><code>get_daily_market_valuation</code> 可查單一歷史交易日，<code>get_monthly_revenue</code> 與 trend 可查 2013-01 起月份；空白或 N/A 保留為 null 並附資料狀態，不會改寫成 0。歷史月營收是目前修訂後 archive，不是 point-in-time vintage。</p>
             <p><code>get_valuation_model_inputs</code> 為單一非金融公司整理 TTM、historical FCFF proxy、net debt、目前 issued shares、最近完成官方 close、market cap 與 enterprise value。每欄保留 evidenceClass、formula 與 lineage；缺 statement／單位／row role／market evidence 時回 <code>data_gap/null</code>，不補 0。歷史財報是目前可見、可能重編版本，不是 point-in-time filing vintage；issued shares 不是 fully diluted shares。金融公司為 not_applicable；工具不執行 DCF，也不提供隱藏 WACC、terminal growth、評級或目標價。</p>

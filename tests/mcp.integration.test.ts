@@ -892,6 +892,13 @@ const companyMaster = {
       excludedTdrCount: 1,
       companyCount: 1,
       minimumExpectedCount: 1,
+      cache: {
+        status: "bypass" as const,
+        observedAt: "2026-08-25T00:00:00.000Z",
+        storedAt: null,
+        ageMs: null,
+        ttlMs: 0,
+      },
     },
     {
       market: "otc" as const,
@@ -904,6 +911,13 @@ const companyMaster = {
       excludedTdrCount: 0,
       companyCount: 1,
       minimumExpectedCount: 1,
+      cache: {
+        status: "bypass" as const,
+        observedAt: "2026-08-25T00:00:00.000Z",
+        storedAt: null,
+        ageMs: null,
+        ttlMs: 0,
+      },
     },
   ],
   counts: {
@@ -1367,6 +1381,52 @@ const dailyMarketOhlc = {
     },
   ],
   warnings: [],
+};
+
+const observedPriceDailyMarketOhlc = {
+  ...dailyMarketOhlc,
+  query: {
+    market: "listed" as const,
+    date: "latest" as const,
+    companyCodes: ["2330"],
+    universePolicy: "compatible" as const,
+  },
+  classificationMethod: "current_master" as const,
+  classificationPolicy: "current_master_with_code_fallback" as const,
+  universeCoverageVerified: true,
+  reconciliation: [
+    {
+      market: "listed" as const,
+      masterCount: 1,
+      sourceRowCount: 1,
+      matchedCount: 1,
+      marketOnlyCodes: [],
+      masterMissingCodes: [],
+      matchRatio: 1,
+      coverageComplete: true,
+    },
+  ],
+  counts: { listed: 1, otc: 0, returned: 1 },
+  bars: [dailyMarketOhlc.bars[0]],
+  sources: [
+    {
+      ...dailyMarketOhlc.sources[0],
+      sourceName: "臺灣證券交易所－上市個股日成交資訊",
+      sourceUrl:
+        "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+      snapshotIdentity: "verified" as const,
+      cache: {
+        status: "bypass" as const,
+        observedAt: "2026-08-25T00:00:00.000Z",
+        storedAt: null,
+        ageMs: null,
+        ttlMs: 0,
+      },
+    },
+  ],
+  warnings: [
+    "compatible current-master reconciliation passed for the selected fixture",
+  ],
 };
 
 const latestMarketReconciliation = [
@@ -2662,7 +2722,12 @@ describe("MCP protocol integration", () => {
     const priceSeriesSpy = vi
       .spyOn(stockPriceSeriesClient, "getStockPriceSeries")
       .mockResolvedValue(stockPriceSeries);
-    vi.spyOn(priceClient, "getDailyMarketOhlc").mockResolvedValue(dailyMarketOhlc);
+    vi.spyOn(priceClient, "getDailyMarketOhlc").mockImplementation(
+      async (query) =>
+        query.date === "latest" && query.companyCodes?.length === 1
+          ? observedPriceDailyMarketOhlc
+          : dailyMarketOhlc,
+    );
     vi.spyOn(valuationClient, "getDailyMarketValuation").mockResolvedValue(
       dailyMarketValuation,
     );
@@ -2806,6 +2871,8 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("get_daily_market_valuation");
     expect(client.getInstructions()).toContain("get_valuation_model_inputs");
     expect(client.getInstructions()).toContain("run_reverse_dcf");
+    expect(client.getInstructions()).toContain("analyze_observed_price");
+    expect(client.getInstructions()).toContain("CALLER_SUPPLIED");
     expect(client.getInstructions()).toContain("get_monthly_revenue");
     expect(client.getInstructions()).toContain("get_monthly_revenue_trend");
     expect(client.getInstructions()).toContain("get_stock_reaction_signals");
@@ -3013,6 +3080,28 @@ describe("MCP protocol integration", () => {
       additionalProperties: false,
     });
     expect(reverseDcfTool?.outputSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+    });
+    const observedPriceTool = listed.tools.find(
+      (tool) => tool.name === "analyze_observed_price",
+    );
+    expect(observedPriceTool?.description).toContain("caller-supplied");
+    expect(observedPriceTool?.description).toContain("13:33");
+    expect(observedPriceTool?.description).toContain("CALLER_SUPPLIED");
+    expect(observedPriceTool?.description).toContain("不是 fair value");
+    expect(observedPriceTool?.description).toContain("不是外部盤中 quote provider");
+    expect(observedPriceTool?.inputSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "company_code",
+        "observed_price_twd",
+        "observed_at",
+        "source_label",
+      ],
+    });
+    expect(observedPriceTool?.outputSchema).toMatchObject({
       type: "object",
       additionalProperties: false,
     });
@@ -3229,6 +3318,15 @@ describe("MCP protocol integration", () => {
         },
       ],
       ["get_daily_market_ohlc", { market: "all", date: "latest" }],
+      [
+        "analyze_observed_price",
+        {
+          company_code: "2330",
+          observed_price_twd: 2400,
+          observed_at: "2026-08-25T09:32:00+08:00",
+          source_label: "caller supplied integration fixture",
+        },
+      ],
       [
         "get_stock_reaction_signals",
         {

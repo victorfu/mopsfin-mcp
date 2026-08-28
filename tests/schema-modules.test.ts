@@ -5,6 +5,7 @@ import * as catalysts from "@/lib/mcp/schema/catalysts";
 import * as common from "@/lib/mcp/schema/common";
 import * as company from "@/lib/mcp/schema/company";
 import * as financials from "@/lib/mcp/schema/financials";
+import * as observedPrice from "@/lib/mcp/schema/observed-price";
 import * as price from "@/lib/mcp/schema/price";
 import * as priceSeries from "@/lib/mcp/schema/price-series";
 import * as revenue from "@/lib/mcp/schema/revenue";
@@ -57,6 +58,12 @@ const publicSchemaOwners = {
   reverseDcfInputSchema: reverseDcf.reverseDcfInputSchema,
   reverseDcfDataSchema: reverseDcf.reverseDcfDataSchema,
   reverseDcfOutputSchema: reverseDcf.reverseDcfOutputSchema,
+  analyzeObservedPriceInputSchema:
+    observedPrice.analyzeObservedPriceInputSchema,
+  analyzeObservedPriceDataSchema:
+    observedPrice.analyzeObservedPriceDataSchema,
+  analyzeObservedPriceOutputSchema:
+    observedPrice.analyzeObservedPriceOutputSchema,
   monthlyRevenueOutputSchema: revenue.monthlyRevenueOutputSchema,
   monthlyRevenueTrendOutputSchema: revenue.monthlyRevenueTrendOutputSchema,
   companyCatalystEventsOutputSchema:

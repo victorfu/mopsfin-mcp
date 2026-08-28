@@ -39,9 +39,18 @@ try {
       `tools/list returned ${names.length} tools but health reports ${String(health.toolCount)}: ${names.join(", ")}`,
     );
   }
-  if (!names.includes("get_stock_price_series")) {
+  const requiredReleaseTools = [
+    "get_stock_price_series",
+    "get_valuation_model_inputs",
+    "run_reverse_dcf",
+    "analyze_observed_price",
+  ];
+  const missingReleaseTools = requiredReleaseTools.filter(
+    (name) => !names.includes(name),
+  );
+  if (missingReleaseTools.length > 0) {
     throw new Error(
-      `tools/list is missing the v0.7 price-series contract: ${names.join(", ")}`,
+      `tools/list is missing required release contracts (${missingReleaseTools.join(", ")}): ${names.join(", ")}`,
     );
   }
   if (health.mcpEndpoint !== endpoint.pathname) {

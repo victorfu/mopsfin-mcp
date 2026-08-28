@@ -49,6 +49,12 @@ export {
 } from "./schema/reverse-dcf";
 
 export {
+  analyzeObservedPriceDataSchema,
+  analyzeObservedPriceInputSchema,
+  analyzeObservedPriceOutputSchema,
+} from "./schema/observed-price";
+
+export {
   stockPriceSeriesInputSchema,
   stockPriceSeriesOutputSchema,
 } from "./schema/price-series";

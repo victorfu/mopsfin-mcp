@@ -33,6 +33,22 @@ describe("LLM-facing official guidance", () => {
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_daily_market_valuation");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_monthly_revenue");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("run_reverse_dcf");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("analyze_observed_price");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "caller 值稱為官方或 real-time quote",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "同一台北日期必須到 13:33（含）後才比較",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "nested compatible-master acquisition source evidence 未由價格 dependency 暴露",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "各市場 matchRatio 至少 95%",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "code、name、market 必須由外層 master 與官方行情列精確吻合",
+    );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
       "一次只反解 revenue_cagr、fcff_cagr 或 terminal_operating_margin",
     );
@@ -56,6 +72,10 @@ describe("LLM-facing official guidance", () => {
         expect.objectContaining({
           dataType: "市場隱含 Reverse DCF",
           basis: expect.stringContaining("caller 明示全部"),
+        }),
+        expect.objectContaining({
+          dataType: "Caller 觀察價相對官方完成收盤",
+          basis: expect.stringContaining("CALLER_SUPPLIED"),
         }),
       ]),
     );
