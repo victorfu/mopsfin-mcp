@@ -9,6 +9,7 @@ import * as price from "@/lib/mcp/schema/price";
 import * as priceSeries from "@/lib/mcp/schema/price-series";
 import * as revenue from "@/lib/mcp/schema/revenue";
 import * as research from "@/lib/mcp/schema/research";
+import * as reverseDcf from "@/lib/mcp/schema/reverse-dcf";
 import * as screening from "@/lib/mcp/schema/screening";
 import * as valuation from "@/lib/mcp/schema/valuation";
 import * as valuationModel from "@/lib/mcp/schema/valuation-model";
@@ -53,6 +54,9 @@ const publicSchemaOwners = {
     valuationModel.valuationModelInputsDataSchema,
   valuationModelInputsOutputSchema:
     valuationModel.valuationModelInputsOutputSchema,
+  reverseDcfInputSchema: reverseDcf.reverseDcfInputSchema,
+  reverseDcfDataSchema: reverseDcf.reverseDcfDataSchema,
+  reverseDcfOutputSchema: reverseDcf.reverseDcfOutputSchema,
   monthlyRevenueOutputSchema: revenue.monthlyRevenueOutputSchema,
   monthlyRevenueTrendOutputSchema: revenue.monthlyRevenueTrendOutputSchema,
   companyCatalystEventsOutputSchema:

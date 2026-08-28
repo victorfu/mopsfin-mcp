@@ -13,7 +13,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 連線資訊：
 - 名稱：Mopsfin 台股財務
 - 版本：${SERVER_VERSION}
-- 說明：篩選台股研究候選，可選擇只替實際入選的最多 5 家 candidates 附上不影響分數的 current official catalyst snapshots，並查詢 TWSE／TPEx 上市櫃公司母體、官方原始日線、可稽核的 price-index-compatible 公司行動調整價格序列、歷史估值、可追溯估值模型輸入、月營收趨勢、benchmark reaction signals、重大訊息與法說會，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
+- 說明：篩選台股研究候選，可選擇只替實際入選的最多 5 家 candidates 附上不影響分數的 current official catalyst snapshots，並查詢 TWSE／TPEx 上市櫃公司母體、官方原始日線、可稽核的 price-index-compatible 公司行動調整價格序列、歷史估值、可追溯估值模型輸入、顯性假設的 market-implied Reverse DCF、月營收趨勢、benchmark reaction signals、重大訊息與法說會，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
 - MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
 - 傳輸方式：Streamable HTTP
 - 驗證方式：不需要登入、API Key、Token 或 OAuth
@@ -24,7 +24,7 @@ const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MC
 2. 如果你能操作目前應用程式的設定介面，請帶我完成新增，並在任何會改變帳號設定的步驟前讓我確認。
 3. 如果你不能直接操作設定，請不要聲稱已完成；請按照目前平台的最新介面名稱，一次只告訴我一個清楚步驟，等我完成後再繼續。
 4. URL 必須完整使用 /api/mcp，請勿改成網站首頁、/mcp 或其他路徑；若出現 OAuth 進階欄位，請保持空白。
-5. 連線後確認可以看到 ${TOOL_COUNT} 個唯讀工具，包含 screen_taiwan_stock_candidates、screen_taiwan_stock_candidates_with_catalyst_snapshots、get_stock_price_series、get_valuation_model_inputs、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
+5. 連線後確認可以看到 ${TOOL_COUNT} 個唯讀工具，包含 screen_taiwan_stock_candidates、screen_taiwan_stock_candidates_with_catalyst_snapshots、get_stock_price_series、get_valuation_model_inputs、run_reverse_dcf、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
 6. 最後在新對話啟用此連接器，並測試：「請先找出 2330 對應的公司，再查詢最近 12 季營業收入；標示期別、單位、來源與資料擷取時間。」
 7. 若我的方案或工作區政策不允許新增自訂 MCP，請明確告訴我限制及需要聯絡的管理員角色。`;
 
@@ -46,6 +46,8 @@ const toolSummaries = {
   get_daily_market_valuation: "查詢官方 latest 或指定日估值與參考財報欄位",
   get_valuation_model_inputs:
     "整理可追溯 TTM、FCFF proxy、net debt、market cap 與 EV 模型輸入",
+  run_reverse_dcf:
+    "以完整顯性假設反解市場價格隱含的單一 FCFF DCF 變數",
   get_monthly_revenue: "查詢官方 latest 或指定月份營收",
   get_monthly_revenue_trend: "查詢 3–24 個月營收序列與透明衍生趨勢",
   list_companies: "列出目前上市／上櫃公司母體，並揭露 heuristic coverage",
@@ -260,6 +262,7 @@ export default function Home() {
             <p><code>get_stock_price_series</code> 另提供單一公司、含頭含尾且最多 36 個日曆月份的完整序列。<code>raw_unadjusted</code> 不查公司行動；<code>price_index_compatible_corporate_action_adjusted</code> 以最後一根實際 raw bar 向後錨定，使用 TWSE／TPEx official actual-result factor，只移除股數變動的機械價格斷點。現金股利效果保留且 cash-only factor=1，因此不是 adjusted close、股息再投資或 total return；成交量永遠是 raw shares。coverage、factor、prior close、同日事件、identity 或 marker 證據不足時，受影響 adjusted OHLC 為 null，不會回退 raw。<code>include_event_ledger</code> 可輸出逐事件稽核證據，但 raw basis 不會因此查公司行動。單次呼叫最多收齊 3 個既有 OHLC cursor pages，並以 <code>workBudget</code> 揭露實際工作量。</p>
             <p><code>get_daily_market_valuation</code> 可查單一歷史交易日，<code>get_monthly_revenue</code> 與 trend 可查 2013-01 起月份；空白或 N/A 保留為 null 並附資料狀態，不會改寫成 0。歷史月營收是目前修訂後 archive，不是 point-in-time vintage。</p>
             <p><code>get_valuation_model_inputs</code> 為單一非金融公司整理 TTM、historical FCFF proxy、net debt、目前 issued shares、最近完成官方 close、market cap 與 enterprise value。每欄保留 evidenceClass、formula 與 lineage；缺 statement／單位／row role／market evidence 時回 <code>data_gap/null</code>，不補 0。歷史財報是目前可見、可能重編版本，不是 point-in-time filing vintage；issued shares 不是 fully diluted shares。金融公司為 not_applicable；工具不執行 DCF，也不提供隱藏 WACC、terminal growth、評級或目標價。</p>
+            <p><code>run_reverse_dcf</code> 沿用上述 normalized facts，以官方最近完成交易日收盤反解 revenue CAGR、FCFF CAGR 或 terminal operating margin；一次只解一項。forecast years、WACC、terminal growth、solve range、forward assumptions 與所有額外 EV bridge values 都必須明示，0 也不是隱藏預設。每個 sensitivity cell 會重新求解，缺資料、未 bracket 或 residual 未達 tolerance 時 fail closed。輸出分開官方／Mopsfin facts、caller assumptions 與 model outputs；這是 market-implied condition，不是 intrinsic value、共識、目標價、評級或投資建議，也不改變既有 screen preset。</p>
             <p><code>get_stock_reaction_signals</code> 保留原始未還原權值報酬，另以 TWSE／TPEx 除權息、減資與面額變更實際結果建立 price-index-compatible 報酬。現金股利的價格效果會保留以配合 price index；它不是 adjusted close 或 total return。coverage、調整因子、前收盤或 marker 證據不足時回 unknown，跨股數變動的 volume 不直接比較。</p>
             <p><code>screen_taiwan_stock_candidates</code> 固定使用 <code>balanced_non_financial_v2</code>／<code>taiwan_stock_screen.v2</code>，是 latest-only、有工作量上限的非金融研究分流：以月營收領先粗篩，再對有限名單評估 <code>companyQuality</code>、<code>fundamentalImprovement</code>、<code>reasonableValuation</code> 與 <code>marketUnderreactionProxy</code>，最多回傳 5 個候選。七項財務需求先由穩定 semantic roles 對即時 catalog 解析；缺少、重複或語意衝突會以 <code>CATALOG_CONTRACT_MISMATCH</code> fail closed，當次 role→code/name/family 證據則保留在 <code>screenDefinition.evidencePolicies</code>。market pillar 只接受可比的公司行動調整證據。deep stage 會在 24-unit 預算內隔離 company-level identity／metric errors；受影響代號以 <code>dependencyStatus</code> 與 <code>notReactionScored</code> 標示 unknown，不會被誤判為 fail 或 0 分。其餘 deepSelected 公司繼續，但不從 deepSelected 之外自動遞補。不同資料來源的 as-of 可能不同；結果不是完整全市場深篩、point-in-time 回測、錯價證明或投資建議。</p>
             <p><code>screen_taiwan_stock_candidates_with_catalyst_snapshots</code> 先執行相同四柱 screen，再對 <code>screen.candidates</code> 中所有實際 candidates 查 current official catalyst snapshots，最多 5 家；不論 bucket 是 research_candidate、watchlist、insufficient_data 或 deprioritized 都會查。只有 notDeepScored、notReactionScored、excluded，以及進入 deepSelected 但未形成 candidate 的公司會排除。快照不是歷史事件，也不是分析師 consensus；<code>affectsScreenScore=false</code>，因此不是第五柱、加分項或投資建議。原本的 <code>screen_taiwan_stock_candidates</code>、<code>get_company_catalyst_snapshots</code> 與 <code>get_company_catalyst_events</code> standalone tools 都保留。</p>

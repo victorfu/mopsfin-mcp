@@ -43,6 +43,12 @@ export {
 } from "./schema/valuation-model";
 
 export {
+  reverseDcfDataSchema,
+  reverseDcfInputSchema,
+  reverseDcfOutputSchema,
+} from "./schema/reverse-dcf";
+
+export {
   stockPriceSeriesInputSchema,
   stockPriceSeriesOutputSchema,
 } from "./schema/price-series";

@@ -257,7 +257,7 @@ export const valuationModelInputsInputSchema = z
   .strict()
   .describe("取得單一非金融公司 latest 可追溯估值模型輸入的查詢");
 
-export const valuationModelInputsDataSchema = z
+const valuationModelInputsDataObjectSchema = z
   .object({
     query: z
       .object({
@@ -349,8 +349,16 @@ export const valuationModelInputsDataSchema = z
       .describe("本次 normalization orchestration 的明確工作量上限與實際呼叫數"),
     warnings: z.array(z.string().min(1).describe("模型輸入的資料限制、口徑或 dependency 警語")).describe("不可忽略的模型輸入口徑與資料限制"),
   })
-  .strict()
-  .superRefine((result, context) => {
+  .strict();
+
+type ValuationModelInputsSchemaData = z.infer<
+  typeof valuationModelInputsDataObjectSchema
+>;
+
+function validateValuationModelInputsData(
+  result: ValuationModelInputsSchemaData,
+  context: z.RefinementCtx,
+): void {
     const ids = fieldIdSchema.options;
     const dataGap = ids.filter((id) => result.fields[id].status === "data_gap");
     const notApplicable = ids.filter((id) => result.fields[id].status === "not_applicable");
@@ -404,13 +412,20 @@ export const valuationModelInputsDataSchema = z
         context.addIssue({ code: "custom", path: ["fields"], message: "applicable 公司不得混入 not_applicable 欄位" });
       }
     }
-  })
+  }
+
+export const valuationModelInputsDataSchema =
+  valuationModelInputsDataObjectSchema
+  .superRefine(validateValuationModelInputsData)
   .describe("可直接供顯性假設模型使用、但本身不執行估值判斷的 normalized valuation inputs");
 
 export const valuationModelInputsOutputSchema = z
   .object({
     ...successResultShape,
-    ...valuationModelInputsDataSchema.shape,
+    ...valuationModelInputsDataObjectSchema.shape,
   })
   .strict()
+  .superRefine((result, context) =>
+    validateValuationModelInputsData(result, context),
+  )
   .describe("get_valuation_model_inputs 的成功結果與共用 MCP metadata");

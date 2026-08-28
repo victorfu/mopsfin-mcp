@@ -32,6 +32,13 @@ describe("LLM-facing official guidance", () => {
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_daily_market_valuation");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_monthly_revenue");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("run_reverse_dcf");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "一次只反解 revenue_cagr、fcff_cagr 或 terminal_operating_margin",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "不是 intrinsic value、分析師共識、目標價",
+    );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("成交量正規化為股");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("strict_current_master");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("valueStatus");
@@ -44,6 +51,14 @@ describe("LLM-facing official guidance", () => {
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("FRESHNESS_UNVERIFIED");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("DATA_STALE");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("cache hit 不會改寫 retrievedAt");
+    expect(MOPSFIN_OFFICIAL_GUIDANCE.valueBasis).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          dataType: "市場隱含 Reverse DCF",
+          basis: expect.stringContaining("caller 明示全部"),
+        }),
+      ]),
+    );
   });
 
   it("distinguishes raw OHLC from fail-closed corporate-action-adjusted series", () => {

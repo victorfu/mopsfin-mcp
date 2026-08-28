@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.8.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 21 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
+目前版本 `0.8.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 22 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -43,6 +43,7 @@ Next.js /api/mcp on Vercel
 | `get_stock_reaction_signals` | 比較個股 5／20／60／120 交易日原始與 price-index-compatible 報酬、價格指數 benchmark、量能與回撤代理訊號 |
 | `get_daily_market_valuation` | 查詢上市、上櫃或全部市場 latest／指定日估值與參考財報欄位 |
 | `get_valuation_model_inputs` | 整理單一非金融公司的可追溯 TTM、歷史 FCFF proxy、net debt、market cap 與 enterprise value 模型輸入 |
+| `run_reverse_dcf` | 以顯性假設反解目前市場價格隱含的 revenue CAGR、FCFF CAGR 或 terminal operating margin |
 | `get_monthly_revenue` | 查詢上市、上櫃或全部市場 latest／指定月份營收、MoM、YoY 與累計營收 |
 | `get_monthly_revenue_trend` | 查詢 3–24 個月營收序列、滾動 YoY 與改善加速度 |
 | `get_company_catalyst_events` | 查詢 selected companies 指定日期範圍的官方重大訊息與法人說明會；`isConsensus=false` |
@@ -60,7 +61,7 @@ Next.js /api/mcp on Vercel
 
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。成功結果固定包含 `ok=true` 與 `meta`；`meta.asOf`、`meta.quality`、`meta.page` 分別揭露實際資料時間、來源／母體／selection／值品質與續頁狀態。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
-LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 21 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 22 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
 
 需要目前上市櫃代號母體或全市場掃描候選代號時使用 `list_companies`；只知道特定公司名稱或代號時使用 `find_companies`，不要以 `find_companies` 枚舉全市場。不知道資料指標或期間時使用 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
@@ -198,6 +199,14 @@ TTM 嚴格採 Q4 FY，或 `current YTD + prior FY - prior-year YTD`。每份 Mop
 
 `meta.asOf.resolved.granularity=mixed` 且 from／through 維持 null，不把 quarter 與 calendar date 排成假的單一時間軸；真實時間只從逐來源 cutoff 分開讀取 master date、statement quarter 與 market date。Mopsfin latest 財報沒有可靠 expected quarter 時 freshness 為 `unknown`；官方 latest close 在沒有權威交易日 resolver 時也維持 `unknown + FRESHNESS_UNVERIFIED`，不能因 selector 是 latest 就宣稱新鮮。金融公司回 `not_applicable`，不得硬套一般企業 FCFF／enterprise-value DCF；應改用 residual income、dividend discount 或 excess-return 類模型。
 
+### `run_reverse_dcf` 市場隱含 Reverse DCF
+
+這個工具沿用 `get_valuation_model_inputs` 的 current-master identity、normalized financial facts、cash、aggregate interest-bearing debt、目前 issued common shares 與官方最近完成交易日收盤，以 FCFF／WACC、year-end discounting 和 perpetuity-growth terminal value 建立 deterministic market-implied reverse DCF。每次只能反解 `revenue_cagr`、`fcff_cagr` 或 `terminal_operating_margin` 其中一項；其餘 forecast years、WACC、terminal growth、solve range 與 mode-specific forward assumptions 都必須由 caller 明示。`WACC <= terminal growth`、必要 normalized fact／lineage 不完整、解區間未 bracket 市場 enterprise value，或數值 residual 無法在 tolerance 內收斂時會 fail closed，不會外插或產生看似合理的答案。
+
+enterprise-value bridge 的 `non_operating_assets_twd`、`non_controlling_interests_twd`、`preferred_equity_twd`、`pension_deficit_twd` 與 `other_debt_like_items_twd` 也都是必填 caller assumptions；輸入 0 仍是顯性聲明，不代表官方來源已驗證為零。`non_operating_assets_twd` 必須排除已在 cash 欄位中的金額，`other_debt_like_items_twd` 必須排除已彙總進 interest-bearing debt 的負債與 lease roles，避免 bridge double count。股數基礎是目前 issued common shares，不是 fully diluted shares；金融公司固定回 `NOT_APPLICABLE_FINANCIAL_COMPANY`。
+
+輸出保留逐年 forecast、terminal value、enterprise-to-equity bridge、PV tie-out、solver tolerance、checks，以及 `MOPSFIN_RAW`／`MOPSFIN_CALC`、官方來源、`CALLER_ASSUMPTION` 與 `MODEL_OUTPUT` 的分離證據。可選 sensitivity grid 每軸最多 5 個值、合計最多 25 cells；每個 cell 會重新反解，無可行解會個別標記，不能拿主模型或鄰近值代填。`workBudget` 分開揭露單次 orchestration、`1 + sensitivity cells` 個 solve attempts（最多 26），以及固定 solver policy 下每次最多 323、整體最多 8,398 次 model evaluations 的保守上限。來源時間維持 `source.retrievedAt <= valuationModelGeneratedAt <= generatedAt <= meta.asOf.servedAt`，財報季度、master date 與 market date 仍以 mixed source cutoffs 分開揭露。這個結果描述「caller assumptions 下，現在市場價格隱含什麼」，不是 intrinsic value、目標價、分析師共識、買賣評級或投資建議，也不會偷偷改變 `balanced_non_financial_v2`；未來若納入 screening，必須另開新 preset。
+
 `get_monthly_revenue` 接受 `latest` 或 `2013-01` 起的 `YYYY-MM`。latest 以 OpenAPI 發現月份並與 MOPS archive 核對；同月不同出表日的少量重疊公司數值差異視為官方修訂，採較新 snapshot 並加入 warning，同出表日或大範圍衝突則報錯。歷史月份直接讀取 archive。歷史 archive 是目前可取得的修訂後檔案，不是當時發布內容的 vintage snapshot，不適合無偏誤 point-in-time backtest。MOPS CSV 沒有 declared row count、footer 或 checksum；工具會接受官方舊版短欄名與目前帶前綴的 14 欄格式，並驗證 RFC 4180、必要欄位、資料年月／出表日、四碼 eligible 代號唯一性，以 `sources[].integrity` 明示「結構可驗證、完整 rowset 不可證明」。`sourceCoverage` 與 `filingCoverage` 分別代表 rowset 完整性與 latest 申報進度，歷史月份的 `coverageComplete=false`、`filingCoverage.status=historical_cross_timepoint_unverified`。
 
 估值的空白、`-` 或 `N/A` 會回 `null` 與 `missing_or_not_meaningful`，來源沒有該欄位則為 `not_provided_by_source`；`rawValue` 保留官方 marker，不會擅自推論成虧損或轉為 0。月營收官方金額以新台幣仟元提供，服務統一乘以 1,000 回傳 TWD；`sourceReportDate` 是資料集出表日期，不代表個別公司的申報時間。最新資料列未覆蓋目前全部公司可能源於申報進度、資料適用性或公司狀態差異，應讀取 `filingCoverage` 並回查官方申報，不可只以筆數判定上游失敗。
@@ -259,7 +268,7 @@ ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` �
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
 4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
-5. 建立後確認 ChatGPT 能辨識 21 個工具。
+5. 建立後確認 ChatGPT 能辨識 22 個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
 Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流程見 [OpenAI 官方連接說明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。
@@ -268,6 +277,7 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 
 - 「查台積電最近 12 季營業收入，整理成表格並標示期別、單位與 warnings。」
 - 「用 get_valuation_model_inputs 整理台積電的 TTM、歷史 FCFF proxy、net debt、目前 issued shares、最近完成官方收盤與 enterprise value；逐欄列出 evidenceClass、formula、lineage、data_gap 與 freshness，不補 0、不當成 point-in-time vintage，也不要執行 DCF。」
+- 「用 run_reverse_dcf 反解台積電目前官方收盤價隱含的 5 年 revenue CAGR；明示 WACC、terminal growth、normalized margin、cash tax、sales-to-capital、solve range 與每一項 EV bridge assumption，列出 forecast、terminal value、PV tie-out、evidenceClass、source cutoffs 與 sensitivity cell failures，不要把結果稱為目標價、共識或投資建議。」
 - 「查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。」
 - 「用 get_stock_price_series 查台積電 2025-01-01 到 2026-08-24 的 price-index-compatible 公司行動調整日線並附 event ledger；同時保留 raw OHLC、標示 backward anchor、現金股利 factor=1 與 raw shares，任何 adjustment 證據不足請回 null，不要回退 raw，也不要稱為 adjusted close 或 total return。」
 - 「列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。」

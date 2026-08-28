@@ -10,7 +10,10 @@ import type {
 import type { StatementKind } from "@/lib/mopsfin/client";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { buildResultMeta } from "@/lib/mcp/result-contract";
-import { valuationModelInputsDataSchema } from "@/lib/mcp/schema/valuation-model";
+import {
+  valuationModelInputsDataSchema,
+  valuationModelInputsOutputSchema,
+} from "@/lib/mcp/schema/valuation-model";
 import type { DailyMarketValuationResult } from "@/lib/valuation/types";
 import { ValuationModelInputsClient } from "@/lib/valuation-model/client";
 import type { FinancialStatementResultLike } from "@/lib/valuation-model/statement-resolver";
@@ -384,6 +387,16 @@ describe("ValuationModelInputsClient", () => {
           cutoff.resolved.from === "2026Q2",
       ),
     ).toBe(true);
+
+    const advertisedOutput = { ok: true as const, meta, ...result };
+    expect(
+      valuationModelInputsOutputSchema.safeParse(advertisedOutput).success,
+    ).toBe(true);
+    const inconsistentOutput = structuredClone(advertisedOutput);
+    inconsistentOutput.quality.calculationComplete = false;
+    expect(
+      valuationModelInputsOutputSchema.safeParse(inconsistentOutput).success,
+    ).toBe(false);
   });
 
   it("uses a Q4 annual statement directly without fetching historical TTM bridge periods", async () => {

@@ -14,6 +14,7 @@ const readme = readFileSync(
 const verifiedExamplePrompts = [
   "查台積電最近 12 季營業收入，整理成表格並標示期別、單位與 warnings。",
   "用 get_valuation_model_inputs 整理台積電的 TTM、歷史 FCFF proxy、net debt、目前 issued shares、最近完成官方收盤與 enterprise value；逐欄列出 evidenceClass、formula、lineage、data_gap 與 freshness，不補 0、不當成 point-in-time vintage，也不要執行 DCF。",
+  "用 run_reverse_dcf 反解台積電目前官方收盤價隱含的 5 年 revenue CAGR；明示 WACC、terminal growth、normalized margin、cash tax、sales-to-capital、solve range 與每一項 EV bridge assumption，列出 forecast、terminal value、PV tie-out、evidenceClass、source cutoffs 與 sensitivity cell failures，不要把結果稱為目標價、共識或投資建議。",
   "查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。",
   "用 get_stock_price_series 查台積電 2025-01-01 到 2026-08-24 的 price-index-compatible 公司行動調整日線並附 event ledger；同時保留 raw OHLC、標示 backward anchor、現金股利 factor=1 與 raw shares，任何 adjustment 證據不足請回 null，不要回退 raw，也不要稱為 adjusted close 或 total return。",
   "列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。",
@@ -141,6 +142,12 @@ describe("README example prompts", () => {
       "`suite` 可選 `catalog-screen`、`corporate-actions`、`catalysts`、`valuation-model-inputs` 或 `all`",
     );
     expect(readme).toContain("### `get_valuation_model_inputs` 可追溯估值模型資料層");
+    expect(readme).toContain("### `run_reverse_dcf` 市場隱含 Reverse DCF");
+    expect(readme).toContain("NOT_APPLICABLE_FINANCIAL_COMPANY");
+    expect(readme).toContain("每個 cell 會重新反解");
+    expect(readme).toContain("最多 26");
+    expect(readme).toContain("整體最多 8,398 次 model evaluations");
+    expect(readme).toContain("不是 intrinsic value、目標價、分析師共識");
     expect(readme).toContain("source/sign-normalized historical FCFF proxy");
     expect(readme).toContain("不是 point-in-time filing vintage");
     expect(readme).toContain("不是歷史期末、加權平均或 fully diluted shares");

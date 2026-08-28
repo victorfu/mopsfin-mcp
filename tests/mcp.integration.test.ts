@@ -2805,6 +2805,7 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("raw_unadjusted");
     expect(client.getInstructions()).toContain("get_daily_market_valuation");
     expect(client.getInstructions()).toContain("get_valuation_model_inputs");
+    expect(client.getInstructions()).toContain("run_reverse_dcf");
     expect(client.getInstructions()).toContain("get_monthly_revenue");
     expect(client.getInstructions()).toContain("get_monthly_revenue_trend");
     expect(client.getInstructions()).toContain("get_stock_reaction_signals");
@@ -3000,6 +3001,20 @@ describe("MCP protocol integration", () => {
       type: "object",
       additionalProperties: false,
       required: ["company_code"],
+    });
+    const reverseDcfTool = listed.tools.find(
+      (tool) => tool.name === "run_reverse_dcf",
+    );
+    expect(reverseDcfTool?.description).toContain("一次只反解");
+    expect(reverseDcfTool?.description).toContain("不提供隱藏預設");
+    expect(reverseDcfTool?.description).toContain("不是 intrinsic value");
+    expect(reverseDcfTool?.inputSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+    });
+    expect(reverseDcfTool?.outputSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
     });
     const revenueTool = listed.tools.find(
       (tool) => tool.name === "get_monthly_revenue",

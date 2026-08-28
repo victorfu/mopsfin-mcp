@@ -14,6 +14,7 @@ import { marketTools } from "./tools/market";
 import { priceSeriesTools } from "./tools/price-series";
 import { revenueTools } from "./tools/revenue";
 import { researchTools } from "./tools/research";
+import { reverseDcfTools } from "./tools/reverse-dcf";
 import { screeningTools } from "./tools/screening";
 import { valuationModelTools } from "./tools/valuation-model";
 
@@ -25,6 +26,7 @@ const definitions = [
   ...screeningTools,
   ...researchTools,
   ...valuationModelTools,
+  ...reverseDcfTools,
   ...revenueTools,
   ...catalogTools,
   ...financialsTools,

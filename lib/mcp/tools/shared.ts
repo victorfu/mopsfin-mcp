@@ -65,6 +65,8 @@ export {
   monthlyRevenueOutputSchema,
   monthlyRevenueTrendInputSchema,
   monthlyRevenueTrendOutputSchema,
+  reverseDcfInputSchema,
+  reverseDcfOutputSchema,
   screenTaiwanStockCandidatesInputSchema,
   screenTaiwanStockCandidatesOutputSchema,
   stockReactionSignalsInputSchema,
