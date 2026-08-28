@@ -1,4 +1,9 @@
 import type { CompanyMarket } from "@/lib/company-master/types";
+import type {
+  AuthoritativeCompletedCloseResult,
+  AuthoritativeCompletedCloseSource,
+} from "@/lib/completed-close/types";
+import type { MopsfinError } from "@/lib/mopsfin/errors";
 import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 import type { StatementKind } from "@/lib/mopsfin/client";
 
@@ -106,12 +111,10 @@ export interface ValuationModelCompanyMasterSource
   asOfGranularity: "date";
 }
 
-export interface ValuationModelMarketSource
-  extends ValuationModelSourceBase {
-  stage: "market_valuation";
-  market: CompanyMarket;
-  exchange: "TWSE" | "TPEx";
-  dataDate: string;
+export interface ValuationModelCompletedCloseSource
+  extends ValuationModelSourceBase,
+    Omit<AuthoritativeCompletedCloseSource, keyof ValuationModelSourceBase> {
+  stage: "latest_official_completed_close";
   asOf: string;
   asOfGranularity: "date";
 }
@@ -119,7 +122,7 @@ export interface ValuationModelMarketSource
 export type ValuationModelSource =
   | ValuationModelStatementSource
   | ValuationModelCompanyMasterSource
-  | ValuationModelMarketSource;
+  | ValuationModelCompletedCloseSource;
 
 export type ValuationModelLineageStatus =
   | "resolved"
@@ -217,14 +220,25 @@ export interface ValuationModelInputsResult {
       maximum: 7;
       rowsPerCallMaximum: 500;
     };
-    valuationDependencyCalls: {
+    authoritativeCompletedCloseCalls: {
       actual: 0 | 1;
       maximum: 1;
-      internalCurrentMasterPolicy: "compatible";
-      minimumCurrentMasterMatchRatio: 0.95;
-      selectedCompanyIdentityPolicy:
-        "outer_market_all_master_plus_official_row_exact";
+      completedSessionResolver: {
+        actualLogicalLoads: number | null;
+        maximumLogicalLoads: number;
+      };
+      exactStockOhlcAttempts: {
+        actual: 0 | 1 | 2 | null;
+        maximum: 2;
+        cacheRefreshPerformed: boolean | null;
+      };
     };
   };
   warnings: string[];
+}
+
+export interface ValuationModelInputsExecution {
+  data: ValuationModelInputsResult;
+  completedClose: AuthoritativeCompletedCloseResult | null;
+  completedCloseError: MopsfinError | null;
 }

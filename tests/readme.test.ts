@@ -15,7 +15,7 @@ const verifiedExamplePrompts = [
   "查台積電最近 12 季營業收入，整理成表格並標示期別、單位與 warnings。",
   "用 get_valuation_model_inputs 整理台積電的 TTM、歷史 FCFF proxy、net debt、目前 issued shares、最近完成官方收盤與 enterprise value；逐欄列出 evidenceClass、formula、lineage、data_gap 與 freshness，不補 0、不當成 point-in-time vintage，也不要執行 DCF。",
   "用 run_reverse_dcf 反解台積電目前官方收盤價隱含的 5 年 revenue CAGR；明示 WACC、terminal growth、normalized margin、cash tax、sales-to-capital、solve range 與每一項 EV bridge assumption，列出 forecast、terminal value、PV tie-out、evidenceClass、source cutoffs 與 sensitivity cell failures，不要把結果稱為目標價、共識或投資建議。",
-  "用 analyze_observed_price 比較我在 2026-08-28T09:32:00+08:00 看到的台積電 1,200 元，與官方最近完成交易日收盤價；把 caller-supplied 與 official evidence 分開，列出 cutoff、cache、價差與 warnings，不要稱為即時行情、合理價或投資建議。",
+  "用 analyze_observed_price 比較我在 2026-08-28T14:00:00+08:00 看到的台積電 1,200 元，與官方最近完成交易日收盤價；把 caller-supplied 與 official evidence 分開，列出 cutoff、cache、價差與 warnings，不要稱為即時行情、合理價或投資建議。",
   "查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。",
   "用 get_stock_price_series 查台積電 2025-01-01 到 2026-08-24 的 price-index-compatible 公司行動調整日線並附 event ledger；同時保留 raw OHLC、標示 backward anchor、現金股利 factor=1 與 raw shares，任何 adjustment 證據不足請回 null，不要回退 raw，也不要稱為 adjusted close 或 total return。",
   "列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。",
@@ -150,10 +150,15 @@ describe("README example prompts", () => {
     expect(readme).toContain("### `run_reverse_dcf` 市場隱含 Reverse DCF");
     expect(readme).toContain("### `analyze_observed_price` Caller 觀察價比較");
     expect(readme).toContain("`priceOrigin=caller_supplied`");
-    expect(readme).toContain("`not_exposed_by_dependency`");
-    expect(readme).toContain("各市場 `matchRatio` 至少 95%");
+    expect(readme).toContain("authoritative completed-close routing");
+    expect(readme).toContain("resolver `expectedAsOf`");
+    expect(readme).toContain("exact single-stock monthly OHLC");
+    expect(readme).toContain("`selectedBarDate=expectedAsOf`");
+    expect(readme).toContain("`dataMonth` 是月資料文件身分");
+    expect(readme).toContain("`workBudget.authoritativeCompletedCloseCalls`");
+    expect(readme).toContain("不會在 exact bar 缺少時退回前一交易日");
     expect(readme).toContain(
-      "目標公司的 code、name、market 必須由外層 master 與官方行情列精確吻合",
+      "外層 `market=all` current master 先唯一核對指定公司的 code、short name、market 與 exchange",
     );
     expect(readme).toContain("`13:33:00 Asia/Taipei`");
     expect(readme).toContain("`-00:00` 表示未知 local offset");

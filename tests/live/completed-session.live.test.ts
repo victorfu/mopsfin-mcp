@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { AuthoritativeCompletedCloseClient } from "@/lib/completed-close/client";
 import {
   COMPLETED_SESSION_COMPLETION_GUARD_TAIPEI,
   COMPLETED_SESSION_RESOLVER_ID,
@@ -95,5 +96,53 @@ liveDescribe("live authoritative completed-session contract", () => {
         /^(?:hit|miss|shared|bypass|unknown)$/,
       );
     }
+  }, 90_000);
+
+  it("routes the resolved listed session to the exact 2330 single-stock close", async () => {
+    const result = await new AuthoritativeCompletedCloseClient()
+      .getLatestCompletedClose({
+        company: {
+          code: "2330",
+          shortName: "台積電",
+          market: "listed",
+          exchange: "TWSE",
+        },
+        evaluatedAt: new Date(),
+      });
+
+    expect(result.expectedAsOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(result.selectedBarDate).toBe(result.expectedAsOf);
+    expect(result.bar.date).toBe(result.expectedAsOf);
+    expect(result.close).toBe(result.bar.close);
+    expect(result.close).toBeGreaterThan(0);
+    expect(result.source).toMatchObject({
+      companyCode: "2330",
+      market: "listed",
+      exchange: "TWSE",
+      observedName: "台積電",
+      dataMonth: result.expectedAsOf.slice(0, 7),
+      selectedBarDate: result.expectedAsOf,
+      snapshotIdentity: "verified",
+    });
+    const sourceUrl = new URL(result.source.sourceUrl);
+    expect(sourceUrl.hostname).toBe("www.twse.com.tw");
+    expect(sourceUrl.pathname).toBe("/rwd/zh/afterTrading/STOCK_DAY");
+    expect(sourceUrl.searchParams.get("stockNo")).toBe("2330");
+    expect(result.workBudget).toMatchObject({
+      scope: "authoritative_completed_close_routing",
+      completedSessionResolver: {
+        marketCount: 1,
+        calendarLogicalLoads: 1,
+        sessionMarkerLogicalLoads: 1,
+        actualTotal: 2,
+        maximumTotal: 2,
+      },
+      exactStockOhlcAttempts: {
+        maximum: 2,
+      },
+    });
+    expect([1, 2]).toContain(
+      result.workBudget.exactStockOhlcAttempts.actual,
+    );
   }, 90_000);
 });

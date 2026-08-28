@@ -1,3 +1,5 @@
+import type { AuthoritativeCompletedCloseResult } from "@/lib/completed-close/types";
+import { completedSessionResolverSourceUrls } from "@/lib/freshness/completed-session-resolver";
 import type { FreshnessEvaluation } from "@/lib/freshness/types";
 import type { QualityIssue } from "@/lib/mcp/result-contract";
 import { valuationModelInputsClient } from "@/lib/valuation-model/client";
@@ -7,6 +9,7 @@ import type {
   ValuationModelSource,
 } from "@/lib/valuation-model/types";
 
+import { completedSessionSnapshotEvidence } from "../completed-session-snapshot";
 import {
   valuationModelInputsInputSchema,
   valuationModelInputsOutputSchema,
@@ -18,7 +21,6 @@ import {
   evaluateFreshness,
   failure,
   fingerprint,
-  resolveOfficialCompletedSessionFreshness,
   success,
   taipeiDate,
 } from "./shared";
@@ -52,11 +54,12 @@ function latestCloseDependencyEvidenceAccepted(
   data: ValuationModelInputsResult,
 ): boolean {
   const status = latestCloseLineageStatus(data);
-  return status === "resolved" || status === "missing";
+  return status === "resolved";
 }
 
 export async function valuationModelFreshnessDetails(
   data: ValuationModelInputsResult,
+  completedClose: AuthoritativeCompletedCloseResult | null = null,
 ): Promise<FreshnessEvaluation[]> {
   const details: FreshnessEvaluation[] = [];
   const masterSources = sourcesByStage(data.sources, "company_master");
@@ -83,22 +86,28 @@ export async function valuationModelFreshnessDetails(
     );
   }
 
-  const marketSources = sourcesByStage(data.sources, "market_valuation");
+  const marketSources = sourcesByStage(
+    data.sources,
+    "latest_official_completed_close",
+  );
   if (
     marketSources.length > 0 &&
-    latestCloseDependencyEvidenceAccepted(data)
+    latestCloseDependencyEvidenceAccepted(data) &&
+    completedClose !== null
   ) {
     details.push(
-      ...(await resolveOfficialCompletedSessionFreshness({
-        market: data.company.market,
-        observations: [
-          {
-            market: data.company.market,
-            observedAsOf: latestObservedAsOf(marketSources),
-            sources: marketSources,
-          },
-        ],
-      })),
+      evaluateFreshness({
+        policy: FRESHNESS_POLICIES.completedOfficialSession,
+        observedAsOf: latestObservedAsOf(marketSources),
+        expectedAsOf: completedClose.expectedAsOf,
+        sourceUrls: unique([
+          ...marketSources.map((source) => source.sourceUrl),
+          ...completedSessionResolverSourceUrls(
+            completedClose.resolverEvidence,
+          ),
+        ]),
+        resolverEvidence: completedClose.resolverEvidence,
+      }),
     );
   }
 
@@ -165,7 +174,7 @@ function qualityIssues(data: ValuationModelInputsResult): QualityIssue[] {
       severity: "warning",
       scope: "source",
       message:
-        "至少一個實際執行的 company master、statement 或 official valuation dependency 缺少對應 source lineage，或未通過 identity／reconciliation／source contract；source 品質為 partial。",
+        "至少一個實際執行的 company master、statement 或 authoritative completed-close dependency 缺少對應 source lineage，或未通過 resolver／exact-bar identity contract；source 品質為 partial。",
       refs: issueRefs(data, {
         fields: ["sources", "lineage", "workBudget"],
       }),
@@ -247,13 +256,16 @@ export function valuationModelSourceDependenciesComplete(
 ): boolean {
   const masterSourceCount = sourcesByStage(data.sources, "company_master").length;
   const statementSourceCount = sourcesByStage(data.sources, "statement").length;
-  const marketSourceCount = sourcesByStage(data.sources, "market_valuation").length;
+  const marketSourceCount = sourcesByStage(
+    data.sources,
+    "latest_official_completed_close",
+  ).length;
   const marketDependencyAccepted =
     marketSourceCount > 0 && latestCloseDependencyEvidenceAccepted(data);
   return (
     masterSourceCount === 1 &&
     statementSourceCount === data.workBudget.statementCalls.actual &&
-    (data.workBudget.valuationDependencyCalls.actual === 0 ||
+    (data.workBudget.authoritativeCompletedCloseCalls.actual === 0 ||
       marketDependencyAccepted)
   );
 }
@@ -263,16 +275,18 @@ export const getValuationModelInputsTool = defineTool(
   {
     title: "取得可追溯的估值模型輸入",
     description:
-      "為單一目前上市櫃非金融公司整理可重算的 valuation model input evidence：TTM revenue、營業利益 EBIT proxy、cash tax rate、D&A、只含 PPE acquisition 的 CapEx、ΔNWC、source/sign-normalized historical FCFF proxy、cash、有息負債、net debt、目前 issued shares、最近完成官方估值日收盤、market cap 與 enterprise value。財報 TTM 嚴格採 Q4 FY 或 current YTD + prior FY - prior-year YTD，並核對 company identity、報表類型、期別、合併範圍、row-role uniqueness 及 HTML/catalog unit provenance；任一證據不足即 data_gap/null，不補 0、不猜科目、不靜默換來源。latestOfficialClose 的內部全市場 dependency 使用 compatible，仍要求至少 95% current-master matchRatio；單一公司 code／name／market 必須再由外層 market=all current master 與官方 selected row 精確核對，因此無關公司的集合差異不會讓合法價格變成 data_gap，目標公司或來源證據不一致仍 fail closed。每個欄位揭露 reported/derived/data_gap/not_applicable、evidenceClass、formula、inputs、lineage 與 notes；歷史財報是目前可見、可能重編版本，不是 point-in-time filing vintage。issuedShares 是目前 master 的已發行普通股，不是 fully diluted shares；latestOfficialClose 不是盤中價，其 freshness 由公司所屬市場的官方年度開休市日曆、exact benchmark session 與 13:33 guard 驗證，來源不可用或契約漂移時保守為 unknown。金融業明確 NOT_APPLICABLE，應改用 residual-income/dividend 類模型。本工具不執行 DCF、不提供 WACC／terminal-growth 隱藏預設、評級、目標價或投資建議。",
+      "為單一目前上市櫃非金融公司整理可重算的 valuation model input evidence：TTM revenue、營業利益 EBIT proxy、cash tax rate、D&A、只含 PPE acquisition 的 CapEx、ΔNWC、source/sign-normalized historical FCFF proxy、cash、有息負債、net debt、目前 issued shares、最近完成官方收盤、market cap 與 enterprise value。財報 TTM 嚴格採 Q4 FY 或 current YTD + prior FY - prior-year YTD，並核對 company identity、報表類型、期別、合併範圍、row-role uniqueness 及 HTML/catalog unit provenance；任一證據不足即 data_gap/null，不補 0、不猜科目、不靜默換來源。latestOfficialClose 先以 request-start 固定的 evaluatedAt 呼叫 authoritative completed-session resolver，再強制讀取 expectedAsOf 同日的官方 exact single-stock OHLC；resolver 日期、selected bar、source selectedBarDate 與 lineage period 必須完全一致，不使用或回退全市場 latest。每個欄位揭露 reported/derived/data_gap/not_applicable、evidenceClass、formula、inputs、lineage 與 notes；歷史財報是目前可見、可能重編版本，不是 point-in-time filing vintage。issuedShares 是目前 master 的已發行普通股，不是 fully diluted shares；completed-close resolver 或 exact bar 不可用時，statement evidence 仍保留，但 close、market cap 與 EV 維持 data_gap。金融業明確 NOT_APPLICABLE，應改用 residual-income/dividend 類模型。本工具不執行 DCF、不提供 WACC／terminal-growth 隱藏預設、評級、目標價或投資建議。",
     inputSchema: valuationModelInputsInputSchema,
     outputSchema: valuationModelInputsOutputSchema,
     annotations,
   },
   async ({ company_code }) => {
     try {
-      const data = await valuationModelInputsClient.getValuationModelInputs({
-        companyCode: company_code,
-      });
+      const execution =
+        await valuationModelInputsClient.getValuationModelInputsWithContext({
+          companyCode: company_code,
+        });
+      const { data, completedClose } = execution;
       const dataGapCount = data.quality.dataGapFields.length;
       const sourceComplete = valuationModelSourceDependenciesComplete(data);
       const masterSourceCount = sourcesByStage(
@@ -285,6 +299,9 @@ export const getValuationModelInputsTool = defineTool(
         periods: data.periods,
         sources: data.sources,
         fields: data.fields,
+        completedSessionResolver: completedClose
+          ? completedSessionSnapshotEvidence(completedClose.resolverEvidence)
+          : null,
       });
       return success(
         data.applicability.status === "not_applicable"
@@ -308,7 +325,10 @@ export const getValuationModelInputsTool = defineTool(
               : dataGapCount > 0
                 ? "partial"
                 : "complete",
-          freshnessDetails: await valuationModelFreshnessDetails(data),
+          freshnessDetails: await valuationModelFreshnessDetails(
+            data,
+            completedClose,
+          ),
           issues: qualityIssues(data),
         },
       );

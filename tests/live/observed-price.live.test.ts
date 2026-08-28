@@ -7,7 +7,7 @@ const liveDescribe =
   process.env.RUN_LIVE_MOPSFIN_TESTS === "1" ? describe : describe.skip;
 
 liveDescribe("live caller-supplied observed-price contract", () => {
-  it("resolves 2330 through compatible market reconciliation and exact selected identity", async () => {
+  it("binds 2330 to the resolver expectedAsOf and exact single-stock source", async () => {
     const observedAt = new Date().toISOString();
     const toolResult = await analyzeObservedPriceTool.handler(
       {
@@ -18,7 +18,10 @@ liveDescribe("live caller-supplied observed-price contract", () => {
       },
       {} as Parameters<typeof analyzeObservedPriceTool.handler>[1],
     );
-    expect(toolResult.isError).not.toBe(true);
+    expect(
+      toolResult.isError,
+      JSON.stringify(toolResult.structuredContent),
+    ).not.toBe(true);
     const result = analyzeObservedPriceOutputSchema.parse(
       toolResult.structuredContent,
     );
@@ -31,9 +34,7 @@ liveDescribe("live caller-supplied observed-price contract", () => {
     expect(result.observedAt).toBe(observedAt);
     expect(result.latestOfficialCompletedClose).toBeGreaterThan(0);
     expect(result.latestOfficialCloseDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(result.officialHistoryCutoff).toBe(
-      result.latestOfficialCloseDate,
-    );
+    expect(result.officialHistoryCutoff).toBe(result.latestOfficialCloseDate);
     expect(result.sources).toHaveLength(3);
     expect(result.meta.asOf).toMatchObject({
       selector: "snapshot",
@@ -46,24 +47,80 @@ liveDescribe("live caller-supplied observed-price contract", () => {
       selection: "complete",
       values: "complete",
     });
-    expect(result.provenance.currentMasterIdentity.sourceIds).toHaveLength(2);
-    expect(result.provenance.officialBaseline.sourceIds).toHaveLength(1);
-    expect(result.workBudget).toMatchObject({
-      universePolicy: "compatible",
-      selectedCompanyIdentityPolicy:
-        "outer_market_all_master_plus_official_row_exact",
+    const completedFreshness = result.meta.quality.freshnessDetails.find(
+      (detail) => detail.policyId === "official.completed-session.v1",
+    );
+    expect(completedFreshness).toMatchObject({
+      status: "within_expected_window",
+      observedAsOf: result.latestOfficialCloseDate,
+      expectedAsOf: result.latestOfficialCloseDate,
+      lag: { value: 0, unit: "trading_session" },
+      resolverEvidence: {
+        status: "resolved",
+        expectedAsOf: result.latestOfficialCloseDate,
+        markets: ["listed"],
+      },
     });
     expect(
-      result.dependencyLedger.find(
-        (entry) =>
-          entry.dependency ===
-          "official_daily_market_internal_compatible_master",
-      )?.sourceEvidence,
-    ).toBe("not_exposed_by_dependency");
-    expect(
-      result.dependencyLedger.find(
-        (entry) => entry.dependency === "official_daily_market_price",
-      )?.sourceEvidence,
-    ).toBe("exposed");
+      completedFreshness?.resolverEvidence?.marketResolutions,
+    ).toEqual([
+      expect.objectContaining({
+        market: "listed",
+        status: "resolved",
+        expectedAsOf: result.latestOfficialCloseDate,
+      }),
+    ]);
+    expect(result.provenance.currentMasterIdentity.sourceIds).toHaveLength(2);
+    expect(result.provenance.officialBaseline.sourceIds).toHaveLength(1);
+    const closeSource = result.sources.find(
+      (source) => source.stage === "latest_official_completed_close",
+    );
+    expect(closeSource).toMatchObject({
+      companyCode: result.company.code,
+      market: result.company.market,
+      exchange: result.company.exchange,
+      snapshotIdentity: "verified",
+      dataMonth: result.latestOfficialCloseDate.slice(0, 7),
+      selectedBarDate: result.latestOfficialCloseDate,
+      observedName: result.company.shortName,
+    });
+    expect(closeSource).not.toHaveProperty("dataDate");
+    expect(result.workBudget).toMatchObject({
+      priceRoutingPolicy:
+        "authoritative_completed_session_expected_as_of_then_exact_single_stock_ohlc",
+      selectedCompanyIdentityPolicy:
+        "outer_market_all_master_plus_exact_single_stock_source",
+      dependencyInvocations: {
+        orchestrationCompanyMaster: 1,
+        authoritativeCompletedSessionResolver: 1,
+        officialExactSingleStockOhlc: 1,
+        maximumIncludingNestedDependencies: 3,
+      },
+      plannedOfficialSourceRequests: {
+        completedSessionResolver: { actual: 2, maximum: 2 },
+        exactSingleStockOhlc: {
+          maximum: 2,
+        },
+        maximumTotal: 6,
+      },
+    });
+    const sourceRequests = result.workBudget.plannedOfficialSourceRequests;
+    expect([1, 2]).toContain(sourceRequests.exactSingleStockOhlc.actual);
+    expect(sourceRequests.actualTotal).toBe(
+      sourceRequests.orchestrationCompanyMasterMarkets +
+        sourceRequests.completedSessionResolver.actual +
+        sourceRequests.exactSingleStockOhlc.actual,
+    );
+    expect(result.dependencyLedger.map((entry) => entry.dependency)).toEqual([
+      "orchestration_company_master",
+      "authoritative_completed_session_resolver",
+      "official_exact_single_stock_ohlc",
+    ]);
+    expect(JSON.stringify(result.dependencyLedger)).not.toContain(
+      "official_daily_market_internal_compatible_master",
+    );
+    expect(JSON.stringify(result.dependencyLedger)).not.toContain(
+      "official_daily_market_price",
+    );
   }, 120_000);
 });

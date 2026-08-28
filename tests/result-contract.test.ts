@@ -317,6 +317,33 @@ describe("mopsfin.result.v1", () => {
     });
   });
 
+  it("uses an exact selected bar date instead of the containing monthly snapshot cutoff", () => {
+    const meta = buildResultMeta(
+      {
+        sources: [
+          {
+            sourceUrl: "https://example.test/exact-stock-month",
+            retrievedAt: "2026-08-28T07:00:00.000Z",
+            dataMonth: "2026-08",
+            selectedBarDate: "2026-08-28",
+            asOf: "2026-08-28",
+            asOfGranularity: "date",
+          },
+        ],
+      },
+      { freshness: "not_applicable" },
+      "2026-08-28T07:01:00.000Z",
+    );
+
+    expect(meta.asOf.sourceCutoffs[0]).toMatchObject({
+      resolved: {
+        granularity: "date",
+        from: "2026-08-28",
+        through: "2026-08-28",
+      },
+    });
+  });
+
   it("aggregates freshness evidence and adds stable quality issues once", () => {
     const stale = evaluateFreshness({
       policy: FRESHNESS_POLICIES.monthlyRevenueLatestCommon,

@@ -1,3 +1,8 @@
+import { authoritativeCompletedCloseClient } from "@/lib/completed-close/client";
+import type {
+  AuthoritativeCompletedCloseQuery,
+  AuthoritativeCompletedCloseResult,
+} from "@/lib/completed-close/types";
 import { companyMasterClient } from "@/lib/company-master/client";
 import type {
   CompanyMasterResult,
@@ -8,15 +13,10 @@ import {
   type MopsfinErrorAction,
   type MopsfinErrorCategory,
 } from "@/lib/mopsfin/errors";
-import { priceClient } from "@/lib/price/client";
-import type {
-  DailyMarketOhlcQuery,
-  DailyMarketOhlcResult,
-  PriceSource,
-} from "@/lib/price/types";
 import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 
 import type {
+  ObservedPriceAnalysisContext,
   ObservedPriceAnalysisResult,
   ObservedPriceCompanyMasterSource,
   ObservedPriceOfficialCloseSource,
@@ -34,10 +34,10 @@ export interface ObservedPriceCompanyMasterLike {
   ): Promise<CompanyMasterResult>;
 }
 
-export interface ObservedPriceOfficialPriceLike {
-  getDailyMarketOhlc(
-    query: DailyMarketOhlcQuery,
-  ): Promise<DailyMarketOhlcResult>;
+export interface ObservedPriceCompletedCloseLike {
+  getLatestCompletedClose(
+    query: AuthoritativeCompletedCloseQuery,
+  ): Promise<AuthoritativeCompletedCloseResult>;
 }
 
 interface ParsedObservedAt {
@@ -212,17 +212,6 @@ function normalizeName(value: string): string {
   return value.normalize("NFKC").replace(/\s+/g, "").trim();
 }
 
-function isSortedUniqueCompanyCodeList(values: unknown): values is string[] {
-  return (
-    Array.isArray(values) &&
-    values.every(
-      (value) => typeof value === "string" && /^[1-9]\d{3}$/.test(value),
-    ) &&
-    new Set(values).size === values.length &&
-    JSON.stringify(values) === JSON.stringify([...values].sort())
-  );
-}
-
 function round(value: number, digits: number): number {
   const rounded = Number(value.toFixed(digits));
   return Object.is(rounded, -0) ? 0 : rounded;
@@ -395,7 +384,7 @@ function assertSourceTimeAndCache(
 }
 
 function expectedMissingFields(
-  bar: DailyMarketOhlcResult["bars"][number],
+  bar: AuthoritativeCompletedCloseResult["bar"],
 ): Array<(typeof bar.missingFields)[number]> {
   return (
     [
@@ -707,9 +696,10 @@ function assertMasterResult(
   };
 }
 
-function assertOfficialResult(
-  result: DailyMarketOhlcResult,
+function assertCompletedCloseResult(
+  result: AuthoritativeCompletedCloseResult,
   company: MasterCompany,
+  evaluatedAt: string,
   generatedAtMs: number,
 ): {
   close: number;
@@ -717,370 +707,274 @@ function assertOfficialResult(
   source: ObservedPriceOfficialCloseSource;
   dataQualityComplete: boolean;
 } {
-  const queryCodes = result.query.companyCodes ?? [];
+  const expectedCompany = {
+    code: company.code,
+    shortName: company.shortName,
+    market: company.market,
+    exchange: company.exchange,
+  };
+  const evidence = result.resolverEvidence;
+  const marketResolution = evidence.marketResolutions[0];
+  const dataDate = result.expectedAsOf;
   if (
+    result.query.companyCode !== company.code ||
     result.query.market !== company.market ||
-    result.query.date !== "latest" ||
-    result.query.universePolicy !== "compatible" ||
-    queryCodes.length !== 1 ||
-    queryCodes[0] !== company.code
+    result.query.evaluatedAt !== evaluatedAt ||
+    result.company.code !== expectedCompany.code ||
+    result.company.market !== expectedCompany.market ||
+    result.company.exchange !== expectedCompany.exchange ||
+    normalizeName(result.company.shortName) !==
+      normalizeName(expectedCompany.shortName)
   ) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方價格 dependency 回傳的 query identity 不符。", {
-      reason: "OFFICIAL_PRICE_QUERY_IDENTITY_MISMATCH",
-      category: "upstream",
-      details: { expectedCompanyCode: company.code, actualQuery: result.query },
-    });
-  }
-  if (
-    result.classificationMethod !== "current_master" ||
-    result.classificationPolicy !== "current_master_with_code_fallback"
-  ) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方價格 dependency 未使用 compatible current-master 分類。", {
-      reason: "OFFICIAL_PRICE_CLASSIFICATION_MISMATCH",
-      category: "upstream",
-      details: {
-        classificationMethod: result.classificationMethod,
-        classificationPolicy: result.classificationPolicy,
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "authoritative completed-close dependency 回傳的 query/company identity 不符。",
+      {
+        reason: "OFFICIAL_PRICE_QUERY_IDENTITY_MISMATCH",
+        category: "upstream",
+        details: {
+          expectedCompany,
+          evaluatedAt,
+          actualQuery: result.query,
+          actualCompany: result.company,
+        },
       },
-    });
-  }
-  const reconciliation = result.reconciliation[0];
-  if (
-    result.coverageComplete !== true ||
-    result.reconciliation.length !== 1 ||
-    reconciliation?.market !== company.market
-  ) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方價格 dependency 的 compatible reconciliation scope 不符。", {
-      reason: "OFFICIAL_PRICE_RECONCILIATION_MISMATCH",
-      category: "upstream",
-      details: {
-        companyCode: company.code,
-        market: company.market,
-        coverageComplete: result.coverageComplete,
-        reconciliation: result.reconciliation,
-      },
-    });
-  }
-  const differenceSetsValid =
-    isSortedUniqueCompanyCodeList(reconciliation.marketOnlyCodes) &&
-    isSortedUniqueCompanyCodeList(reconciliation.masterMissingCodes) &&
-    reconciliation.marketOnlyCodes.every(
-      (code) => !reconciliation.masterMissingCodes.includes(code),
     );
-  const countsValid =
-    Number.isSafeInteger(reconciliation.masterCount) &&
-    reconciliation.masterCount >= 1 &&
-    Number.isSafeInteger(reconciliation.sourceRowCount) &&
-    reconciliation.sourceRowCount >= 0 &&
-    Number.isSafeInteger(reconciliation.matchedCount) &&
-    reconciliation.matchedCount >= 0 &&
-    reconciliation.matchedCount <= reconciliation.masterCount &&
-    reconciliation.matchedCount <= reconciliation.sourceRowCount &&
-    reconciliation.masterCount ===
-      reconciliation.matchedCount +
-        reconciliation.masterMissingCodes.length &&
-    reconciliation.sourceRowCount ===
-      reconciliation.matchedCount + reconciliation.marketOnlyCodes.length;
-  const expectedMatchRatio = countsValid
-    ? Number(
-        (
-          reconciliation.matchedCount / reconciliation.masterCount
-        ).toFixed(6),
-      )
-    : null;
-  const expectedExactCoverage =
-    reconciliation.marketOnlyCodes.length === 0 &&
-    reconciliation.masterMissingCodes.length === 0;
-  if (
-    !differenceSetsValid ||
-    !countsValid ||
-    expectedMatchRatio === null ||
-    !Number.isFinite(reconciliation.matchRatio) ||
-    reconciliation.matchRatio !== expectedMatchRatio ||
-    reconciliation.coverageComplete !== expectedExactCoverage ||
-    result.universeCoverageVerified !== expectedExactCoverage ||
-    reconciliation.masterMissingCodes.includes(company.code) ||
-    reconciliation.marketOnlyCodes.includes(company.code)
-  ) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方價格 dependency 的 compatible reconciliation 算術、集合或 selected-company identity 不一致。", {
-      reason: "OFFICIAL_PRICE_RECONCILIATION_MISMATCH",
-      category: "upstream",
-      details: {
-        companyCode: company.code,
-        expectedMatchRatio,
-        expectedExactCoverage,
-        universeCoverageVerified: result.universeCoverageVerified,
-        reconciliation,
-      },
-    });
-  }
-  if (reconciliation.matchRatio < 0.95) {
-    fail("INCOMPLETE_COVERAGE", "官方最近完成交易日行情未通過 compatible 95% 防截斷門檻。", {
-      reason: "OFFICIAL_PRICE_COVERAGE_INCOMPLETE",
-      category: "coverage",
-      retryable: true,
-      action: "retry",
-      details: {
-        companyCode: company.code,
-        minimumMatchRatio: 0.95,
-        reconciliation,
-      },
-    });
   }
   if (
-    result.selectionComplete !== true ||
-    result.missingCompanyCodes.length > 0 ||
-    result.bars.length === 0
+    evidence.status !== "resolved" ||
+    evidence.evaluatedAt !== evaluatedAt ||
+    evidence.markets.length !== 1 ||
+    evidence.markets[0] !== company.market ||
+    evidence.expectedAsOf !== dataDate ||
+    evidence.marketResolutions.length !== 1 ||
+    marketResolution?.market !== company.market ||
+    marketResolution.status !== "resolved" ||
+    marketResolution.expectedAsOf !== dataDate
   ) {
-    fail("NO_DATA", "指定公司沒有可用的官方最近完成交易日收盤價。", {
-      reason: "OFFICIAL_COMPLETED_CLOSE_NOT_FOUND",
-      category: "no_data",
-      action: "none",
-      details: {
-        companyCode: company.code,
-        selectionComplete: result.selectionComplete,
-        missingCompanyCodes: result.missingCompanyCodes,
-      },
-    });
-  }
-  if (result.bars.length !== 1) {
-    fail("UPSTREAM_BAD_RESPONSE", "指定公司的官方最近完成交易日行情不唯一。", {
-      reason: "OFFICIAL_PRICE_IDENTITY_AMBIGUOUS",
-      category: "upstream",
-      details: { companyCode: company.code, rowCount: result.bars.length },
-    });
-  }
-  const expectedCounts =
-    company.market === "listed"
-      ? { listed: 1, otc: 0, returned: 1 }
-      : { listed: 0, otc: 1, returned: 1 };
-  if (
-    result.counts.listed !== expectedCounts.listed ||
-    result.counts.otc !== expectedCounts.otc ||
-    result.counts.returned !== expectedCounts.returned ||
-    result.counts.returned !== result.bars.length
-  ) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方價格 dependency 的 selection counts 不一致。", {
-      reason: "OFFICIAL_PRICE_COUNTS_MISMATCH",
-      category: "upstream",
-      details: {
-        companyCode: company.code,
-        expectedCounts,
-        actualCounts: result.counts,
-        barCount: result.bars.length,
-      },
-    });
-  }
-  const bar = result.bars[0];
-  if (
-    bar.code !== company.code ||
-    bar.market !== company.market ||
-    bar.date !== result.dataDate ||
-    normalizeName(bar.name) !== normalizeName(company.shortName)
-  ) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方價格列與目前公司 identity 不一致。", {
-      reason: "OFFICIAL_PRICE_IDENTITY_MISMATCH",
-      category: "upstream",
-      details: {
-        expected: {
-          code: company.code,
-          name: company.shortName,
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "authoritative completed-session evidence 與 selected close 不一致。",
+      {
+        reason: "COMPLETED_SESSION_EVIDENCE_MISMATCH",
+        category: "upstream",
+        details: {
+          companyCode: company.code,
           market: company.market,
-        },
-        actual: {
-          code: bar.code,
-          name: bar.name,
-          market: bar.market,
-          date: bar.date,
-          dataDate: result.dataDate,
+          evaluatedAt,
+          expectedAsOf: dataDate,
+          resolverEvidence: evidence,
         },
       },
-    });
+    );
   }
   if (
-    bar.status !== "traded" ||
-    typeof bar.close !== "number" ||
-    !Number.isFinite(bar.close) ||
-    bar.close <= 0
+    !isValidIsoCalendarDate(dataDate) ||
+    result.selectedBarDate !== dataDate ||
+    result.bar.date !== dataDate ||
+    result.source.selectedBarDate !== dataDate ||
+    result.source.dataMonth !== dataDate.slice(0, 7)
   ) {
-    fail("NO_DATA", "官方最近完成交易日沒有有效的已成交收盤價。", {
-      reason: "OFFICIAL_COMPLETED_CLOSE_UNAVAILABLE",
-      category: "no_data",
-      details: {
-        companyCode: company.code,
-        date: bar.date,
-        status: bar.status,
-        close: bar.close,
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "authoritative completed close 未精確綁定 resolver expectedAsOf。",
+      {
+        reason: "OFFICIAL_PRICE_DATE_MISMATCH",
+        category: "upstream",
+        details: {
+          expectedAsOf: dataDate,
+          selectedBarDate: result.selectedBarDate,
+          barDate: result.bar.date,
+          sourceSelectedBarDate: result.source.selectedBarDate,
+          sourceDataMonth: result.source.dataMonth,
+        },
       },
-    });
-  }
-  const expectedMissing = expectedMissingFields(bar);
-  const priceValuesValid = [bar.open, bar.high, bar.low, bar.close].every(
-    (value) => value === null || (Number.isFinite(value) && value > 0),
-  );
-  const countValuesValid = [
-    bar.volumeShares,
-    bar.turnoverTwd,
-    bar.tradeCount,
-  ].every(
-    (value) =>
-      value === null || (Number.isSafeInteger(value) && value >= 0),
-  );
-  const changeValueValid =
-    bar.change === null || Number.isFinite(bar.change);
-  const qualityIsConsistent =
-    priceValuesValid &&
-    countValuesValid &&
-    changeValueValid &&
-    new Set(bar.missingFields).size === bar.missingFields.length &&
-    JSON.stringify(bar.missingFields) === JSON.stringify(expectedMissing) &&
-    ((bar.qualityStatus === "complete" && expectedMissing.length === 0) ||
-      (bar.qualityStatus === "partial" && expectedMissing.length > 0)) &&
-    result.dataQualityComplete === (bar.qualityStatus === "complete");
-  if (!qualityIsConsistent) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方價格列的 qualityStatus、missingFields 或頂層品質旗標不一致。", {
-      reason: "OFFICIAL_PRICE_QUALITY_MISMATCH",
-      category: "upstream",
-      details: {
-        companyCode: company.code,
-        qualityStatus: bar.qualityStatus,
-        missingFields: bar.missingFields,
-        expectedMissingFields: expectedMissing,
-        dataQualityComplete: result.dataQualityComplete,
-        priceValuesValid,
-        countValuesValid,
-        changeValueValid,
-      },
-    });
+    );
   }
   if (
     result.currency !== "TWD" ||
     result.timezone !== "Asia/Taipei" ||
     result.interval !== "1d" ||
-    result.priceBasis !== "raw_unadjusted"
+    result.priceBasis !== "raw_unadjusted" ||
+    result.bar.market !== company.market ||
+    result.source.companyCode !== company.code ||
+    result.source.market !== company.market ||
+    result.source.exchange !== company.exchange ||
+    result.source.snapshotIdentity !== "verified" ||
+    normalizeName(result.source.observedName) !== normalizeName(company.shortName)
   ) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方價格的幣別、時區或價格基礎不符。", {
-      reason: "OFFICIAL_PRICE_CONTRACT_MISMATCH",
-      category: "upstream",
-      details: {
-        currency: result.currency,
-        timezone: result.timezone,
-        interval: result.interval,
-        priceBasis: result.priceBasis,
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "authoritative exact single-stock OHLC contract 或 identity 不符。",
+      {
+        reason: "OFFICIAL_PRICE_CONTRACT_MISMATCH",
+        category: "upstream",
+        details: {
+          companyCode: company.code,
+          market: company.market,
+          currency: result.currency,
+          timezone: result.timezone,
+          interval: result.interval,
+          priceBasis: result.priceBasis,
+          barMarket: result.bar.market,
+          sourceCompanyCode: result.source.companyCode,
+          sourceMarket: result.source.market,
+          sourceExchange: result.source.exchange,
+          observedName: result.source.observedName,
+          snapshotIdentity: result.source.snapshotIdentity,
+        },
       },
-    });
+    );
   }
-  if (!isValidIsoCalendarDate(result.dataDate)) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方最近完成交易日格式無效。", {
-      reason: "OFFICIAL_PRICE_DATE_INVALID",
-      category: "upstream",
-      details: { dataDate: result.dataDate },
-    });
-  }
-  if (result.dataDate > taipeiDate(generatedAtMs)) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方最近完成交易日在目前時間之後。", {
-      reason: "OFFICIAL_PRICE_DATE_IN_FUTURE",
-      category: "upstream",
-      details: { dataDate: result.dataDate },
-    });
-  }
-  if (result.sources.length !== 1) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方收盤價 dependency 必須精確回傳一份 requested-market source，不能夾帶或遺漏來源。", {
-      reason: "OFFICIAL_PRICE_SOURCE_SET_MISMATCH",
-      category: "upstream",
-      details: {
-        companyCode: company.code,
-        market: company.market,
-        dataDate: result.dataDate,
-        sourceCount: result.sources.length,
-        sources: result.sources.map((source) => ({
-          market: source.market,
-          dataDate: source.dataDate ?? null,
-          dataMonth: source.dataMonth ?? null,
-          sourceUrl: source.sourceUrl,
-        })),
-      },
-    });
-  }
-  const marketSource: PriceSource = result.sources[0];
   if (
-    marketSource.market !== company.market ||
-    marketSource.dataDate !== result.dataDate ||
-    marketSource.dataMonth !== undefined
+    result.bar.status !== "traded" ||
+    typeof result.bar.close !== "number" ||
+    !Number.isFinite(result.bar.close) ||
+    result.bar.close <= 0 ||
+    result.close !== result.bar.close
   ) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方收盤價 source variant 與 requested market／exact dataDate 不符。", {
-      reason: "OFFICIAL_PRICE_SOURCE_SET_MISMATCH",
-      category: "upstream",
+    fail("NO_DATA", "官方 authoritative completed session 沒有有效正數收盤價。", {
+      reason: "OFFICIAL_COMPLETED_CLOSE_UNAVAILABLE",
+      category: "no_data",
       details: {
         companyCode: company.code,
-        expectedMarket: company.market,
-        expectedDataDate: result.dataDate,
-        actualMarket: marketSource.market,
-        actualDataDate: marketSource.dataDate ?? null,
-        actualDataMonth: marketSource.dataMonth ?? null,
+        date: dataDate,
+        status: result.bar.status,
+        close: result.bar.close,
+        resultClose: result.close,
       },
     });
   }
-  if (marketSource.snapshotIdentity !== "verified") {
-    fail("UPSTREAM_BAD_RESPONSE", "官方收盤價來源 snapshot identity 未驗證。", {
-      reason: "OFFICIAL_PRICE_SOURCE_IDENTITY_UNVERIFIED",
-      category: "upstream",
-      details: {
-        companyCode: company.code,
-        dataDate: result.dataDate,
-        snapshotIdentity: marketSource.snapshotIdentity ?? null,
+
+  const expectedMissing = expectedMissingFields(result.bar);
+  const priceValuesValid = [
+    result.bar.open,
+    result.bar.high,
+    result.bar.low,
+    result.bar.close,
+  ].every((value) => value === null || (Number.isFinite(value) && value > 0));
+  const countValuesValid = [
+    result.bar.volumeShares,
+    result.bar.turnoverTwd,
+    result.bar.tradeCount,
+  ].every(
+    (value) => value === null || (Number.isSafeInteger(value) && value >= 0),
+  );
+  const changeValueValid =
+    result.bar.change === null || Number.isFinite(result.bar.change);
+  const dataQualityComplete = result.bar.qualityStatus === "complete";
+  const qualityIsConsistent =
+    priceValuesValid &&
+    countValuesValid &&
+    changeValueValid &&
+    new Set(result.bar.missingFields).size === result.bar.missingFields.length &&
+    JSON.stringify(result.bar.missingFields) === JSON.stringify(expectedMissing) &&
+    ((result.bar.qualityStatus === "complete" && expectedMissing.length === 0) ||
+      (result.bar.qualityStatus === "partial" && expectedMissing.length > 0));
+  if (!qualityIsConsistent) {
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "authoritative close bar 的 qualityStatus 與 missingFields 不一致。",
+      {
+        reason: "OFFICIAL_PRICE_QUALITY_MISMATCH",
+        category: "upstream",
+        details: {
+          companyCode: company.code,
+          qualityStatus: result.bar.qualityStatus,
+          missingFields: result.bar.missingFields,
+          expectedMissingFields: expectedMissing,
+          priceValuesValid,
+          countValuesValid,
+          changeValueValid,
+        },
       },
-    });
+    );
   }
+
   const provenance = assertSourceTimeAndCache(
-    marketSource,
+    result.source,
     generatedAtMs,
     { reasonPrefix: "OFFICIAL_PRICE" },
   );
-  if (result.dataDate > provenance.retrieved.taipeiDate) {
-    fail("UPSTREAM_BAD_RESPONSE", "官方行情 dataDate 晚於來源 retrievedAt 的台北日期。", {
-      reason: "OFFICIAL_PRICE_SOURCE_TIME_INCONSISTENT",
-      category: "upstream",
-      details: {
-        companyCode: company.code,
-        dataDate: result.dataDate,
-        retrievedAt: marketSource.retrievedAt,
+  if (dataDate > provenance.retrieved.taipeiDate) {
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "官方單股 OHLC selected bar date 晚於來源 retrievedAt 的台北日期。",
+      {
+        reason: "OFFICIAL_PRICE_SOURCE_TIME_INCONSISTENT",
+        category: "upstream",
+        details: {
+          companyCode: company.code,
+          dataDate,
+          retrievedAt: result.source.retrievedAt,
+        },
       },
-    });
+    );
   }
   if (
-    result.dataDate === provenance.retrieved.taipeiDate &&
-    provenance.retrieved.timestampMs <
-      conservativeSessionCompletionMs(result.dataDate)
+    dataDate === provenance.retrieved.taipeiDate &&
+    provenance.retrieved.timestampMs < conservativeSessionCompletionMs(dataDate)
   ) {
-    fail("UPSTREAM_BAD_RESPONSE", "同日官方行情來源在保守 session completion 時間之前取得。", {
-      reason: "OFFICIAL_PRICE_SOURCE_PRECEDES_SESSION_COMPLETION",
-      category: "upstream",
-      details: {
-        companyCode: company.code,
-        dataDate: result.dataDate,
-        retrievedAt: marketSource.retrievedAt,
-        conservativeSessionCompletionTaipei:
-          `${result.dataDate}T${CONSERVATIVE_REGULAR_SESSION_COMPLETION_TAIPEI}+08:00`,
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "同日 authoritative close source 在保守 session completion 時間之前取得。",
+      {
+        reason: "OFFICIAL_PRICE_SOURCE_PRECEDES_SESSION_COMPLETION",
+        category: "upstream",
+        details: {
+          companyCode: company.code,
+          dataDate,
+          retrievedAt: result.source.retrievedAt,
+          conservativeSessionCompletionTaipei:
+            `${dataDate}T${CONSERVATIVE_REGULAR_SESSION_COMPLETION_TAIPEI}+08:00`,
+        },
       },
-    });
+    );
   }
-  const { dataMonth: _dataMonth, ...exactDateSource } = marketSource;
+
+  const exactBudget = result.workBudget.exactStockOhlcAttempts;
+  const expectedExactAttempts = result.cacheRefresh.attempted ? 2 : 1;
+  if (
+    result.workBudget.scope !== "authoritative_completed_close_routing" ||
+    evidence.workBudget.marketCount !== 1 ||
+    evidence.workBudget.calendarLogicalLoads !== 1 ||
+    evidence.workBudget.sessionMarkerLogicalLoads !== 1 ||
+    evidence.workBudget.actualTotal !== 2 ||
+    evidence.workBudget.maximumTotal !== 2 ||
+    JSON.stringify(result.workBudget.completedSessionResolver) !==
+      JSON.stringify(evidence.workBudget) ||
+    exactBudget.actual !== expectedExactAttempts ||
+    exactBudget.maximum !== 2 ||
+    exactBudget.cacheRefreshPerformed !== result.cacheRefresh.attempted ||
+    (result.cacheRefresh.attempted &&
+      result.cacheRefresh.initialCacheStatus !== "hit")
+  ) {
+    fail(
+      "UPSTREAM_BAD_RESPONSE",
+      "authoritative completed-close work budget 與 cache refresh evidence 不一致。",
+      {
+        reason: "OFFICIAL_PRICE_WORK_BUDGET_MISMATCH",
+        category: "upstream",
+        details: {
+          workBudget: result.workBudget,
+          cacheRefresh: result.cacheRefresh,
+        },
+      },
+    );
+  }
+
   return {
-    close: bar.close,
-    dataDate: result.dataDate,
+    close: result.close,
+    dataDate,
     source: {
-      ...exactDateSource,
+      ...result.source,
       cache: provenance.cache,
-      snapshotIdentity: "verified",
-      dataDate: result.dataDate,
-      sourceId: `official_close:${marketSource.market}:${result.dataDate}`,
+      sourceId: `official_close:${company.market}:${dataDate}`,
       stage: "latest_official_completed_close",
     },
-    dataQualityComplete: result.dataQualityComplete,
+    dataQualityComplete,
   };
 }
-
 function normalizeQuery(
   query: ObservedPriceQuery,
   nowMs: number,
@@ -1171,13 +1065,20 @@ export class ObservedPriceClient {
   constructor(
     private readonly companyMaster: ObservedPriceCompanyMasterLike =
       companyMasterClient,
-    private readonly officialPrice: ObservedPriceOfficialPriceLike = priceClient,
+    private readonly completedClose: ObservedPriceCompletedCloseLike =
+      authoritativeCompletedCloseClient,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
   async analyzeObservedPrice(
     input: ObservedPriceQuery,
   ): Promise<ObservedPriceAnalysisResult> {
+    return (await this.analyzeObservedPriceWithContext(input)).data;
+  }
+
+  async analyzeObservedPriceWithContext(
+    input: ObservedPriceQuery,
+  ): Promise<ObservedPriceAnalysisContext> {
     const requestNow = this.now();
     const requestNowMs = requestNow.getTime();
     if (!Number.isFinite(requestNowMs)) {
@@ -1197,11 +1098,15 @@ export class ObservedPriceClient {
       normalized.query.companyCode,
     );
     const company = validatedMaster.company;
-    const officialResult = await this.officialPrice.getDailyMarketOhlc({
-      market: company.market,
-      date: "latest",
-      companyCodes: [company.code],
-      universePolicy: "compatible",
+    const evaluatedAt = requestNow.toISOString();
+    const completedClose = await this.completedClose.getLatestCompletedClose({
+      company: {
+        code: company.code,
+        shortName: company.shortName,
+        market: company.market,
+        exchange: company.exchange,
+      },
+      evaluatedAt,
     });
     const generatedAt = this.now();
     const generatedAtMs = generatedAt.getTime();
@@ -1232,9 +1137,10 @@ export class ObservedPriceClient {
         },
       );
     }
-    const official = assertOfficialResult(
-      officialResult,
+    const official = assertCompletedCloseResult(
+      completedClose,
       company,
+      evaluatedAt,
       generatedAtMs,
     );
     if (normalized.observed.taipeiDate < official.dataDate) {
@@ -1316,7 +1222,10 @@ export class ObservedPriceClient {
       validatedMaster.sources[0].sourceId,
       validatedMaster.sources[1].sourceId,
     ];
-    return {
+    const resolverLoads =
+      completedClose.workBudget.completedSessionResolver.actualTotal;
+    const exactLoads = completedClose.workBudget.exactStockOhlcAttempts.actual;
+    const data: ObservedPriceAnalysisResult = {
       query: normalized.query,
       generatedAt: generatedAt.toISOString(),
       priceOrigin: "caller_supplied",
@@ -1382,46 +1291,61 @@ export class ObservedPriceClient {
           sourceIds: masterSourceIds,
         },
         {
-          dependency: "official_daily_market_price",
+          dependency: "authoritative_completed_session_resolver",
           logicalInvocations: 1,
-          plannedOfficialSourceLoads: 1,
-          sourceEvidence: "exposed",
-          sourceIds: [official.source.sourceId],
+          plannedOfficialSourceLoads: 2,
+          sourceEvidence: "exposed_in_meta_resolver_evidence",
+          sourceIds: [],
         },
         {
-          dependency: "official_daily_market_internal_compatible_master",
+          dependency: "official_exact_single_stock_ohlc",
           logicalInvocations: 1,
-          plannedOfficialSourceLoads: 1,
-          sourceEvidence: "not_exposed_by_dependency",
-          sourceIds: [],
+          plannedOfficialSourceLoads: exactLoads,
+          sourceEvidence: "exposed",
+          sourceIds: [official.source.sourceId],
         },
       ],
       workBudget: {
         requestedCompanies: 1,
         dependencyInvocations: {
           orchestrationCompanyMaster: 1,
-          officialDailyMarketPrice: 1,
-          officialDailyMarketInternalCompatibleMaster: 1,
+          authoritativeCompletedSessionResolver: 1,
+          officialExactSingleStockOhlc: 1,
           maximumIncludingNestedDependencies: 3,
         },
         plannedOfficialSourceRequests: {
           orchestrationCompanyMasterMarkets: 2,
-          officialDailyMarketSnapshot: 1,
-          officialDailyMarketInternalCompatibleMasterMarkets: 1,
-          maximumTotal: 4,
+          completedSessionResolver: {
+            actual: resolverLoads,
+            maximum: 2,
+          },
+          exactSingleStockOhlc: {
+            actual: exactLoads,
+            maximum: 2,
+            cacheRefreshPerformed: completedClose.cacheRefresh.attempted,
+          },
+          actualTotal: 2 + resolverLoads + exactLoads,
+          maximumTotal: 6,
           unitDefinition:
             "one_logical_official_source_load_before_cache_and_bounded_retry",
         },
-        universePolicy: "compatible",
+        priceRoutingPolicy:
+          "authoritative_completed_session_expected_as_of_then_exact_single_stock_ohlc",
         selectedCompanyIdentityPolicy:
-          "outer_market_all_master_plus_official_row_exact",
+          "outer_market_all_master_plus_exact_single_stock_source",
       },
       warnings: [
         "observedPriceTwd 完全由 caller 提供，MopsFin 未獨立驗證；它不是官方報價，也不得稱為 real-time 行情。",
         "官方基準只代表最近完成交易日的原始未還原權值收盤價，不是盤中行情或 adjusted close。",
         "若 caller 觀察值與官方 completed close 同一台北日期，採 13:33 Asia/Taipei 作為包含暫緩收盤可能性的保守 regular-session completion guard。",
         "價差只是 caller-supplied 觀察值相對官方完成交易日收盤價的機械比較，不代表 fair value、買賣建議或投資評級。",
-        "官方價格 dependency 使用 compatible 全市場核對與至少 95% match-ratio 防截斷門檻；非目標公司的 master 差異不會阻斷查詢，但指定公司仍由外層 market=all master 與官方行情 code、name、market 精確核對。",
+        "官方基準先由 authoritative completed-session resolver 固定 expectedAsOf，再查同日 exact single-stock OHLC；不使用可能落後的全市場 latest endpoint，也不退回前一日價格。",
+        "指定公司由外層 market=all master 與單股官方來源的 code、name、market 精確核對；exact price dependency 不重複取得 current master。",
+        ...(completedClose.cacheRefresh.attempted
+          ? [
+              "current-month exact OHLC 初次命中缺少 expectedAsOf 的 cache；已做一次有界失效重取並以重取後來源作為證據。",
+            ]
+          : []),
         ...(official.dataQualityComplete
           ? []
           : [
@@ -1429,6 +1353,7 @@ export class ObservedPriceClient {
             ]),
       ],
     };
+    return { data, completedClose };
   }
 }
 

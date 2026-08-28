@@ -1,3 +1,5 @@
+import type { AuthoritativeCompletedCloseResult } from "@/lib/completed-close/types";
+import { completedSessionResolverSourceUrls } from "@/lib/freshness/completed-session-resolver";
 import type { FreshnessEvaluation } from "@/lib/freshness/types";
 import type { QualityIssue } from "@/lib/mcp/result-contract";
 import {
@@ -6,6 +8,7 @@ import {
 } from "@/lib/reverse-dcf/mcp-client";
 import type { ValuationModelSource } from "@/lib/valuation-model/types";
 
+import { completedSessionSnapshotEvidence } from "../completed-session-snapshot";
 import {
   reverseDcfInputSchema,
   reverseDcfOutputSchema,
@@ -17,7 +20,6 @@ import {
   evaluateFreshness,
   failure,
   fingerprint,
-  resolveOfficialCompletedSessionFreshness,
   success,
   taipeiDate,
 } from "./shared";
@@ -39,6 +41,7 @@ function latestAsOf(sources: ValuationModelSource[]): string | null {
 
 async function freshnessDetails(
   data: ReverseDcfOrchestrationResult,
+  completedClose: AuthoritativeCompletedCloseResult,
 ): Promise<FreshnessEvaluation[]> {
   const details: FreshnessEvaluation[] = [];
   const masterSources = sourcesByStage(data.sources, "company_master");
@@ -65,19 +68,24 @@ async function freshnessDetails(
     );
   }
 
-  const marketSources = sourcesByStage(data.sources, "market_valuation");
+  const marketSources = sourcesByStage(
+    data.sources,
+    "latest_official_completed_close",
+  );
   if (marketSources.length > 0) {
     details.push(
-      ...(await resolveOfficialCompletedSessionFreshness({
-        market: data.company.market,
-        observations: [
-          {
-            market: data.company.market,
-            observedAsOf: latestAsOf(marketSources),
-            sources: marketSources,
-          },
-        ],
-      })),
+      evaluateFreshness({
+        policy: FRESHNESS_POLICIES.completedOfficialSession,
+        observedAsOf: latestAsOf(marketSources),
+        expectedAsOf: completedClose.expectedAsOf,
+        sourceUrls: unique([
+          ...marketSources.map((source) => source.sourceUrl),
+          ...completedSessionResolverSourceUrls(
+            completedClose.resolverEvidence,
+          ),
+        ]),
+        resolverEvidence: completedClose.resolverEvidence,
+      }),
     );
   }
 
@@ -101,8 +109,9 @@ function sourceDependenciesComplete(
     sourcesByStage(data.sources, "company_master").length === 1 &&
     sourcesByStage(data.sources, "statement").length ===
       budget.statementCalls.actual &&
-    (budget.valuationDependencyCalls.actual === 0 ||
-      sourcesByStage(data.sources, "market_valuation").length > 0)
+    (budget.authoritativeCompletedCloseCalls.actual === 0 ||
+      sourcesByStage(data.sources, "latest_official_completed_close").length >
+        0)
   );
 }
 
@@ -140,7 +149,7 @@ function qualityIssues(data: ReverseDcfOrchestrationResult): QualityIssue[] {
       refs: issueRefs(data, [
         "model.solution.solvedValuePercent",
         "model.bridge.observedPricePerShareTwd",
-      ], ["market_valuation"]),
+      ], ["latest_official_completed_close"]),
     },
     {
       code: "CALLER_ASSUMPTIONS_EXPLICIT",
@@ -174,7 +183,7 @@ function qualityIssues(data: ReverseDcfOrchestrationResult): QualityIssue[] {
       severity: "info",
       scope: "value",
       message:
-        "v0.8 interestBearingDebt 已彙總可唯一解析的 debt 與 lease-liability roles；engine 的 lease bridge 為 0 只為避免重複計入，不代表租賃負債實際為零。",
+        "normalized interestBearingDebt 已彙總可唯一解析的 debt 與 lease-liability roles；engine 的 lease bridge 為 0 只為避免重複計入，不代表租賃負債實際為零。",
       refs: issueRefs(data, [
         "normalizedInputEvidence.fields.interestBearingDebt",
         "model.bridge.plusLeaseLiabilitiesTwd",
@@ -224,7 +233,7 @@ function qualityIssues(data: ReverseDcfOrchestrationResult): QualityIssue[] {
       severity: "warning",
       scope: "source",
       message:
-        "v0.8 normalization 至少一個實際執行、但本 solve mode 未必使用的 dependency 缺少 source lineage；主模型已由 usedFieldIds 完整建立，但整體 source 品質為 partial。",
+        "normalized valuation-model input 至少一個實際執行、但本 solve mode 未必使用的 dependency 缺少 source lineage；主模型已由 usedFieldIds 完整建立，但整體 source 品質為 partial。",
       refs: issueRefs(data, ["sources", "workBudget.valuationModelInputs"]),
     });
   }
@@ -234,7 +243,7 @@ function qualityIssues(data: ReverseDcfOrchestrationResult): QualityIssue[] {
       severity: "warning",
       scope: "value",
       message:
-        "完整 v0.8 field snapshot 含本 solve mode 未使用的 data_gap；這些缺口未被補 0，也未參與本次成功模型計算。",
+        "完整 normalized valuation-model field snapshot 含本 solve mode 未使用的 data_gap；這些缺口未被補 0，也未參與本次成功模型計算。",
       refs: issueRefs(
         data,
         unusedDataGaps.map((field) =>
@@ -267,14 +276,15 @@ export const runReverseDcfTool = defineTool(
   {
     title: "反解市場價格隱含的 Reverse DCF 變數",
     description:
-      "為單一目前上市櫃非金融公司執行 deterministic、可重算的 market-implied FCFF reverse DCF。工具先沿用 get_valuation_model_inputs 的 current-master identity、TTM／historical FCFF proxy、cash、aggregate interest-bearing debt、issued common shares 與官方最近完成交易日收盤，再一次只反解 revenue_cagr、fcff_cagr 或 terminal_operating_margin。caller 必須明示 forecast years、WACC、terminal growth、solve bracket、mode-specific forward assumptions、所有額外 EV bridge 金額（包含顯性 0）與可選 sensitivity grid；不提供隱藏預設。每個 sensitivity cell 重新求解且個別揭露無可行解；WACC 必須大於 terminal growth，缺必要 input、lineage 或 bracket 時 fail closed。輸出分開 MOPSFIN_RAW／CALC、官方證據、CALLER_ASSUMPTION 與 MODEL_OUTPUT，保留公式、forecast、terminal value、EV bridge、checks、來源與時間 lineage。金融業不適用；結果是目前市場價格隱含條件，不是 intrinsic value、目標價、分析師共識、買賣評級或投資建議，也不改變 balanced_non_financial_v2 screening 契約。",
+      "為單一目前上市櫃非金融公司執行 deterministic、可重算的 market-implied FCFF reverse DCF。工具沿用同一次 get_valuation_model_inputs execution 的 current-master identity、TTM／historical FCFF proxy、cash、aggregate interest-bearing debt、issued common shares，以及 request-start authoritative resolver expectedAsOf 同日的 exact 單股 OHLC close；不二次 resolve、不另取價格，也不使用或回退全市場 latest。一次只反解 revenue_cagr、fcff_cagr 或 terminal_operating_margin；caller 必須明示 forecast years、WACC、terminal growth、solve bracket、mode-specific forward assumptions、所有額外 EV bridge 金額（包含顯性 0）與可選 sensitivity grid，不提供隱藏預設。每個 sensitivity cell 重新求解且個別揭露無可行解；WACC 必須大於 terminal growth，缺必要 input、lineage 或 bracket 時 fail closed。輸出分開 MOPSFIN_RAW／CALC、官方證據、CALLER_ASSUMPTION 與 MODEL_OUTPUT，保留公式、forecast、terminal value、EV bridge、checks、來源與時間 lineage。金融業不適用；結果是目前市場價格隱含條件，不是 intrinsic value、目標價、分析師共識、買賣評級或投資建議，也不改變 balanced_non_financial_v2 screening 契約。",
     inputSchema: reverseDcfInputSchema,
     outputSchema: reverseDcfOutputSchema,
     annotations,
   },
   async (query) => {
     try {
-      const data = await reverseDcfMcpClient.runReverseDcf(query);
+      const { data, completedClose } =
+        await reverseDcfMcpClient.runReverseDcfWithContext(query);
       const sourceComplete = sourceDependenciesComplete(data);
       const masterSourceCount = sourcesByStage(
         data.sources,
@@ -287,6 +297,9 @@ export const runReverseDcfTool = defineTool(
         usedFieldIds: data.normalizedInputEvidence.usedFieldIds,
         factMappings: data.normalizedInputEvidence.factMappings,
         sources: data.sources,
+        completedSessionResolver: completedSessionSnapshotEvidence(
+          completedClose.resolverEvidence,
+        ),
       });
       return success(
         `${data.company.code} ${data.company.shortName}：${data.model.solution.solveFor} 的市場隱含值為 ${data.model.solution.solvedValuePercent}%；這是 caller assumptions 下的可重算模型輸出，不是目標價或投資建議。`,
@@ -299,7 +312,7 @@ export const runReverseDcfTool = defineTool(
           universe: masterSourceCount === 1 ? "verified" : "unverified",
           selection: "complete",
           values: "complete",
-          freshnessDetails: await freshnessDetails(data),
+          freshnessDetails: await freshnessDetails(data, completedClose),
           issues: qualityIssues(data),
         },
       );

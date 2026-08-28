@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { AuthoritativeCompletedCloseResult } from "@/lib/completed-close/types";
 import type {
   CompanyMasterResult,
   CompanyMasterSource,
@@ -9,19 +10,19 @@ import { MopsfinError } from "@/lib/mopsfin/errors";
 import {
   ObservedPriceClient,
   type ObservedPriceCompanyMasterLike,
-  type ObservedPriceOfficialPriceLike,
+  type ObservedPriceCompletedCloseLike,
 } from "@/lib/observed-price/client";
-import type {
-  DailyMarketOhlcResult,
-  PriceSource,
-} from "@/lib/price/types";
+import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
+import {
+  completedCloseBar,
+  completedCloseResolverEvidenceFixture,
+} from "@/tests/fixtures/completed-close";
 
-const NOW = new Date("2026-08-28T02:00:00.000Z");
+const REQUEST_START = "2026-08-28T07:00:00.000Z";
+const NOW = new Date(REQUEST_START);
 const now = () => new Date(NOW);
 
-function company(
-  overrides: Partial<MasterCompany> = {},
-): MasterCompany {
+function company(overrides: Partial<MasterCompany> = {}): MasterCompany {
   return {
     code: "2330",
     name: "台灣積體電路製造股份有限公司",
@@ -119,7 +120,11 @@ function masterResult(
       paidInCapitalTwd: { reported: 0, missing: companies.length, invalid: 0 },
       issuedCommonShares: { reported: 0, missing: companies.length, invalid: 0 },
       parValueText: { reported: 0, missing: companies.length, invalid: 0 },
-      financialReportTypeCode: { reported: 0, missing: companies.length, invalid: 0 },
+      financialReportTypeCode: {
+        reported: 0,
+        missing: companies.length,
+        invalid: 0,
+      },
     },
     companies,
     warnings: [],
@@ -127,242 +132,220 @@ function masterResult(
   };
 }
 
-function priceSource(): PriceSource {
+function storedCache(at: string): CacheProvenance {
   return {
+    status: "miss",
+    observedAt: at,
+    storedAt: at,
+    ageMs: 0,
+    ttlMs: 300_000,
+  };
+}
+
+function authoritativeCompletedCloseFixture(options: {
+  identity?: AuthoritativeCompletedCloseResult["company"];
+  evaluatedAt?: string;
+  expectedAsOf?: string;
+  selectedBarDate?: string;
+  close?: number;
+  sourceRetrievedAt?: string;
+  cacheRefreshAttempted?: boolean;
+} = {}): AuthoritativeCompletedCloseResult {
+  const identity = options.identity ?? {
+    code: "2330",
+    shortName: "台積電",
     market: "listed",
-    sourceName: "臺灣證券交易所－上市個股日成交資訊",
-    sourceUrl: "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-    retrievedAt: "2026-08-28T01:30:00.000Z",
-    snapshotIdentity: "verified",
-    dataDate: "2026-08-27",
-    cache: {
-      status: "hit",
-      observedAt: "2026-08-28T01:30:00.000Z",
-      storedAt: "2026-08-28T01:30:00.000Z",
-      ageMs: 0,
-      ttlMs: 300_000,
-    },
-    normalization: {
-      volumeShares: {
-        sourceUnit: "share",
-        outputUnit: "share",
-        multiplier: 1,
-      },
-      turnoverTwd: {
-        sourceUnit: "TWD",
-        outputUnit: "TWD",
-        multiplier: 1,
-      },
-      tradeCount: {
-        sourceUnit: "trade",
-        outputUnit: "trade",
-        multiplier: 1,
-      },
-    },
+    exchange: "TWSE",
   };
-}
-
-function otcPriceSource(): PriceSource {
-  return {
-    ...priceSource(),
-    market: "otc",
-    sourceName: "證券櫃檯買賣中心－上櫃股票日成交資訊",
-    sourceUrl: "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
-    normalization: {
-      volumeShares: {
-        sourceUnit: "lot",
-        outputUnit: "share",
-        multiplier: 1000,
-      },
-      turnoverTwd: {
-        sourceUnit: "TWD_thousand",
-        outputUnit: "TWD",
-        multiplier: 1000,
-      },
-      tradeCount: {
-        sourceUnit: "trade",
-        outputUnit: "trade",
-        multiplier: 1,
-      },
-    },
+  const evaluatedAt = options.evaluatedAt ?? REQUEST_START;
+  const expectedAsOf = options.expectedAsOf ?? "2026-08-28";
+  const selectedBarDate = options.selectedBarDate ?? expectedAsOf;
+  const close = options.close ?? 2_420;
+  const sourceRetrievedAt =
+    options.sourceRetrievedAt ?? "2026-08-28T06:45:00.000Z";
+  const cacheRefreshAttempted = options.cacheRefreshAttempted ?? false;
+  const resolverEvidence = completedCloseResolverEvidenceFixture({
+    evaluatedAt,
+    expectedAsOf,
+  });
+  resolverEvidence.markets = [identity.market];
+  resolverEvidence.marketResolutions[0] = {
+    ...resolverEvidence.marketResolutions[0],
+    market: identity.market,
   };
-}
+  const bar: AuthoritativeCompletedCloseResult["bar"] = {
+    ...completedCloseBar({
+      date: selectedBarDate,
+      close,
+      market: identity.market,
+    }),
+    close,
+    status: "traded",
+  };
+  const listed = identity.market === "listed";
 
-function officialResult(
-  overrides: Partial<DailyMarketOhlcResult> = {},
-): DailyMarketOhlcResult {
   return {
     query: {
-      market: "listed",
-      date: "latest",
-      companyCodes: ["2330"],
-      universePolicy: "compatible",
+      companyCode: identity.code,
+      market: identity.market,
+      evaluatedAt,
     },
-    dataDate: "2026-08-27",
+    company: { ...identity },
+    expectedAsOf,
+    selectedBarDate,
+    close,
     currency: "TWD",
     timezone: "Asia/Taipei",
     interval: "1d",
     priceBasis: "raw_unadjusted",
-    classificationMethod: "current_master",
-    classificationPolicy: "current_master_with_code_fallback",
-    coverageComplete: true,
-    universeCoverageVerified: false,
-    dataQualityComplete: true,
-    reconciliation: [
-      {
-        market: "listed",
-        masterCount: 1_000,
-        sourceRowCount: 999,
-        matchedCount: 999,
-        marketOnlyCodes: [],
-        masterMissingCodes: ["9999"],
-        matchRatio: 0.999,
-        coverageComplete: false,
+    bar,
+    source: {
+      companyCode: identity.code,
+      market: identity.market,
+      exchange: identity.exchange,
+      sourceName: listed
+        ? "臺灣證券交易所－個股日成交資訊"
+        : "證券櫃檯買賣中心－個股日成交資訊",
+      sourceUrl: listed
+        ? `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=${expectedAsOf.slice(0, 7).replace("-", "")}01&stockNo=${identity.code}&response=json`
+        : `https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingStock?code=${identity.code}&date=${expectedAsOf.slice(0, 7).replace("-", "/")}/01&response=json`,
+      retrievedAt: sourceRetrievedAt,
+      cache: storedCache(sourceRetrievedAt),
+      snapshotIdentity: "verified",
+      dataMonth: expectedAsOf.slice(0, 7),
+      observedName: identity.shortName,
+      selectedBarDate,
+      normalization: {
+        volumeShares: {
+          sourceUnit: listed ? "share" : "lot",
+          outputUnit: "share",
+          multiplier: listed ? 1 : 1000,
+        },
+        turnoverTwd: {
+          sourceUnit: listed ? "TWD" : "TWD_thousand",
+          outputUnit: "TWD",
+          multiplier: listed ? 1 : 1000,
+        },
+        tradeCount: {
+          sourceUnit: "trade",
+          outputUnit: "trade",
+          multiplier: 1,
+        },
       },
-    ],
-    selectionComplete: true,
-    missingCompanyCodes: [],
-    counts: { listed: 1, otc: 0, returned: 1 },
-    bars: [
-      {
-        code: "2330",
-        name: "台積電",
-        date: "2026-08-27",
-        open: 33.1,
-        high: 33.5,
-        low: 33,
-        close: 33.2,
-        volumeShares: 1_000_000,
-        turnoverTwd: 33_200_000,
-        tradeCount: 1_000,
-        change: 0.1,
-        changeMarker: null,
-        market: "listed",
-        status: "traded",
-        qualityStatus: "complete",
-        missingFields: [],
+    },
+    resolverEvidence,
+    cacheRefresh: {
+      attempted: cacheRefreshAttempted,
+      initialCacheStatus: cacheRefreshAttempted ? "hit" : "miss",
+    },
+    workBudget: {
+      scope: "authoritative_completed_close_routing",
+      completedSessionResolver: resolverEvidence.workBudget,
+      exactStockOhlcAttempts: {
+        actual: cacheRefreshAttempted ? 2 : 1,
+        maximum: 2,
+        cacheRefreshPerformed: cacheRefreshAttempted,
       },
-    ],
-    sources: [priceSource()],
-    warnings: [],
-    ...overrides,
-  };
-}
-
-function otcOfficialResult(): DailyMarketOhlcResult {
-  const result = officialResult();
-  result.query = {
-    market: "otc",
-    date: "latest",
-    companyCodes: ["3105"],
-    universePolicy: "compatible",
-  };
-  result.reconciliation = [
-    {
-      ...result.reconciliation[0],
-      market: "otc",
     },
-  ];
-  result.counts = { listed: 0, otc: 1, returned: 1 };
-  result.bars = [
-    {
-      ...result.bars[0],
-      code: "3105",
-      name: "穩懋",
-      market: "otc",
-    },
-  ];
-  result.sources = [otcPriceSource()];
-  return result;
+  };
 }
 
 function dependencies(options: {
   master?: CompanyMasterResult;
-  official?: DailyMarketOhlcResult;
+  completedClose?: AuthoritativeCompletedCloseResult;
 } = {}) {
   const companyMaster = {
     listCompanies: vi.fn().mockResolvedValue(options.master ?? masterResult()),
   } satisfies ObservedPriceCompanyMasterLike;
-  const officialPrice = {
-    getDailyMarketOhlc: vi
-      .fn()
-      .mockResolvedValue(options.official ?? officialResult()),
-  } satisfies ObservedPriceOfficialPriceLike;
-  return { companyMaster, officialPrice };
+  const completedClose = {
+    getLatestCompletedClose: vi.fn(
+      async (
+        query: Parameters<
+          ObservedPriceCompletedCloseLike["getLatestCompletedClose"]
+        >[0],
+      ) =>
+        options.completedClose ??
+        authoritativeCompletedCloseFixture({
+          identity: query.company,
+          evaluatedAt:
+            query.evaluatedAt instanceof Date
+              ? query.evaluatedAt.toISOString()
+              : query.evaluatedAt,
+        }),
+    ),
+  } satisfies ObservedPriceCompletedCloseLike;
+  return { companyMaster, completedClose };
 }
 
-function input(observedPriceTwd = 33.35) {
+function input(observedPriceTwd = 2_425) {
   return {
     companyCode: "2330",
     observedPriceTwd,
-    observedAt: "2026-08-28T09:32:00+08:00",
+    observedAt: "2026-08-28T14:32:00+08:00",
     sourceLabel: "caller supplied terminal observation",
   };
 }
 
 describe("ObservedPriceClient", () => {
-  it("accepts production-like unrelated compatible differences while keeping selected identity exact", async () => {
-    const master = masterResult();
-    master.generatedAt = "2026-08-28T02:00:03.000Z";
-    master.sources = master.sources.map((source, index) => ({
-      ...source,
-      retrievedAt: `2026-08-28T02:00:0${index + 1}.000Z`,
-      cache: {
-        status: "miss",
-        observedAt: `2026-08-28T02:00:0${index + 1}.000Z`,
-        storedAt: `2026-08-28T02:00:0${index + 1}.000Z`,
-        ageMs: 0,
-        ttlMs: 300_000,
-      },
-    }));
-    const official = officialResult();
-    official.sources[0] = {
-      ...official.sources[0],
-      retrievedAt: "2026-08-28T02:00:04.000Z",
-      cache: {
-        status: "miss",
-        observedAt: "2026-08-28T02:00:04.000Z",
-        storedAt: "2026-08-28T02:00:04.000Z",
-        ageMs: 0,
-        ttlMs: 300_000,
-      },
-    };
-    const deps = dependencies({ master, official });
+  it("uses resolver expectedAsOf plus exact 2026-08-28 close=2420 with request-start TOCTOU binding", async () => {
+    const completedClose = authoritativeCompletedCloseFixture({
+      evaluatedAt: REQUEST_START,
+      expectedAsOf: "2026-08-28",
+      selectedBarDate: "2026-08-28",
+      close: 2_420,
+    });
+    const deps = dependencies({ completedClose });
     const sequencedNow = vi
       .fn()
-      .mockReturnValueOnce(new Date("2026-08-28T02:00:00.000Z"))
-      .mockReturnValueOnce(new Date("2026-08-28T02:00:05.000Z"));
+      .mockReturnValueOnce(new Date(REQUEST_START))
+      .mockReturnValueOnce(new Date("2026-08-29T01:00:00.000Z"));
     const client = new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
+      deps.completedClose,
       sequencedNow,
     );
 
-    const result = await client.analyzeObservedPrice(input());
+    const context = await client.analyzeObservedPriceWithContext(input());
+    const result = context.data;
 
+    expect(deps.companyMaster.listCompanies).toHaveBeenCalledTimes(1);
     expect(deps.companyMaster.listCompanies).toHaveBeenCalledWith({
       market: "all",
       includeFinancial: true,
       includeKy: true,
     });
-    expect(deps.officialPrice.getDailyMarketOhlc).toHaveBeenCalledWith({
-      market: "listed",
-      date: "latest",
-      companyCodes: ["2330"],
-      universePolicy: "compatible",
+    expect(deps.completedClose.getLatestCompletedClose).toHaveBeenCalledTimes(1);
+    expect(deps.completedClose.getLatestCompletedClose).toHaveBeenCalledWith({
+      company: {
+        code: "2330",
+        shortName: "台積電",
+        market: "listed",
+        exchange: "TWSE",
+      },
+      evaluatedAt: REQUEST_START,
+    });
+    expect(context.completedClose).toBe(completedClose);
+    expect(context.completedClose).toMatchObject({
+      expectedAsOf: "2026-08-28",
+      selectedBarDate: "2026-08-28",
+      close: 2_420,
+      source: {
+        dataMonth: "2026-08",
+        selectedBarDate: "2026-08-28",
+      },
     });
     expect(result).toMatchObject({
-      generatedAt: "2026-08-28T02:00:05.000Z",
+      generatedAt: "2026-08-29T01:00:00.000Z",
       priceOrigin: "caller_supplied",
       officialBaselineOrigin: "official_latest_completed_close",
-      observedPriceTwd: 33.35,
-      observedAt: "2026-08-28T09:32:00+08:00",
+      observedPriceTwd: 2_425,
+      observedAt: "2026-08-28T14:32:00+08:00",
       observedTaipeiDate: "2026-08-28",
-      latestOfficialCompletedClose: 33.2,
-      latestOfficialCloseDate: "2026-08-27",
-      officialHistoryCutoff: "2026-08-27",
-      changeFromOfficialCloseTwd: 0.15,
-      changeFromOfficialClosePercent: 0.451807,
+      latestOfficialCompletedClose: 2_420,
+      latestOfficialCloseDate: "2026-08-28",
+      officialHistoryCutoff: "2026-08-28",
+      changeFromOfficialCloseTwd: 5,
+      changeFromOfficialClosePercent: 0.206612,
       market: "listed",
       exchange: "TWSE",
       currency: "TWD",
@@ -376,7 +359,8 @@ describe("ObservedPriceClient", () => {
         },
         officialBaseline: {
           evidenceClass: "OFFICIAL_MARKET_RAW",
-          sourceIds: ["official_close:listed:2026-08-27"],
+          dataDate: "2026-08-28",
+          sourceIds: ["official_close:listed:2026-08-28"],
         },
         comparison: { evidenceClass: "MOPSFIN_CALC" },
       },
@@ -384,37 +368,46 @@ describe("ObservedPriceClient", () => {
         requestedCompanies: 1,
         dependencyInvocations: {
           orchestrationCompanyMaster: 1,
-          officialDailyMarketPrice: 1,
-          officialDailyMarketInternalCompatibleMaster: 1,
+          authoritativeCompletedSessionResolver: 1,
+          officialExactSingleStockOhlc: 1,
           maximumIncludingNestedDependencies: 3,
         },
         plannedOfficialSourceRequests: {
           orchestrationCompanyMasterMarkets: 2,
-          officialDailyMarketSnapshot: 1,
-          officialDailyMarketInternalCompatibleMasterMarkets: 1,
-          maximumTotal: 4,
+          completedSessionResolver: { actual: 2, maximum: 2 },
+          exactSingleStockOhlc: {
+            actual: 1,
+            maximum: 2,
+            cacheRefreshPerformed: false,
+          },
+          actualTotal: 5,
+          maximumTotal: 6,
         },
-        universePolicy: "compatible",
+        priceRoutingPolicy:
+          "authoritative_completed_session_expected_as_of_then_exact_single_stock_ohlc",
         selectedCompanyIdentityPolicy:
-          "outer_market_all_master_plus_official_row_exact",
+          "outer_market_all_master_plus_exact_single_stock_source",
       },
     });
     expect(sequencedNow).toHaveBeenCalledTimes(2);
     expect(
-      deps.officialPrice.getDailyMarketOhlc.mock.invocationCallOrder[0],
+      deps.completedClose.getLatestCompletedClose.mock.invocationCallOrder[0],
     ).toBeLessThan(sequencedNow.mock.invocationCallOrder[1]);
     expect(result.sources).toEqual([
       expect.objectContaining({
         stage: "company_master",
-        retrievedAt: "2026-08-28T02:00:01.000Z",
+        market: "listed",
       }),
       expect.objectContaining({
         stage: "company_master",
-        retrievedAt: "2026-08-28T02:00:02.000Z",
+        market: "otc",
       }),
       expect.objectContaining({
         stage: "latest_official_completed_close",
-        retrievedAt: "2026-08-28T02:00:04.000Z",
+        market: "listed",
+        dataMonth: "2026-08",
+        selectedBarDate: "2026-08-28",
+        retrievedAt: "2026-08-28T06:45:00.000Z",
       }),
     ]);
     expect(result.dependencyLedger).toEqual([
@@ -427,13 +420,13 @@ describe("ObservedPriceClient", () => {
         ],
       }),
       expect.objectContaining({
-        dependency: "official_daily_market_price",
-        sourceIds: ["official_close:listed:2026-08-27"],
+        dependency: "authoritative_completed_session_resolver",
+        sourceEvidence: "exposed_in_meta_resolver_evidence",
+        sourceIds: [],
       }),
       expect.objectContaining({
-        dependency: "official_daily_market_internal_compatible_master",
-        sourceEvidence: "not_exposed_by_dependency",
-        sourceIds: [],
+        dependency: "official_exact_single_stock_ohlc",
+        sourceIds: ["official_close:listed:2026-08-28"],
       }),
     ]);
     expect(result.sources.map((source) => source.retrievedAt)).not.toContain(
@@ -441,16 +434,25 @@ describe("ObservedPriceClient", () => {
     );
     expect(result.warnings.join(" ")).toContain("不是官方報價");
     expect(result.warnings.join(" ")).toContain("不代表 fair value");
-    expect(result.warnings.join(" ")).toContain("compatible");
-    expect(result.warnings.join(" ")).toContain("至少 95%");
-    expect(result.warnings.join(" ")).toContain("code、name、market 精確核對");
+    expect(result.warnings.join(" ")).toContain("expectedAsOf");
+    expect(result.warnings.join(" ")).toContain(
+      "不使用可能落後的全市場 latest endpoint",
+    );
   });
 
   it("supports an OTC company while retaining both outer current-master sources", async () => {
-    const deps = dependencies({ official: otcOfficialResult() });
+    const otc = {
+      code: "3105",
+      shortName: "穩懋",
+      market: "otc",
+      exchange: "TPEx",
+    } as const;
+    const deps = dependencies({
+      completedClose: authoritativeCompletedCloseFixture({ identity: otc }),
+    });
     const client = new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
+      deps.completedClose,
       now,
     );
 
@@ -459,11 +461,9 @@ describe("ObservedPriceClient", () => {
       companyCode: "3105",
     });
 
-    expect(deps.officialPrice.getDailyMarketOhlc).toHaveBeenCalledWith({
-      market: "otc",
-      date: "latest",
-      companyCodes: ["3105"],
-      universePolicy: "compatible",
+    expect(deps.completedClose.getLatestCompletedClose).toHaveBeenCalledWith({
+      company: otc,
+      evaluatedAt: REQUEST_START,
     });
     expect(result).toMatchObject({
       company: { code: "3105", market: "otc", exchange: "TPEx" },
@@ -472,7 +472,13 @@ describe("ObservedPriceClient", () => {
       sources: [
         { stage: "company_master", market: "listed" },
         { stage: "company_master", market: "otc" },
-        { stage: "latest_official_completed_close", market: "otc" },
+        {
+          stage: "latest_official_completed_close",
+          market: "otc",
+          exchange: "TPEx",
+          observedName: "穩懋",
+          selectedBarDate: "2026-08-28",
+        },
       ],
       provenance: {
         currentMasterIdentity: {
@@ -480,7 +486,7 @@ describe("ObservedPriceClient", () => {
           companyMarket: "otc",
         },
         officialBaseline: {
-          sourceIds: ["official_close:otc:2026-08-27"],
+          sourceIds: ["official_close:otc:2026-08-28"],
         },
       },
     });
@@ -489,13 +495,13 @@ describe("ObservedPriceClient", () => {
   it.each([
     {
       label: "negative",
-      observedPriceTwd: 33,
-      expectedAbsolute: -0.2,
-      expectedPercent: -0.60241,
+      observedPriceTwd: 2_410,
+      expectedAbsolute: -10,
+      expectedPercent: -0.413223,
     },
     {
       label: "zero",
-      observedPriceTwd: 33.2,
+      observedPriceTwd: 2_420,
       expectedAbsolute: 0,
       expectedPercent: 0,
     },
@@ -505,7 +511,7 @@ describe("ObservedPriceClient", () => {
       const deps = dependencies();
       const client = new ObservedPriceClient(
         deps.companyMaster,
-        deps.officialPrice,
+        deps.completedClose,
         now,
       );
 
@@ -548,7 +554,7 @@ describe("ObservedPriceClient", () => {
     const deps = dependencies();
     const client = new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
+      deps.completedClose,
       now,
     );
 
@@ -561,7 +567,7 @@ describe("ObservedPriceClient", () => {
       action: "fix_input",
     });
     expect(deps.companyMaster.listCompanies).not.toHaveBeenCalled();
-    expect(deps.officialPrice.getDailyMarketOhlc).not.toHaveBeenCalled();
+    expect(deps.completedClose.getLatestCompletedClose).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -587,7 +593,7 @@ describe("ObservedPriceClient", () => {
     },
     {
       label: "future timestamp",
-      observedAt: "2026-08-28T10:01:00+08:00",
+      observedAt: "2026-08-28T15:01:00+08:00",
       reason: "OBSERVED_AT_IN_FUTURE",
     },
     {
@@ -599,7 +605,7 @@ describe("ObservedPriceClient", () => {
     const deps = dependencies();
     const client = new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
+      deps.completedClose,
       now,
     );
 
@@ -610,77 +616,52 @@ describe("ObservedPriceClient", () => {
       reason,
     });
     expect(deps.companyMaster.listCompanies).not.toHaveBeenCalled();
-    expect(deps.officialPrice.getDailyMarketOhlc).not.toHaveBeenCalled();
+    expect(deps.completedClose.getLatestCompletedClose).not.toHaveBeenCalled();
   });
 
-  it("rejects an observation whose Taipei date predates the official close", async () => {
+  it("rejects an observation whose Taipei date predates resolver expectedAsOf", async () => {
     const deps = dependencies();
     const client = new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
+      deps.completedClose,
       now,
     );
 
     await expect(
       client.analyzeObservedPrice({
         ...input(),
-        observedAt: "2026-08-26T23:59:59+08:00",
+        observedAt: "2026-08-27T23:59:59+08:00",
       }),
     ).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
       reason: "OBSERVATION_PREDATES_OFFICIAL_CLOSE",
       details: {
-        observedTaipeiDate: "2026-08-26",
-        latestOfficialCloseDate: "2026-08-27",
+        observedTaipeiDate: "2026-08-27",
+        latestOfficialCloseDate: "2026-08-28",
       },
     });
   });
 
-  it("uses the Taipei instant and a conservative 13:33 guard for same-day completed close", async () => {
-    const sameDay = officialResult({
-      dataDate: "2026-08-28",
-      bars: [
-        {
-          ...officialResult().bars[0],
-          date: "2026-08-28",
-        },
-      ],
-      sources: [
-        {
-          ...priceSource(),
-          dataDate: "2026-08-28",
-          retrievedAt: "2026-08-28T05:45:00.000Z",
-          cache: {
-            status: "miss",
-            observedAt: "2026-08-28T05:45:00.000Z",
-            storedAt: "2026-08-28T05:45:00.000Z",
-            ageMs: 0,
-            ttlMs: 300_000,
-          },
-        },
-      ],
-    });
-    const deps = dependencies({ official: sameDay });
-    const afterCloseNow = () => new Date("2026-08-28T06:00:00.000Z");
+  it("rejects a 09:32 same-day observation and accepts the exact 13:33 Taipei boundary", async () => {
+    const deps = dependencies();
     const client = new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
-      afterCloseNow,
+      deps.completedClose,
+      now,
     );
 
     await expect(
       client.analyzeObservedPrice({
         ...input(),
-        // 05:32:59Z is 13:32:59 in Asia/Taipei.
-        observedAt: "2026-08-28T05:32:59Z",
+        observedAt: "2026-08-28T09:32:00+08:00",
       }),
     ).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
       reason: "OBSERVATION_PRECEDES_OFFICIAL_SESSION_COMPLETION",
       details: {
         observedTaipeiDate: "2026-08-28",
-        conservativeSessionCompletionTaipei:
-          "2026-08-28T13:33:00+08:00",
+        latestOfficialCloseDate: "2026-08-28",
+        conservativeSessionCompletionTaipei: "2026-08-28T13:33:00+08:00",
       },
     });
 
@@ -695,15 +676,19 @@ describe("ObservedPriceClient", () => {
   });
 
   it("rejects caller values whose derived comparison would overflow", async () => {
-    const deps = dependencies();
+    const deps = dependencies({
+      completedClose: authoritativeCompletedCloseFixture({
+        close: Number.MIN_VALUE,
+      }),
+    });
     const client = new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
+      deps.completedClose,
       now,
     );
 
     await expect(
-      client.analyzeObservedPrice(input(Number.MAX_VALUE)),
+      client.analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
       code: "INVALID_ARGUMENT",
       reason: "OBSERVED_PRICE_COMPARISON_OVERFLOW",
@@ -719,20 +704,20 @@ describe("ObservedPriceClient", () => {
       name: "鴻海精密工業股份有限公司",
       shortName: "鴻海",
     });
-    const missingDeps = dependencies({
-      master: missingMaster,
-    });
+    const missingDeps = dependencies({ master: missingMaster });
     await expect(
       new ObservedPriceClient(
         missingDeps.companyMaster,
-        missingDeps.officialPrice,
+        missingDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
       code: "NOT_FOUND",
       reason: "COMPANY_NOT_IN_CURRENT_MASTER",
     });
-    expect(missingDeps.officialPrice.getDailyMarketOhlc).not.toHaveBeenCalled();
+    expect(
+      missingDeps.completedClose.getLatestCompletedClose,
+    ).not.toHaveBeenCalled();
 
     const duplicateMaster = masterResult();
     duplicateMaster.companies[1] = company();
@@ -742,103 +727,169 @@ describe("ObservedPriceClient", () => {
     await expect(
       new ObservedPriceClient(
         duplicateDeps.companyMaster,
-        duplicateDeps.officialPrice,
+        duplicateDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
       code: "UPSTREAM_BAD_RESPONSE",
       reason: "CURRENT_MASTER_IDENTITY_CONTRACT_MISMATCH",
     });
-    expect(duplicateDeps.officialPrice.getDailyMarketOhlc).not.toHaveBeenCalled();
+    expect(
+      duplicateDeps.completedClose.getLatestCompletedClose,
+    ).not.toHaveBeenCalled();
   });
 
-  it("rejects a missing official selection and an official identity mismatch", async () => {
-    const missingDeps = dependencies({
-      official: officialResult({
-        selectionComplete: false,
-        missingCompanyCodes: ["2330"],
-        counts: { listed: 0, otc: 0, returned: 0 },
-        bars: [],
-      }),
+  it("propagates exact completed-close dependency failures without a bulk fallback", async () => {
+    const companyMaster = {
+      listCompanies: vi.fn().mockResolvedValue(masterResult()),
+    } satisfies ObservedPriceCompanyMasterLike;
+    const failure = new MopsfinError("NO_DATA", "8/28 exact bar 尚未發布。", {
+      reason: "COMPLETED_CLOSE_EXACT_BAR_NOT_FOUND",
+      category: "no_data",
+      retryable: true,
+      action: "retry",
     });
+    const bulkFallback = vi.fn();
+    const completedClose = {
+      getLatestCompletedClose: vi.fn().mockRejectedValue(failure),
+      getDailyMarketOhlc: bulkFallback,
+    };
+    const client = new ObservedPriceClient(companyMaster, completedClose, now);
+
+    await expect(client.analyzeObservedPrice(input())).rejects.toBe(failure);
+    expect(companyMaster.listCompanies).toHaveBeenCalledTimes(1);
+    expect(completedClose.getLatestCompletedClose).toHaveBeenCalledTimes(1);
+    expect(bulkFallback).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      label: "query evaluatedAt mismatch",
+      mutate: (result: AuthoritativeCompletedCloseResult) => {
+        result.query.evaluatedAt = "2026-08-28T06:59:59.999Z";
+      },
+      reason: "OFFICIAL_PRICE_QUERY_IDENTITY_MISMATCH",
+    },
+    {
+      label: "company short name mismatch",
+      mutate: (result: AuthoritativeCompletedCloseResult) => {
+        result.company.shortName = "錯誤公司";
+      },
+      reason: "OFFICIAL_PRICE_QUERY_IDENTITY_MISMATCH",
+    },
+    {
+      label: "source observed name mismatch",
+      mutate: (result: AuthoritativeCompletedCloseResult) => {
+        result.source.observedName = "錯誤公司";
+      },
+      reason: "OFFICIAL_PRICE_CONTRACT_MISMATCH",
+    },
+    {
+      label: "source market mismatch",
+      mutate: (result: AuthoritativeCompletedCloseResult) => {
+        result.source.market = "otc";
+      },
+      reason: "OFFICIAL_PRICE_CONTRACT_MISMATCH",
+    },
+  ])("rejects completed-close $label", async ({ mutate, reason }) => {
+    const completedClose = authoritativeCompletedCloseFixture();
+    mutate(completedClose);
+    const deps = dependencies({ completedClose });
+
     await expect(
       new ObservedPriceClient(
-        missingDeps.companyMaster,
-        missingDeps.officialPrice,
+        deps.companyMaster,
+        deps.completedClose,
+        now,
+      ).analyzeObservedPrice(input()),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason,
+    });
+  });
+
+  it.each([
+    {
+      label: "top-level selectedBarDate",
+      mutate: (result: AuthoritativeCompletedCloseResult) => {
+        result.selectedBarDate = "2026-08-27";
+      },
+    },
+    {
+      label: "bar date",
+      mutate: (result: AuthoritativeCompletedCloseResult) => {
+        result.bar.date = "2026-08-27";
+      },
+    },
+    {
+      label: "source selectedBarDate",
+      mutate: (result: AuthoritativeCompletedCloseResult) => {
+        result.source.selectedBarDate = "2026-08-27";
+      },
+    },
+    {
+      label: "source dataMonth",
+      mutate: (result: AuthoritativeCompletedCloseResult) => {
+        result.source.dataMonth = "2026-07";
+      },
+    },
+  ])("rejects a $label not bound to expectedAsOf", async ({ mutate }) => {
+    const completedClose = authoritativeCompletedCloseFixture();
+    mutate(completedClose);
+    const deps = dependencies({ completedClose });
+
+    await expect(
+      new ObservedPriceClient(
+        deps.companyMaster,
+        deps.completedClose,
+        now,
+      ).analyzeObservedPrice(input()),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "OFFICIAL_PRICE_DATE_MISMATCH",
+      details: { expectedAsOf: "2026-08-28" },
+    });
+  });
+
+  it("rejects resolver evidence that is not the same completed-session decision", async () => {
+    const completedClose = authoritativeCompletedCloseFixture();
+    completedClose.resolverEvidence.evaluatedAt =
+      "2026-08-28T06:59:59.999Z";
+    const deps = dependencies({ completedClose });
+
+    await expect(
+      new ObservedPriceClient(
+        deps.companyMaster,
+        deps.completedClose,
+        now,
+      ).analyzeObservedPrice(input()),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "COMPLETED_SESSION_EVIDENCE_MISMATCH",
+    });
+  });
+
+  it("rejects an unavailable or contradictory completed close", async () => {
+    const unavailable = authoritativeCompletedCloseFixture({ close: 0 });
+    const unavailableDeps = dependencies({ completedClose: unavailable });
+    await expect(
+      new ObservedPriceClient(
+        unavailableDeps.companyMaster,
+        unavailableDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
       code: "NO_DATA",
-      reason: "OFFICIAL_COMPLETED_CLOSE_NOT_FOUND",
+      reason: "OFFICIAL_COMPLETED_CLOSE_UNAVAILABLE",
     });
 
-    const mismatch = officialResult();
-    mismatch.bars[0] = { ...mismatch.bars[0], name: "錯誤公司" };
-    const mismatchDeps = dependencies({ official: mismatch });
+    const contradictory = authoritativeCompletedCloseFixture();
+    contradictory.close = 2_410;
+    const contradictoryDeps = dependencies({ completedClose: contradictory });
     await expect(
       new ObservedPriceClient(
-        mismatchDeps.companyMaster,
-        mismatchDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      code: "UPSTREAM_BAD_RESPONSE",
-      reason: "OFFICIAL_PRICE_IDENTITY_MISMATCH",
-    });
-
-    const duplicate = officialResult();
-    duplicate.bars = [duplicate.bars[0], { ...duplicate.bars[0] }];
-    duplicate.counts = { listed: 2, otc: 0, returned: 2 };
-    const duplicateDeps = dependencies({ official: duplicate });
-    await expect(
-      new ObservedPriceClient(
-        duplicateDeps.companyMaster,
-        duplicateDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      code: "UPSTREAM_BAD_RESPONSE",
-      reason: "OFFICIAL_PRICE_IDENTITY_AMBIGUOUS",
-    });
-  });
-
-  it("rejects compatible coverage below 95% and an unavailable close", async () => {
-    const incomplete = officialResult();
-    incomplete.universeCoverageVerified = false;
-    incomplete.reconciliation[0] = {
-      ...incomplete.reconciliation[0],
-      masterCount: 100,
-      sourceRowCount: 94,
-      matchedCount: 94,
-      masterMissingCodes: ["1001", "1002", "1003", "1004", "1005", "9999"],
-      matchRatio: 0.94,
-      coverageComplete: false,
-    };
-    const coverageDeps = dependencies({ official: incomplete });
-    await expect(
-      new ObservedPriceClient(
-        coverageDeps.companyMaster,
-        coverageDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      code: "INCOMPLETE_COVERAGE",
-      reason: "OFFICIAL_PRICE_COVERAGE_INCOMPLETE",
-    });
-
-    const noTrade = officialResult();
-    noTrade.bars[0] = {
-      ...noTrade.bars[0],
-      close: null,
-      status: "no_trade",
-      qualityStatus: "official_no_trade",
-      missingFields: ["close"],
-    };
-    const noTradeDeps = dependencies({ official: noTrade });
-    await expect(
-      new ObservedPriceClient(
-        noTradeDeps.companyMaster,
-        noTradeDeps.officialPrice,
+        contradictoryDeps.companyMaster,
+        contradictoryDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
@@ -847,117 +898,14 @@ describe("ObservedPriceClient", () => {
     });
   });
 
-  it("accepts the exact compatible 95% boundary when the selected row is exact", async () => {
-    const threshold = officialResult();
-    threshold.reconciliation[0] = {
-      market: "listed",
-      masterCount: 20,
-      sourceRowCount: 19,
-      matchedCount: 19,
-      marketOnlyCodes: [],
-      masterMissingCodes: ["9999"],
-      matchRatio: 0.95,
-      coverageComplete: false,
-    };
-    const deps = dependencies({ official: threshold });
-
-    const result = await new ObservedPriceClient(
-      deps.companyMaster,
-      deps.officialPrice,
-      now,
-    ).analyzeObservedPrice(input());
-
-    expect(result.company.code).toBe("2330");
-    expect(result.latestOfficialCompletedClose).toBe(33.2);
-  });
-
-  it("fails closed on malformed compatible reconciliation evidence", async () => {
-    const cases: Array<{
-      label: string;
-      mutate: (result: DailyMarketOhlcResult) => void;
-    }> = [
-      {
-        label: "ratio is not recomputable",
-        mutate: (result) => {
-          result.reconciliation[0].matchRatio = 0.998;
-        },
-      },
-      {
-        label: "difference set is not sorted",
-        mutate: (result) => {
-          result.reconciliation[0] = {
-            ...result.reconciliation[0],
-            masterCount: 1_000,
-            sourceRowCount: 998,
-            matchedCount: 998,
-            masterMissingCodes: ["9999", "1001"],
-            matchRatio: 0.998,
-          };
-        },
-      },
-      {
-        label: "difference set contains duplicates",
-        mutate: (result) => {
-          result.reconciliation[0] = {
-            ...result.reconciliation[0],
-            masterCount: 1_000,
-            sourceRowCount: 998,
-            matchedCount: 998,
-            masterMissingCodes: ["9999", "9999"],
-            matchRatio: 0.998,
-          };
-        },
-      },
-      {
-        label: "selected outer-master company is classified market-only",
-        mutate: (result) => {
-          result.reconciliation[0] = {
-            ...result.reconciliation[0],
-            sourceRowCount: 1_000,
-            marketOnlyCodes: ["2330"],
-          };
-        },
-      },
-      {
-        label: "universe verified disagrees with exact coverage",
-        mutate: (result) => {
-          result.universeCoverageVerified = true;
-        },
-      },
-      {
-        label: "coverage flag disagrees with difference sets",
-        mutate: (result) => {
-          result.reconciliation[0].coverageComplete = true;
-        },
-      },
-    ];
-
-    for (const entry of cases) {
-      const official = officialResult();
-      entry.mutate(official);
-      const deps = dependencies({ official });
-      await expect(
-        new ObservedPriceClient(
-          deps.companyMaster,
-          deps.officialPrice,
-          now,
-        ).analyzeObservedPrice(input()),
-        entry.label,
-      ).rejects.toMatchObject({
-        code: "UPSTREAM_BAD_RESPONSE",
-        reason: "OFFICIAL_PRICE_RECONCILIATION_MISMATCH",
-      });
-    }
-  });
-
-  it("requires source-level retrievedAt provenance instead of synthesizing it at serve time", async () => {
+  it("requires exact outer-master sources and source-level close provenance", async () => {
     const noMasterSource = dependencies({
       master: masterResult({ sources: [] }),
     });
     await expect(
       new ObservedPriceClient(
         noMasterSource.companyMaster,
-        noMasterSource.officialPrice,
+        noMasterSource.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
@@ -965,29 +913,13 @@ describe("ObservedPriceClient", () => {
       reason: "CURRENT_MASTER_SOURCE_SET_MISMATCH",
     });
 
-    const noPriceSource = dependencies({
-      official: officialResult({ sources: [] }),
-    });
-    await expect(
-      new ObservedPriceClient(
-        noPriceSource.companyMaster,
-        noPriceSource.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      code: "UPSTREAM_BAD_RESPONSE",
-      reason: "OFFICIAL_PRICE_SOURCE_SET_MISMATCH",
-    });
-  });
-
-  it("requires the exact outer-master and official-price source sets", async () => {
     const missingOtcMaster = masterResult();
     missingOtcMaster.sources = [missingOtcMaster.sources[0]];
     const missingOtcDeps = dependencies({ master: missingOtcMaster });
     await expect(
       new ObservedPriceClient(
         missingOtcDeps.companyMaster,
-        missingOtcDeps.officialPrice,
+        missingOtcDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
@@ -1000,41 +932,29 @@ describe("ObservedPriceClient", () => {
     await expect(
       new ObservedPriceClient(
         extraMasterDeps.companyMaster,
-        extraMasterDeps.officialPrice,
+        extraMasterDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
       reason: "CURRENT_MASTER_SOURCE_SET_MISMATCH",
     });
 
-    const extraPrice = officialResult();
-    extraPrice.sources = [priceSource(), otcPriceSource()];
-    const extraPriceDeps = dependencies({ official: extraPrice });
+    const noCloseCache = authoritativeCompletedCloseFixture();
+    delete noCloseCache.source.cache;
+    const noCloseCacheDeps = dependencies({ completedClose: noCloseCache });
     await expect(
       new ObservedPriceClient(
-        extraPriceDeps.companyMaster,
-        extraPriceDeps.officialPrice,
+        noCloseCacheDeps.companyMaster,
+        noCloseCacheDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_SOURCE_SET_MISMATCH",
-    });
-
-    const mismatchedPrice = officialResult();
-    mismatchedPrice.sources = [otcPriceSource()];
-    const mismatchedPriceDeps = dependencies({ official: mismatchedPrice });
-    await expect(
-      new ObservedPriceClient(
-        mismatchedPriceDeps.companyMaster,
-        mismatchedPriceDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_SOURCE_SET_MISMATCH",
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "OFFICIAL_PRICE_SOURCE_CACHE_MISSING",
     });
   });
 
-  it("validates master reportDate and all returned source retrieval timestamps", async () => {
+  it("validates master reportDate and source retrieval timestamps", async () => {
     const invalidReportMaster = masterResult();
     invalidReportMaster.sources[0] = {
       ...invalidReportMaster.sources[0],
@@ -1044,7 +964,7 @@ describe("ObservedPriceClient", () => {
     await expect(
       new ObservedPriceClient(
         invalidReportDeps.companyMaster,
-        invalidReportDeps.officialPrice,
+        invalidReportDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
@@ -1057,13 +977,11 @@ describe("ObservedPriceClient", () => {
       ...invalidRetrievedMaster.sources[0],
       retrievedAt: "2026-08-28 08:30:00",
     };
-    const invalidRetrievedDeps = dependencies({
-      master: invalidRetrievedMaster,
-    });
+    const invalidRetrievedDeps = dependencies({ master: invalidRetrievedMaster });
     await expect(
       new ObservedPriceClient(
         invalidRetrievedDeps.companyMaster,
-        invalidRetrievedDeps.officialPrice,
+        invalidRetrievedDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
@@ -1076,6 +994,7 @@ describe("ObservedPriceClient", () => {
       ...inconsistentMasterTime.sources[0],
       reportDate: "2026-08-28",
       retrievedAt: "2026-08-27T15:59:59.000Z",
+      cache: storedCache("2026-08-27T15:59:59.000Z"),
     };
     inconsistentMasterTime.sources[1] = {
       ...inconsistentMasterTime.sources[1],
@@ -1087,71 +1006,64 @@ describe("ObservedPriceClient", () => {
     await expect(
       new ObservedPriceClient(
         inconsistentMasterTimeDeps.companyMaster,
-        inconsistentMasterTimeDeps.officialPrice,
+        inconsistentMasterTimeDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
       code: "UPSTREAM_BAD_RESPONSE",
       reason: "CURRENT_MASTER_SOURCE_TIME_INCONSISTENT",
     });
-
-    const invalidPriceRetrieved = officialResult();
-    invalidPriceRetrieved.sources[0] = {
-      ...invalidPriceRetrieved.sources[0],
-      retrievedAt: "not-an-iso-time",
-    };
-    const invalidPriceRetrievedDeps = dependencies({
-      official: invalidPriceRetrieved,
-    });
-    await expect(
-      new ObservedPriceClient(
-        invalidPriceRetrievedDeps.companyMaster,
-        invalidPriceRetrievedDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      code: "UPSTREAM_BAD_RESPONSE",
-      reason: "OFFICIAL_PRICE_SOURCE_RETRIEVED_AT_INVALID",
-    });
-
-    const futurePrice = officialResult();
-    futurePrice.sources[0] = {
-      ...futurePrice.sources[0],
-      retrievedAt: "2026-08-28T02:00:00.001Z",
-    };
-    const futurePriceDeps = dependencies({ official: futurePrice });
-    await expect(
-      new ObservedPriceClient(
-        futurePriceDeps.companyMaster,
-        futurePriceDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      code: "UPSTREAM_BAD_RESPONSE",
-      reason: "OFFICIAL_PRICE_SOURCE_RETRIEVED_AT_IN_FUTURE",
-    });
   });
 
-  it("fails closed on missing, contradictory, or future cache provenance", async () => {
+  it.each([
+    {
+      label: "invalid retrievedAt",
+      sourceRetrievedAt: "not-an-iso-time",
+      reason: "OFFICIAL_PRICE_SOURCE_RETRIEVED_AT_INVALID",
+    },
+    {
+      label: "future retrievedAt",
+      sourceRetrievedAt: "2026-08-28T07:00:00.001Z",
+      reason: "OFFICIAL_PRICE_SOURCE_RETRIEVED_AT_IN_FUTURE",
+    },
+    {
+      label: "retrieval before data date",
+      sourceRetrievedAt: "2026-08-27T15:59:59.000Z",
+      reason: "OFFICIAL_PRICE_SOURCE_TIME_INCONSISTENT",
+    },
+    {
+      label: "same-day retrieval before 13:33",
+      sourceRetrievedAt: "2026-08-28T05:32:59.000Z",
+      reason: "OFFICIAL_PRICE_SOURCE_PRECEDES_SESSION_COMPLETION",
+    },
+  ])("rejects official source $label", async ({ sourceRetrievedAt, reason }) => {
+    const completedClose = authoritativeCompletedCloseFixture({
+      sourceRetrievedAt,
+    });
+    const deps = dependencies({ completedClose });
+
+    await expect(
+      new ObservedPriceClient(
+        deps.companyMaster,
+        deps.completedClose,
+        now,
+      ).analyzeObservedPrice(input()),
+    ).rejects.toMatchObject({ reason });
+  });
+
+  it("fails closed on contradictory or future close cache provenance", async () => {
     const cases: Array<{
       label: string;
-      mutate: (source: PriceSource) => void;
+      mutate: (result: AuthoritativeCompletedCloseResult) => void;
       reason: string;
     }> = [
       {
-        label: "missing cache",
-        mutate: (source) => {
-          delete source.cache;
-        },
-        reason: "OFFICIAL_PRICE_SOURCE_CACHE_MISSING",
-      },
-      {
         label: "retrieval after storage",
-        mutate: (source) => {
-          source.cache = {
+        mutate: (result) => {
+          result.source.cache = {
             status: "hit",
-            observedAt: "2026-08-28T01:30:00.000Z",
-            storedAt: "2026-08-28T01:29:00.000Z",
+            observedAt: "2026-08-28T06:45:00.000Z",
+            storedAt: "2026-08-28T06:44:00.000Z",
             ageMs: 60_000,
             ttlMs: 300_000,
           };
@@ -1159,12 +1071,25 @@ describe("ObservedPriceClient", () => {
         reason: "OFFICIAL_PRICE_SOURCE_CACHE_TIME_INCONSISTENT",
       },
       {
+        label: "bypass with stored value",
+        mutate: (result) => {
+          result.source.cache = {
+            status: "bypass",
+            observedAt: "2026-08-28T06:45:00.000Z",
+            storedAt: "2026-08-28T06:45:00.000Z",
+            ageMs: 0,
+            ttlMs: 0,
+          };
+        },
+        reason: "OFFICIAL_PRICE_SOURCE_CACHE_CONTRACT_MISMATCH",
+      },
+      {
         label: "storage after observation",
-        mutate: (source) => {
-          source.cache = {
+        mutate: (result) => {
+          result.source.cache = {
             status: "hit",
-            observedAt: "2026-08-28T01:30:00.000Z",
-            storedAt: "2026-08-28T01:31:00.000Z",
+            observedAt: "2026-08-28T06:45:00.000Z",
+            storedAt: "2026-08-28T06:46:00.000Z",
             ageMs: 0,
             ttlMs: 300_000,
           };
@@ -1173,38 +1098,25 @@ describe("ObservedPriceClient", () => {
       },
       {
         label: "wrong age",
-        mutate: (source) => {
-          source.cache = {
+        mutate: (result) => {
+          result.source.cache = {
             status: "hit",
-            observedAt: "2026-08-28T01:30:01.000Z",
-            storedAt: "2026-08-28T01:30:00.000Z",
-            ageMs: 999,
+            observedAt: "2026-08-28T06:46:00.000Z",
+            storedAt: "2026-08-28T06:45:00.000Z",
+            ageMs: 59_999,
             ttlMs: 300_000,
           };
         },
         reason: "OFFICIAL_PRICE_SOURCE_CACHE_TIME_INCONSISTENT",
       },
       {
-        label: "bypass with stored value",
-        mutate: (source) => {
-          source.cache = {
-            status: "bypass",
-            observedAt: "2026-08-28T01:30:00.000Z",
-            storedAt: "2026-08-28T01:30:00.000Z",
-            ageMs: 0,
-            ttlMs: 0,
-          };
-        },
-        reason: "OFFICIAL_PRICE_SOURCE_CACHE_CONTRACT_MISMATCH",
-      },
-      {
         label: "observation after generation",
-        mutate: (source) => {
-          source.cache = {
+        mutate: (result) => {
+          result.source.cache = {
             status: "hit",
-            observedAt: "2026-08-28T02:00:00.001Z",
-            storedAt: "2026-08-28T01:30:00.000Z",
-            ageMs: 1_800_001,
+            observedAt: "2026-08-28T07:00:00.001Z",
+            storedAt: "2026-08-28T06:45:00.000Z",
+            ageMs: 900_001,
             ttlMs: 3_600_000,
           };
         },
@@ -1213,13 +1125,13 @@ describe("ObservedPriceClient", () => {
     ];
 
     for (const entry of cases) {
-      const official = officialResult();
-      entry.mutate(official.sources[0]);
-      const deps = dependencies({ official });
+      const completedClose = authoritativeCompletedCloseFixture();
+      entry.mutate(completedClose);
+      const deps = dependencies({ completedClose });
       await expect(
         new ObservedPriceClient(
           deps.companyMaster,
-          deps.officialPrice,
+          deps.completedClose,
           now,
         ).analyzeObservedPrice(input()),
         entry.label,
@@ -1239,7 +1151,7 @@ describe("ObservedPriceClient", () => {
     await expect(
       new ObservedPriceClient(
         masterDeps.companyMaster,
-        masterDeps.officialPrice,
+        masterDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
@@ -1247,184 +1159,80 @@ describe("ObservedPriceClient", () => {
     });
   });
 
-  it("validates compatible classification, reconciliation arithmetic, counts, and quality contracts", async () => {
-    const classification = officialResult({
-      classificationPolicy: "current_master_strict",
-    });
-    const classificationDeps = dependencies({ official: classification });
-    await expect(
-      new ObservedPriceClient(
-        classificationDeps.companyMaster,
-        classificationDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_CLASSIFICATION_MISMATCH",
-    });
-
-    const inconsistentReconciliation = officialResult();
-    inconsistentReconciliation.reconciliation[0] = {
-      ...inconsistentReconciliation.reconciliation[0],
-      matchedCount: 998,
-    };
-    const reconciliationDeps = dependencies({
-      official: inconsistentReconciliation,
-    });
-    await expect(
-      new ObservedPriceClient(
-        reconciliationDeps.companyMaster,
-        reconciliationDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_RECONCILIATION_MISMATCH",
-    });
-
-    const inconsistentCounts = officialResult({
-      counts: { listed: 0, otc: 0, returned: 1 },
-    });
-    const countsDeps = dependencies({ official: inconsistentCounts });
-    await expect(
-      new ObservedPriceClient(
-        countsDeps.companyMaster,
-        countsDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_COUNTS_MISMATCH",
-    });
-
-    const inconsistentMissingFields = officialResult();
-    inconsistentMissingFields.bars[0] = {
-      ...inconsistentMissingFields.bars[0],
-      missingFields: ["change"],
-    };
-    const missingFieldsDeps = dependencies({
-      official: inconsistentMissingFields,
-    });
-    await expect(
-      new ObservedPriceClient(
-        missingFieldsDeps.companyMaster,
-        missingFieldsDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_QUALITY_MISMATCH",
-    });
-
-    const inconsistentTopQuality = officialResult({
-      dataQualityComplete: false,
-    });
-    const topQualityDeps = dependencies({ official: inconsistentTopQuality });
-    await expect(
-      new ObservedPriceClient(
-        topQualityDeps.companyMaster,
-        topQualityDeps.officialPrice,
-        now,
-      ).analyzeObservedPrice(input()),
-    ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_QUALITY_MISMATCH",
-    });
-  });
-
-  it("requires a verified official snapshot whose dataDate is not after retrieval", async () => {
-    const unverified = officialResult();
-    unverified.sources[0] = {
-      ...unverified.sources[0],
-      snapshotIdentity: "unverified_empty",
-    };
-    const unverifiedDeps = dependencies({ official: unverified });
+  it("validates exact snapshot identity, bar quality, and work-budget evidence", async () => {
+    const unverified = authoritativeCompletedCloseFixture();
+    (
+      unverified.source as unknown as { snapshotIdentity: string }
+    ).snapshotIdentity = "unverified_empty";
+    const unverifiedDeps = dependencies({ completedClose: unverified });
     await expect(
       new ObservedPriceClient(
         unverifiedDeps.companyMaster,
-        unverifiedDeps.officialPrice,
+        unverifiedDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_SOURCE_IDENTITY_UNVERIFIED",
+      reason: "OFFICIAL_PRICE_CONTRACT_MISMATCH",
     });
 
-    const retrievedBeforeData = officialResult();
-    retrievedBeforeData.sources[0] = {
-      ...retrievedBeforeData.sources[0],
-      retrievedAt: "2026-08-26T15:59:59.000Z",
-    };
-    const retrievedBeforeDataDeps = dependencies({
-      official: retrievedBeforeData,
-    });
+    const inconsistentQuality = authoritativeCompletedCloseFixture();
+    inconsistentQuality.bar.missingFields = ["change"];
+    const qualityDeps = dependencies({ completedClose: inconsistentQuality });
     await expect(
       new ObservedPriceClient(
-        retrievedBeforeDataDeps.companyMaster,
-        retrievedBeforeDataDeps.officialPrice,
+        qualityDeps.companyMaster,
+        qualityDeps.completedClose,
         now,
       ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_SOURCE_TIME_INCONSISTENT",
+      reason: "OFFICIAL_PRICE_QUALITY_MISMATCH",
     });
 
-    const preCloseSameDay = officialResult({
-      dataDate: "2026-08-28",
-      bars: [
-        {
-          ...officialResult().bars[0],
-          date: "2026-08-28",
-        },
-      ],
-      sources: [
-        {
-          ...priceSource(),
-          dataDate: "2026-08-28",
-          retrievedAt: "2026-08-28T05:32:59.000Z",
-          cache: {
-            status: "miss",
-            observedAt: "2026-08-28T05:32:59.000Z",
-            storedAt: "2026-08-28T05:32:59.000Z",
-            ageMs: 0,
-            ttlMs: 300_000,
-          },
-        },
-      ],
-    });
-    const preCloseDeps = dependencies({ official: preCloseSameDay });
-    const afterCloseNow = () => new Date("2026-08-28T06:00:00.000Z");
+    const inconsistentBudget = authoritativeCompletedCloseFixture();
+    inconsistentBudget.workBudget.exactStockOhlcAttempts.actual = 2;
+    const budgetDeps = dependencies({ completedClose: inconsistentBudget });
     await expect(
       new ObservedPriceClient(
-        preCloseDeps.companyMaster,
-        preCloseDeps.officialPrice,
-        afterCloseNow,
-      ).analyzeObservedPrice({
-        ...input(),
-        observedAt: "2026-08-28T05:40:00Z",
-      }),
+        budgetDeps.companyMaster,
+        budgetDeps.completedClose,
+        now,
+      ).analyzeObservedPrice(input()),
     ).rejects.toMatchObject({
-      reason: "OFFICIAL_PRICE_SOURCE_PRECEDES_SESSION_COMPLETION",
+      reason: "OFFICIAL_PRICE_WORK_BUDGET_MISMATCH",
     });
   });
 
-  it("accepts internally consistent partial non-close quality with an explicit warning", async () => {
-    const partial = officialResult({ dataQualityComplete: false });
-    partial.bars[0] = {
-      ...partial.bars[0],
-      change: null,
-      qualityStatus: "partial",
-      missingFields: ["change"],
-    };
-    const deps = dependencies({ official: partial });
+  it("accepts internally consistent partial non-close quality and bounded cache refresh", async () => {
+    const partial = authoritativeCompletedCloseFixture({
+      cacheRefreshAttempted: true,
+    });
+    partial.bar.change = null;
+    partial.bar.qualityStatus = "partial";
+    partial.bar.missingFields = ["change"];
+    const deps = dependencies({ completedClose: partial });
     const result = await new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
+      deps.completedClose,
       now,
     ).analyzeObservedPrice(input());
 
-    expect(result.latestOfficialCompletedClose).toBe(33.2);
+    expect(result.latestOfficialCompletedClose).toBe(2_420);
+    expect(
+      result.workBudget.plannedOfficialSourceRequests.exactSingleStockOhlc,
+    ).toEqual({
+      actual: 2,
+      maximum: 2,
+      cacheRefreshPerformed: true,
+    });
     expect(result.warnings.join(" ")).toContain("非收盤價欄位缺失");
+    expect(result.warnings.join(" ")).toContain("有界失效重取");
   });
 
   it("returns structured MopsfinError instances", async () => {
     const deps = dependencies({ master: masterResult({ companies: [] }) });
     const client = new ObservedPriceClient(
       deps.companyMaster,
-      deps.officialPrice,
+      deps.completedClose,
       now,
     );
 

@@ -192,24 +192,116 @@ const companyMasterSourceSchema = z
   .strict()
   .describe("目前官方上市櫃公司 identity 與 issued shares 的來源");
 
-const marketSourceSchema = z
+const volumeNormalizationSchema = z
   .object({
-    ...sourceBaseShape,
-    stage: z.literal("market_valuation").describe("此來源是 latest 官方估值／收盤價 dependency"),
-    market: marketSchema.describe("此行情來源負責的市場"),
-    exchange: exchangeSchema.describe("此行情來源的官方市場機構"),
-    dataDate: calendarDateSchema.describe("官方估值與收盤價的實際完成交易日"),
-    asOf: calendarDateSchema.describe("供統一 source cutoff 使用的完成交易日"),
-    asOfGranularity: z.literal("date").describe("市場資料 cutoff 的時間粒度固定為 date"),
+    sourceUnit: z.enum(["share", "lot"]).describe("官方成交量原始單位"),
+    outputUnit: z.literal("share").describe("成交量固定正規化為股"),
+    multiplier: z.union([z.literal(1), z.literal(1000)]).describe("share 為 1、lot 為 1000"),
   })
   .strict()
-  .describe("官方 latest 估值日與 completed-session close 的來源");
+  .refine(
+    (value) =>
+      (value.sourceUnit === "share" && value.multiplier === 1) ||
+      (value.sourceUnit === "lot" && value.multiplier === 1000),
+    { path: ["multiplier"], message: "成交量 multiplier 必須與 sourceUnit 一致" },
+  );
+
+const turnoverNormalizationSchema = z
+  .object({
+    sourceUnit: z.enum(["TWD", "TWD_thousand"]).describe("官方成交金額原始單位"),
+    outputUnit: z.literal("TWD").describe("成交金額固定正規化為 TWD"),
+    multiplier: z.union([z.literal(1), z.literal(1000)]).describe("TWD 為 1、仟元為 1000"),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      (value.sourceUnit === "TWD" && value.multiplier === 1) ||
+      (value.sourceUnit === "TWD_thousand" && value.multiplier === 1000),
+    { path: ["multiplier"], message: "成交金額 multiplier 必須與 sourceUnit 一致" },
+  );
+
+function completedCloseSourceUrlMatches(source: {
+  companyCode: string;
+  market: "listed" | "otc";
+  dataMonth: string;
+  sourceUrl: string;
+}): boolean {
+  try {
+    const url = new URL(source.sourceUrl);
+    if (url.searchParams.get("response") !== "json") return false;
+    if (source.market === "listed") {
+      return (
+        url.protocol === "https:" &&
+        url.hostname === "www.twse.com.tw" &&
+        url.pathname === "/rwd/zh/afterTrading/STOCK_DAY" &&
+        url.searchParams.get("stockNo") === source.companyCode &&
+        url.searchParams.get("date") ===
+          `${source.dataMonth.replace("-", "")}01`
+      );
+    }
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "www.tpex.org.tw" &&
+      url.pathname === "/www/zh-tw/afterTrading/tradingStock" &&
+      url.searchParams.get("code") === source.companyCode &&
+      url.searchParams.get("date") ===
+        `${source.dataMonth.replace("-", "/")}/01`
+    );
+  } catch {
+    return false;
+  }
+}
+
+const completedCloseSourceSchema = z
+  .object({
+    ...sourceBaseShape,
+    stage: z
+      .literal("latest_official_completed_close")
+      .describe("authoritative completed-session resolver 選定日期的 exact 單股 OHLC close dependency"),
+    companyCode: z.string().regex(/^[1-9]\d{3}$/).describe("官方單股 OHLC URL 與 current-master identity 共同核對的四碼公司代號"),
+    market: marketSchema.describe("exact 單股 OHLC 所屬市場"),
+    exchange: exchangeSchema.describe("exact 單股 OHLC 的官方市場機構"),
+    snapshotIdentity: z.literal("verified").describe("單股月 response 的 requested-month identity 已驗證"),
+    dataMonth: z.string().regex(/^\d{4}-(?:0[1-9]|1[0-2])$/).describe("官方單股 OHLC response 如實保留的資料月份"),
+    selectedBarDate: calendarDateSchema.describe("從 verified 月資料中唯一選出的 exact completed-session bar 日期"),
+    observedName: z.string().min(1).describe("單股官方 response 中核對 current-master shortName 的名稱"),
+    normalization: z
+      .object({
+        volumeShares: volumeNormalizationSchema.describe("成交量正規化證據"),
+        turnoverTwd: turnoverNormalizationSchema.describe("成交金額正規化證據"),
+        tradeCount: z
+          .object({
+            sourceUnit: z.literal("trade").describe("成交筆數原始單位"),
+            outputUnit: z.literal("trade").describe("成交筆數輸出單位"),
+            multiplier: z.literal(1).describe("成交筆數不換算"),
+          })
+          .strict()
+          .describe("成交筆數正規化證據"),
+      })
+      .strict()
+      .describe("exact 單股 OHLC 的官方價量單位正規化"),
+    asOf: calendarDateSchema.describe("供統一 source cutoff 使用的 exact selected bar 日期"),
+    asOfGranularity: z.literal("date").describe("completed close cutoff 的時間粒度固定為 date"),
+  })
+  .strict()
+  .refine(
+    (source) =>
+      source.asOf === source.selectedBarDate &&
+      source.dataMonth === source.selectedBarDate.slice(0, 7) &&
+      source.exchange === (source.market === "listed" ? "TWSE" : "TPEx") &&
+      completedCloseSourceUrlMatches(source),
+    {
+      path: ["selectedBarDate"],
+      message: "completed-close source 的 official URL company/month identity、market/exchange、dataMonth、selectedBarDate 與 asOf 必須一致",
+    },
+  )
+  .describe("resolver expectedAsOf 路由出的 verified official exact single-stock completed close source");
 
 const sourceSchema = z
   .discriminatedUnion("stage", [
     statementSourceSchema,
     companyMasterSourceSchema,
-    marketSourceSchema,
+    completedCloseSourceSchema,
   ])
   .describe("估值輸入使用的 normalized official source lineage");
 
@@ -263,7 +355,7 @@ const valuationModelInputsDataObjectSchema = z
       .object({
         companyCode: z.string().regex(/^\d{4}$/).describe("實際查詢並由目前 company master 核對的公司代號"),
         financialPeriod: z.literal("latest").describe("財報 selector 固定為 latest，實際季度見 periods 與 sources"),
-        priceDate: z.literal("latest_completed_official_session").describe("價格 selector 固定為官方最近完成估值日收盤，不是盤中價"),
+        priceDate: z.literal("latest_completed_official_session").describe("價格 selector 固定先由 authoritative completed-session resolver 決定 expectedAsOf，再取同日 exact 單股 OHLC close；不是全市場 latest 或盤中價"),
       })
       .strict()
       .describe("實際套用的公司、財報與市場價格 selectors"),
@@ -315,7 +407,7 @@ const valuationModelInputsDataObjectSchema = z
       })
       .describe("十四個估值模型輸入／bridge 欄位；每欄都含 status、evidence class、公式與 lineage"),
     lineage: z.array(lineageEntrySchema).describe("所有成功解析與失敗 search attempts 的可稽核 lineage ledger"),
-    sources: z.array(sourceSchema).describe("公司 master、Mopsfin 報表及官方市場資料的 normalized sources"),
+    sources: z.array(sourceSchema).describe("公司 master、Mopsfin 報表及 resolver-routed exact 單股 completed-close 的 normalized sources"),
     quality: z
       .object({
         calculationComplete: z.boolean().describe("所有十四個一般企業欄位是否都沒有 data_gap；不代表 freshness 已驗證"),
@@ -336,16 +428,28 @@ const valuationModelInputsDataObjectSchema = z
           })
           .strict()
           .describe("Mopsfin 財報 dependency 的 bounded 工作量"),
-        valuationDependencyCalls: z
+        authoritativeCompletedCloseCalls: z
           .object({
-            actual: z.union([z.literal(0), z.literal(1)]).describe("本次官方 latest 估值／close dependency 呼叫數"),
-            maximum: z.literal(1).describe("估值 dependency 的 orchestration 呼叫硬上限"),
-            internalCurrentMasterPolicy: z.literal("compatible").describe("latest close 的全市場 dependency 使用 compatible；matchRatio 低於 95% 仍 fail closed"),
-            minimumCurrentMasterMatchRatio: z.literal(0.95).describe("compatible 全市場 reconciliation 的最低防截斷吻合率"),
-            selectedCompanyIdentityPolicy: z.literal("outer_market_all_master_plus_official_row_exact").describe("單一公司仍須由外層 market=all current master 與官方 selected row 精確核對 code／name／market"),
+            actual: z.union([z.literal(0), z.literal(1)]).describe("本次 authoritative completed-close orchestration 呼叫數；金融業不適用時為 0"),
+            maximum: z.literal(1).describe("單一公司 authoritative completed-close orchestration 硬上限"),
+            completedSessionResolver: z
+              .object({
+                actualLogicalLoads: z.number().int().min(0).nullable().describe("成功時為 resolver calendar + exact benchmark 的實際 logical loads；dependency 未回傳 budget 時為 null"),
+                maximumLogicalLoads: z.number().int().min(0).max(2).describe("單一市場 completed-session resolver 最多兩個 logical source loads"),
+              })
+              .strict()
+              .describe("authoritative completed-session 日期 routing 的 logical source-load budget"),
+            exactStockOhlcAttempts: z
+              .object({
+                actual: z.union([z.literal(0), z.literal(1), z.literal(2)]).nullable().describe("exact 單股 OHLC 的實際 load attempts；current-month stale cache 可有一次有界 refresh，dependency 未回傳 budget 時為 null"),
+                maximum: z.literal(2).describe("initial exact OHLC 加最多一次 current-month cache refresh"),
+                cacheRefreshPerformed: z.boolean().nullable().describe("成功 dependency 是否執行有界 cache refresh；budget 不可得時為 null"),
+              })
+              .strict()
+              .describe("官方 exact single-stock OHLC 的 bounded attempts"),
           })
           .strict()
-          .describe("官方市場 close dependency 的 bounded 工作量與 identity policy"),
+          .describe("authoritative completed-session resolver 加 exact single-stock OHLC 的 bounded routing budget"),
       })
       .strict()
       .describe("本次 normalization orchestration 的明確工作量上限與實際呼叫數"),
@@ -397,6 +501,89 @@ function validateValuationModelInputsData(
             message: `inputLineageId ${lineageId} 必須存在於 lineage ledger`,
           });
         }
+      }
+    }
+    const closeSources = result.sources.filter(
+      (source) => source.stage === "latest_official_completed_close",
+    );
+    const closeLineage = result.lineage.filter(
+      (entry) => entry.role === "latest_completed_official_close",
+    );
+    const close = result.fields.latestOfficialClose;
+    const closeBudget = result.workBudget.authoritativeCompletedCloseCalls;
+    const exactAttempts = closeBudget.exactStockOhlcAttempts.actual;
+    if (
+      (exactAttempts === null) !==
+        (closeBudget.exactStockOhlcAttempts.cacheRefreshPerformed === null) ||
+      (exactAttempts !== null &&
+        closeBudget.exactStockOhlcAttempts.cacheRefreshPerformed !==
+          (exactAttempts === 2))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: [
+          "workBudget",
+          "authoritativeCompletedCloseCalls",
+          "exactStockOhlcAttempts",
+        ],
+        message: "exact OHLC actual=2 iff cache refresh performed；budget unavailable 時兩者都必須為 null",
+      });
+    }
+    if (result.applicability.status === "not_applicable") {
+      if (
+        closeSources.length !== 0 ||
+        closeLineage.length !== 0 ||
+        closeBudget.actual !== 0 ||
+        closeBudget.completedSessionResolver.actualLogicalLoads !== 0 ||
+        closeBudget.exactStockOhlcAttempts.actual !== 0 ||
+        closeBudget.exactStockOhlcAttempts.cacheRefreshPerformed !== false
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["workBudget", "authoritativeCompletedCloseCalls"],
+          message: "金融業 not_applicable 不得執行或宣告 completed-close routing evidence",
+        });
+      }
+    } else {
+      if (closeBudget.actual !== 1 || closeLineage.length !== 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["workBudget", "authoritativeCompletedCloseCalls"],
+          message: "適用公司必須執行一次 authoritative completed-close orchestration 並保留一筆 close lineage",
+        });
+      }
+      if (close.status === "reported") {
+        const source = closeSources[0];
+        const lineage = closeLineage[0];
+        if (
+          closeSources.length !== 1 ||
+          !source ||
+          !lineage ||
+          lineage.status !== "resolved" ||
+          lineage.sourceId !== source.sourceId ||
+          lineage.period !== source.selectedBarDate ||
+          lineage.normalizedValue !== close.value ||
+          source.sourceId !==
+            `latest_official_completed_close:${source.market}:${source.selectedBarDate}` ||
+          source.companyCode !== result.company.code ||
+          source.selectedBarDate !== source.asOf ||
+          closeBudget.completedSessionResolver.actualLogicalLoads === null ||
+          closeBudget.exactStockOhlcAttempts.actual === null ||
+          closeBudget.exactStockOhlcAttempts.actual < 1 ||
+          closeBudget.exactStockOhlcAttempts.cacheRefreshPerformed === null
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["fields", "latestOfficialClose"],
+            message: "reported latestOfficialClose 必須唯一連到同日 resolver-routed exact 單股 source／lineage 與完整 work budget",
+          });
+        }
+      } else if (close.status === "data_gap" && closeSources.length !== 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["sources"],
+          message: "completed-close dependency 未形成 reported close 時不得保留成功 source",
+        });
       }
     }
     if (result.applicability.status === "not_applicable") {

@@ -41,19 +41,22 @@ describe("LLM-facing official guidance", () => {
       "同一台北日期必須到 13:33（含）後才比較",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "nested compatible-master acquisition source evidence 未由價格 dependency 暴露",
+      "凍結同一 evaluatedAt",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "各市場 matchRatio 至少 95%",
+      "authoritative completed-session resolver 解析 expectedAsOf",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "code、name、market 必須由外層 master 與官方行情列精確吻合",
+      "selectedBarDate、bar date 與 expectedAsOf 完全相等",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "compatible 的 latest official valuation dependency",
+      "全市場 latest OHLC 不參與這條 routing，也不 fallback 前一日",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "外層 market=all current master 與官方 selected row 精確吻合",
+      "workBudget.authoritativeCompletedCloseCalls",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "日估值或全市場行情的 latest 日期不參與 completed-close routing",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
       "一次只反解 revenue_cagr、fcff_cagr 或 terminal_operating_margin",

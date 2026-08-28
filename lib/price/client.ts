@@ -6,6 +6,7 @@ import type {
   CompanyMasterResult,
   MasterCompany,
 } from "@/lib/company-master/types";
+import { COMPLETED_SESSION_COMPLETION_GUARD_TAIPEI } from "@/lib/freshness/completed-session-resolver";
 import {
   OfficialJsonLoader,
   type JsonSnapshot,
@@ -17,6 +18,8 @@ import type {
   DailyMarketReconciliation,
   DailyMarketOhlcQuery,
   DailyMarketOhlcResult,
+  ExactCurrentCompanyOhlcQuery,
+  ExactCurrentCompanyOhlcResult,
   OhlcBar,
   OhlcMissingField,
   PriceSource,
@@ -598,6 +601,155 @@ export class PriceClient {
       maxAttempts: options.maxAttempts ?? 3,
       cacheTtlMs: this.historicalTtlMs,
     });
+  }
+
+  async getExactCurrentCompanyOhlc(
+    query: ExactCurrentCompanyOhlcQuery,
+  ): Promise<ExactCurrentCompanyOhlcResult> {
+    const { company } = query;
+    if (!/^[1-9]\d{3}$/.test(company.code)) {
+      fail("INVALID_ARGUMENT", "company.code 必須是首碼非 0 的四碼公司股票代號。", {
+        companyCode: company.code,
+      });
+    }
+    if (!company.shortName.trim()) {
+      fail("INVALID_ARGUMENT", "company.shortName 不得為空。", {
+        companyCode: company.code,
+      });
+    }
+    const expectedExchange = company.market === "listed" ? "TWSE" : "TPEx";
+    if (company.exchange !== expectedExchange) {
+      fail("INVALID_ARGUMENT", "company.market 與 company.exchange 不一致。", {
+        companyCode: company.code,
+        market: company.market,
+        exchange: company.exchange,
+        expectedExchange,
+      });
+    }
+    parseIsoDate(query.date, "date");
+    const today = taipeiToday(this.now());
+    if (query.date > today) {
+      fail("INVALID_ARGUMENT", "date 不得晚於台北今日日期。", {
+        date: query.date,
+        today,
+      });
+    }
+    if (
+      company.market === "listed" &&
+      query.date < TWSE_STOCK_SUPPORTED_FROM
+    ) {
+      fail("INVALID_ARGUMENT", "上市個股月資料自 2010-01-04 起提供。", {
+        supportedFrom: TWSE_STOCK_SUPPORTED_FROM,
+      });
+    }
+    if (query.date < TPEX_STOCK_SUPPORTED_FROM) {
+      fail("INVALID_ARGUMENT", "date 早於官方個股歷史支援範圍。", {
+        supportedFrom: TPEX_STOCK_SUPPORTED_FROM,
+      });
+    }
+
+    const dataMonth = monthOf(query.date);
+    let monthResult = await this.getStockMonth(
+      company.code,
+      dataMonth,
+      company.market,
+    );
+    const initialCacheStatus = monthResult.source.cache?.status ?? null;
+    let bars = monthResult.bars.filter((bar) => bar.date === query.date);
+    let cacheRefreshAttempted = false;
+    const initialRetrievedAtMs = Date.parse(monthResult.source.retrievedAt);
+    const sessionCompletionMs = Date.parse(
+      `${query.date}T${COMPLETED_SESSION_COMPLETION_GUARD_TAIPEI}+08:00`,
+    );
+    const cachedSnapshotPredatesCompletion =
+      Number.isFinite(initialRetrievedAtMs) &&
+      initialRetrievedAtMs < sessionCompletionMs;
+    if (
+      initialCacheStatus === "hit" &&
+      (bars.length === 0 || cachedSnapshotPredatesCompletion)
+    ) {
+      this.invalidateJson(new URL(monthResult.source.sourceUrl));
+      monthResult = await this.getStockMonth(
+        company.code,
+        dataMonth,
+        company.market,
+      );
+      bars = monthResult.bars.filter((bar) => bar.date === query.date);
+      cacheRefreshAttempted = true;
+    }
+
+    if (
+      monthResult.snapshotIdentity === "unverified_empty" ||
+      monthResult.source.snapshotIdentity === "unverified_empty"
+    ) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        "官方單股 OHLC 空回應缺少可核對的 requested-month snapshot identity。",
+        {
+          reason: "EXACT_STOCK_OHLC_SNAPSHOT_UNVERIFIED",
+          category: "upstream",
+          retryable: true,
+          action: "retry",
+          details: {
+            companyCode: company.code,
+            market: company.market,
+            requestedMonth: dataMonth,
+            sourceUrl: monthResult.source.sourceUrl,
+            cacheRefreshAttempted,
+          },
+        },
+      );
+    }
+    if (
+      monthResult.market !== company.market ||
+      monthResult.source.market !== company.market ||
+      monthResult.snapshotIdentity !== "verified" ||
+      monthResult.source.snapshotIdentity !== "verified" ||
+      monthResult.source.dataMonth !== dataMonth ||
+      monthResult.source.dataDate !== undefined
+    ) {
+      fail(
+        "UPSTREAM_BAD_RESPONSE",
+        "官方單股 OHLC source identity 與 requested current company/month 不符。",
+        {
+          companyCode: company.code,
+          market: company.market,
+          requestedMonth: dataMonth,
+          sourceMarket: monthResult.source.market,
+          sourceDataMonth: monthResult.source.dataMonth ?? null,
+          sourceDataDate: monthResult.source.dataDate ?? null,
+          snapshotIdentity:
+            monthResult.snapshotIdentity ??
+            monthResult.source.snapshotIdentity ??
+            null,
+        },
+      );
+    }
+    const { dataDate: _dataDate, ...monthSource } = monthResult.source;
+
+    return {
+      query: {
+        companyCode: company.code,
+        market: company.market,
+        date: query.date,
+      },
+      companyCode: company.code,
+      market: company.market,
+      observedName: monthResult.observedName?.trim() || null,
+      dataMonth,
+      selectedBarDate: bars.length === 1 ? bars[0].date : null,
+      coverageComplete: true,
+      bars,
+      source: {
+        ...monthSource,
+        snapshotIdentity: "verified",
+        dataMonth,
+      },
+      cacheRefresh: {
+        attempted: cacheRefreshAttempted,
+        initialCacheStatus,
+      },
+    };
   }
 
   async getStockOhlc(query: StockOhlcQuery): Promise<StockOhlcResult> {

@@ -499,6 +499,7 @@ function inferSourceCutoffs(
     if (!retrievedAt) return [];
     const snapshotIdentity = readString(raw, "snapshotIdentity");
     const value =
+      readString(raw, "selectedBarDate") ??
       readString(raw, "dataDate") ??
       readString(raw, "dataMonth") ??
       readString(raw, "sourceSnapshotDate") ??

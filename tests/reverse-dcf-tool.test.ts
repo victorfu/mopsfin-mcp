@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { AuthoritativeCompletedCloseResult } from "@/lib/completed-close/types";
 import { completedSessionResolver } from "@/lib/freshness/completed-session-resolver";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { reverseDcfOutputSchema } from "@/lib/mcp/schema/reverse-dcf";
@@ -7,6 +8,7 @@ import { runReverseDcfTool } from "@/lib/mcp/tools/reverse-dcf";
 import {
   ReverseDcfMcpClient,
   reverseDcfMcpClient,
+  type ReverseDcfExecution,
   type ReverseDcfOrchestrationResult,
   type ReverseDcfPublicQuery,
 } from "@/lib/reverse-dcf/mcp-client";
@@ -419,11 +421,12 @@ function valuationInputs(closePriceTwd: number): ValuationModelInputsResult {
       },
       {
         sourceId: "source-market",
-        stage: "market_valuation",
+        stage: "latest_official_completed_close",
+        companyCode: "2330",
         market: "listed",
         exchange: "TWSE",
-        sourceName: "TWSE exact-day valuation fixture",
-        sourceUrl: "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d",
+        sourceName: "TWSE exact single-stock OHLC fixture",
+        sourceUrl: "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260801&stockNo=2330&response=json",
         retrievedAt: "2026-08-28T01:04:00.000Z",
         cache: {
           status: "bypass",
@@ -432,7 +435,15 @@ function valuationInputs(closePriceTwd: number): ValuationModelInputsResult {
           ageMs: null,
           ttlMs: null,
         },
-        dataDate: "2026-08-27",
+        snapshotIdentity: "verified",
+        dataMonth: "2026-08",
+        selectedBarDate: "2026-08-27",
+        observedName: "台積電",
+        normalization: {
+          volumeShares: { sourceUnit: "share", outputUnit: "share", multiplier: 1 },
+          turnoverTwd: { sourceUnit: "TWD", outputUnit: "TWD", multiplier: 1 },
+          tradeCount: { sourceUnit: "trade", outputUnit: "trade", multiplier: 1 },
+        },
         asOf: "2026-08-27",
         asOfGranularity: "date",
       },
@@ -446,13 +457,18 @@ function valuationInputs(closePriceTwd: number): ValuationModelInputsResult {
       requestedCompanies: 1,
       orchestrationCompanyMasterCalls: 1,
       statementCalls: { actual: 1, maximum: 7, rowsPerCallMaximum: 500 },
-      valuationDependencyCalls: {
+      authoritativeCompletedCloseCalls: {
         actual: 1,
         maximum: 1,
-        internalCurrentMasterPolicy: "compatible",
-        minimumCurrentMasterMatchRatio: 0.95,
-        selectedCompanyIdentityPolicy:
-          "outer_market_all_master_plus_official_row_exact",
+        completedSessionResolver: {
+          actualLogicalLoads: 2,
+          maximumLogicalLoads: 2,
+        },
+        exactStockOhlcAttempts: {
+          actual: 1,
+          maximum: 2,
+          cacheRefreshPerformed: false,
+        },
       },
     },
     warnings: [
@@ -461,27 +477,125 @@ function valuationInputs(closePriceTwd: number): ValuationModelInputsResult {
   };
 }
 
-async function orchestrationFixture(): Promise<ReverseDcfOrchestrationResult> {
+function completedCloseContext(
+  close: number,
+): AuthoritativeCompletedCloseResult {
+  const resolverEvidence = completedSessionEvidenceFixture({
+    expectedAsOf: "2026-08-27",
+  });
+  resolverEvidence.evaluatedAt = "2026-08-28T01:00:00.000Z";
+  for (const resolution of resolverEvidence.marketResolutions) {
+    for (const source of resolution.sources) {
+      source.retrievedAt = "2026-08-28T01:01:00.000Z";
+      source.cache = {
+        status: "miss",
+        observedAt: "2026-08-28T01:01:00.000Z",
+        storedAt: "2026-08-28T01:01:00.000Z",
+        ageMs: 0,
+        ttlMs: 300_000,
+      };
+    }
+  }
+  const normalization = {
+    volumeShares: { sourceUnit: "share" as const, outputUnit: "share" as const, multiplier: 1 as const },
+    turnoverTwd: { sourceUnit: "TWD" as const, outputUnit: "TWD" as const, multiplier: 1 as const },
+    tradeCount: { sourceUnit: "trade" as const, outputUnit: "trade" as const, multiplier: 1 as const },
+  };
+  const bar = {
+    date: "2026-08-27",
+    open: close,
+    high: close,
+    low: close,
+    close,
+    volumeShares: 1_000,
+    turnoverTwd: close * 1_000,
+    tradeCount: 10,
+    change: 0,
+    changeMarker: null,
+    market: "listed" as const,
+    status: "traded" as const,
+    qualityStatus: "complete" as const,
+    missingFields: [],
+  };
+  return {
+    query: {
+      companyCode: "2330",
+      market: "listed",
+      evaluatedAt: resolverEvidence.evaluatedAt,
+    },
+    company: {
+      code: "2330",
+      shortName: "台積電",
+      market: "listed",
+      exchange: "TWSE",
+    },
+    expectedAsOf: "2026-08-27",
+    selectedBarDate: "2026-08-27",
+    close,
+    currency: "TWD",
+    timezone: "Asia/Taipei",
+    interval: "1d",
+    priceBasis: "raw_unadjusted",
+    bar,
+    source: {
+      companyCode: "2330",
+      market: "listed",
+      exchange: "TWSE",
+      sourceName: "TWSE exact single-stock OHLC fixture",
+      sourceUrl: "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260801&stockNo=2330&response=json",
+      retrievedAt: "2026-08-28T01:04:00.000Z",
+      cache: {
+        status: "bypass",
+        observedAt: "2026-08-28T01:04:00.000Z",
+        storedAt: null,
+        ageMs: null,
+        ttlMs: null,
+      },
+      snapshotIdentity: "verified",
+      dataMonth: "2026-08",
+      normalization,
+      observedName: "台積電",
+      selectedBarDate: "2026-08-27",
+    },
+    resolverEvidence,
+    cacheRefresh: { attempted: false, initialCacheStatus: "miss" },
+    workBudget: {
+      scope: "authoritative_completed_close_routing",
+      completedSessionResolver: resolverEvidence.workBudget,
+      exactStockOhlcAttempts: {
+        actual: 1,
+        maximum: 2,
+        cacheRefreshPerformed: false,
+      },
+    },
+  };
+}
+
+async function orchestrationFixture(): Promise<ReverseDcfExecution> {
   const publicQuery = query();
+  const inputs = valuationInputs(calibratedClose(publicQuery));
+  const completedClose = completedCloseContext(
+    inputs.fields.latestOfficialClose.value as number,
+  );
   const dependency = {
-    getValuationModelInputs: vi.fn(async () =>
-      valuationInputs(calibratedClose(publicQuery)),
-    ),
+    getValuationModelInputsWithContext: vi.fn(async () => ({
+      data: inputs,
+      completedClose,
+      completedCloseError: null,
+    })),
   };
   const client = new ReverseDcfMcpClient(
     dependency,
     () => new Date(GENERATED_AT),
   );
-  return client.runReverseDcf(publicQuery);
+  return client.runReverseDcfWithContext(publicQuery);
 }
 
 describe("run_reverse_dcf public MCP tool", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(SERVED_AT));
-    vi.spyOn(completedSessionResolver, "resolve").mockResolvedValue(
-      completedSessionEvidenceFixture({ status: "unresolved" }),
-    );
+    vi.spyOn(completedSessionResolver, "resolve");
   });
 
   afterEach(() => {
@@ -490,8 +604,11 @@ describe("run_reverse_dcf public MCP tool", () => {
   });
 
   it("returns a schema-valid envelope with source-specific provenance and conservative quality", async () => {
-    const fixture = await orchestrationFixture();
-    vi.spyOn(reverseDcfMcpClient, "runReverseDcf").mockResolvedValue(fixture);
+    const execution = await orchestrationFixture();
+    const fixture = execution.data;
+    vi.spyOn(reverseDcfMcpClient, "runReverseDcfWithContext").mockResolvedValue(
+      execution,
+    );
 
     const result = await runReverseDcfTool.handler(
       query(),
@@ -506,7 +623,9 @@ describe("run_reverse_dcf public MCP tool", () => {
       servedAt: SERVED_AT,
     });
     expect(envelope.meta.asOf.sourceCutoffs).toHaveLength(
-      envelope.sources.length,
+      envelope.sources.length +
+        execution.completedClose.resolverEvidence.marketResolutions[0].sources
+          .length,
     );
     for (const source of envelope.sources) {
       const cutoff = envelope.meta.asOf.sourceCutoffs.find(
@@ -536,8 +655,9 @@ describe("run_reverse_dcf public MCP tool", () => {
       "unknown",
     );
     expect(freshnessByPolicy.get("official.completed-session.v1")).toBe(
-      "unknown",
+      "within_expected_window",
     );
+    expect(completedSessionResolver.resolve).not.toHaveBeenCalled();
     expect(envelope.meta.quality).toMatchObject({
       status: "partial",
       source: "complete",
@@ -571,7 +691,7 @@ describe("run_reverse_dcf public MCP tool", () => {
   });
 
   it("converts orchestration failures to the shared structured error envelope", async () => {
-    vi.spyOn(reverseDcfMcpClient, "runReverseDcf").mockRejectedValue(
+    vi.spyOn(reverseDcfMcpClient, "runReverseDcfWithContext").mockRejectedValue(
       new MopsfinError("NO_DATA", "fixture normalized inputs are incomplete", {
         reason: "DATA_GAP",
         category: "no_data",

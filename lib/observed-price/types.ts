@@ -2,7 +2,10 @@ import type {
   CompanyMarket,
   CompanyMasterSource,
 } from "@/lib/company-master/types";
-import type { PriceSource } from "@/lib/price/types";
+import type {
+  AuthoritativeCompletedCloseResult,
+  AuthoritativeCompletedCloseSource,
+} from "@/lib/completed-close/types";
 import type { CacheProvenance } from "@/lib/upstream/cache-provenance";
 
 export interface ObservedPriceQuery {
@@ -20,21 +23,18 @@ export interface ObservedPriceCompanyMasterSource
 }
 
 /**
- * The generic price client supports daily and monthly source variants with
- * optional identity fields. A successful observed-price baseline is narrower:
- * it must be a verified, exact-date daily snapshot with cache provenance.
+ * The authoritative close dependency uses a verified single-stock monthly
+ * snapshot and selects one exact completed-session bar. Keep the monthly
+ * source identity separate from the exact selected bar date.
  */
 export interface ObservedPriceOfficialCloseSource
   extends Omit<
-    PriceSource,
-    "cache" | "snapshotIdentity" | "dataDate" | "dataMonth"
+    AuthoritativeCompletedCloseSource,
+    "cache"
   > {
   sourceId: string;
   stage: "latest_official_completed_close";
   cache: CacheProvenance;
-  snapshotIdentity: "verified";
-  dataDate: string;
-  dataMonth?: never;
 }
 
 export type ObservedPriceSource =
@@ -50,18 +50,18 @@ export type ObservedPriceDependencyLedgerEntry =
       sourceIds: [string, string];
     }
   | {
-      dependency: "official_daily_market_price";
+      dependency: "authoritative_completed_session_resolver";
       logicalInvocations: 1;
-      plannedOfficialSourceLoads: 1;
-      sourceEvidence: "exposed";
-      sourceIds: [string];
+      plannedOfficialSourceLoads: 2;
+      sourceEvidence: "exposed_in_meta_resolver_evidence";
+      sourceIds: [];
     }
   | {
-      dependency: "official_daily_market_internal_compatible_master";
+      dependency: "official_exact_single_stock_ohlc";
       logicalInvocations: 1;
-      plannedOfficialSourceLoads: 1;
-      sourceEvidence: "not_exposed_by_dependency";
-      sourceIds: [];
+      plannedOfficialSourceLoads: 1 | 2;
+      sourceEvidence: "exposed";
+      sourceIds: [string];
     };
 
 export interface ObservedPriceProvenance {
@@ -99,21 +99,30 @@ export interface ObservedPriceWorkBudget {
   requestedCompanies: 1;
   dependencyInvocations: {
     orchestrationCompanyMaster: 1;
-    officialDailyMarketPrice: 1;
-    officialDailyMarketInternalCompatibleMaster: 1;
+    authoritativeCompletedSessionResolver: 1;
+    officialExactSingleStockOhlc: 1;
     maximumIncludingNestedDependencies: 3;
   };
   plannedOfficialSourceRequests: {
     orchestrationCompanyMasterMarkets: 2;
-    officialDailyMarketSnapshot: 1;
-    officialDailyMarketInternalCompatibleMasterMarkets: 1;
-    maximumTotal: 4;
+    completedSessionResolver: {
+      actual: number;
+      maximum: 2;
+    };
+    exactSingleStockOhlc: {
+      actual: 1 | 2;
+      maximum: 2;
+      cacheRefreshPerformed: boolean;
+    };
+    actualTotal: number;
+    maximumTotal: 6;
     unitDefinition:
       "one_logical_official_source_load_before_cache_and_bounded_retry";
   };
-  universePolicy: "compatible";
+  priceRoutingPolicy:
+    "authoritative_completed_session_expected_as_of_then_exact_single_stock_ohlc";
   selectedCompanyIdentityPolicy:
-    "outer_market_all_master_plus_official_row_exact";
+    "outer_market_all_master_plus_exact_single_stock_source";
 }
 
 export interface ObservedPriceAnalysisResult {
@@ -154,14 +163,19 @@ export interface ObservedPriceAnalysisResult {
     >,
     Extract<
       ObservedPriceDependencyLedgerEntry,
-      { dependency: "official_daily_market_price" }
+      { dependency: "authoritative_completed_session_resolver" }
     >,
     Extract<
       ObservedPriceDependencyLedgerEntry,
-      { dependency: "official_daily_market_internal_compatible_master" }
+      { dependency: "official_exact_single_stock_ohlc" }
     >,
   ];
   provenance: ObservedPriceProvenance;
   workBudget: ObservedPriceWorkBudget;
   warnings: string[];
+}
+
+export interface ObservedPriceAnalysisContext {
+  data: ObservedPriceAnalysisResult;
+  completedClose: AuthoritativeCompletedCloseResult;
 }

@@ -12,17 +12,17 @@ import {
   analyzeObservedPriceOutputSchema,
 } from "@/lib/mcp/schema/observed-price";
 import type { ObservedPriceAnalysisResult } from "@/lib/observed-price/types";
-import { completedSessionEvidenceFixture } from "@/tests/fixtures/completed-session";
+import { completedCloseResolverEvidenceFixture } from "@/tests/fixtures/completed-close";
 
 function validData(): ObservedPriceAnalysisResult {
   return {
     query: {
       companyCode: "2330",
-      observedPriceTwd: 33.35,
-      observedAt: "2026-08-28T09:32:00+08:00",
+      observedPriceTwd: 2_430,
+      observedAt: "2026-08-28T14:32:00+08:00",
       sourceLabel: "caller supplied terminal observation",
     },
-    generatedAt: "2026-08-28T06:00:00.000Z",
+    generatedAt: "2026-08-28T07:10:00.000Z",
     priceOrigin: "caller_supplied",
     officialBaselineOrigin: "official_latest_completed_close",
     company: {
@@ -32,15 +32,15 @@ function validData(): ObservedPriceAnalysisResult {
       market: "listed",
       exchange: "TWSE",
     },
-    observedPriceTwd: 33.35,
-    observedAt: "2026-08-28T09:32:00+08:00",
+    observedPriceTwd: 2_430,
+    observedAt: "2026-08-28T14:32:00+08:00",
     observedTaipeiDate: "2026-08-28",
     sourceLabel: "caller supplied terminal observation",
-    latestOfficialCompletedClose: 33.2,
-    latestOfficialCloseDate: "2026-08-27",
-    changeFromOfficialCloseTwd: 0.15,
-    changeFromOfficialClosePercent: 0.451807,
-    officialHistoryCutoff: "2026-08-27",
+    latestOfficialCompletedClose: 2_420,
+    latestOfficialCloseDate: "2026-08-28",
+    changeFromOfficialCloseTwd: 10,
+    changeFromOfficialClosePercent: 0.413223,
+    officialHistoryCutoff: "2026-08-28",
     market: "listed",
     exchange: "TWSE",
     currency: "TWD",
@@ -90,22 +90,26 @@ function validData(): ObservedPriceAnalysisResult {
         },
       },
       {
-        sourceId: "official_close:listed:2026-08-27",
+        sourceId: "official_close:listed:2026-08-28",
         stage: "latest_official_completed_close",
+        companyCode: "2330",
         market: "listed",
-        sourceName: "臺灣證券交易所－上市個股日成交資訊",
+        exchange: "TWSE",
+        sourceName: "臺灣證券交易所－個股日成交資訊",
         sourceUrl:
-          "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-        retrievedAt: "2026-08-28T05:45:00.000Z",
+          "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260801&stockNo=2330&response=json",
+        retrievedAt: "2026-08-28T07:05:00.000Z",
         cache: {
           status: "bypass",
-          observedAt: "2026-08-28T05:45:00.000Z",
+          observedAt: "2026-08-28T07:05:00.000Z",
           storedAt: null,
           ageMs: null,
           ttlMs: 0,
         },
         snapshotIdentity: "verified",
-        dataDate: "2026-08-27",
+        dataMonth: "2026-08",
+        observedName: "台積電",
+        selectedBarDate: "2026-08-28",
         normalization: {
           volumeShares: {
             sourceUnit: "share",
@@ -131,7 +135,7 @@ function validData(): ObservedPriceAnalysisResult {
         official: false,
         independentlyVerified: false,
         sourceLabel: "caller supplied terminal observation",
-        observedAt: "2026-08-28T09:32:00+08:00",
+        observedAt: "2026-08-28T14:32:00+08:00",
       },
       currentMasterIdentity: {
         evidenceClass: "OFFICIAL_MASTER_RAW",
@@ -146,8 +150,8 @@ function validData(): ObservedPriceAnalysisResult {
       officialBaseline: {
         evidenceClass: "OFFICIAL_MARKET_RAW",
         priceBasis: "raw_unadjusted",
-        dataDate: "2026-08-27",
-        sourceIds: ["official_close:listed:2026-08-27"],
+        dataDate: "2026-08-28",
+        sourceIds: ["official_close:listed:2026-08-28"],
       },
       comparison: {
         evidenceClass: "MOPSFIN_CALC",
@@ -170,53 +174,60 @@ function validData(): ObservedPriceAnalysisResult {
         ],
       },
       {
-        dependency: "official_daily_market_price",
+        dependency: "authoritative_completed_session_resolver",
+        logicalInvocations: 1,
+        plannedOfficialSourceLoads: 2,
+        sourceEvidence: "exposed_in_meta_resolver_evidence",
+        sourceIds: [],
+      },
+      {
+        dependency: "official_exact_single_stock_ohlc",
         logicalInvocations: 1,
         plannedOfficialSourceLoads: 1,
         sourceEvidence: "exposed",
-        sourceIds: ["official_close:listed:2026-08-27"],
-      },
-      {
-        dependency: "official_daily_market_internal_compatible_master",
-        logicalInvocations: 1,
-        plannedOfficialSourceLoads: 1,
-        sourceEvidence: "not_exposed_by_dependency",
-        sourceIds: [],
+        sourceIds: ["official_close:listed:2026-08-28"],
       },
     ],
     workBudget: {
       requestedCompanies: 1,
       dependencyInvocations: {
         orchestrationCompanyMaster: 1,
-        officialDailyMarketPrice: 1,
-        officialDailyMarketInternalCompatibleMaster: 1,
+        authoritativeCompletedSessionResolver: 1,
+        officialExactSingleStockOhlc: 1,
         maximumIncludingNestedDependencies: 3,
       },
       plannedOfficialSourceRequests: {
         orchestrationCompanyMasterMarkets: 2,
-        officialDailyMarketSnapshot: 1,
-        officialDailyMarketInternalCompatibleMasterMarkets: 1,
-        maximumTotal: 4,
+        completedSessionResolver: { actual: 2, maximum: 2 },
+        exactSingleStockOhlc: {
+          actual: 1,
+          maximum: 2,
+          cacheRefreshPerformed: false,
+        },
+        actualTotal: 5,
+        maximumTotal: 6,
         unitDefinition:
           "one_logical_official_source_load_before_cache_and_bounded_retry",
       },
-      universePolicy: "compatible",
+      priceRoutingPolicy:
+        "authoritative_completed_session_expected_as_of_then_exact_single_stock_ohlc",
       selectedCompanyIdentityPolicy:
-        "outer_market_all_master_plus_official_row_exact",
+        "outer_market_all_master_plus_exact_single_stock_source",
     },
     warnings: [
       "observedPriceTwd 完全由 caller 提供，MopsFin 未獨立驗證；它不是官方報價，也不得稱為 real-time 行情。",
       "官方基準只代表最近完成交易日的原始未還原權值收盤價，不是盤中行情或 adjusted close。",
       "若 caller 觀察值與官方 completed close 同一台北日期，採 13:33 Asia/Taipei 作為包含暫緩收盤可能性的保守 regular-session completion guard。",
       "價差只是 caller-supplied 觀察值相對官方完成交易日收盤價的機械比較，不代表 fair value、買賣建議或投資評級。",
-      "官方價格 dependency 使用 compatible 全市場核對與至少 95% match-ratio 防截斷門檻；非目標公司的 master 差異不會阻斷查詢，但指定公司仍由外層 market=all master 與官方行情 code、name、market 精確核對。",
+      "官方基準先由 authoritative completed-session resolver 固定 expectedAsOf，再查同日 exact single-stock OHLC；不使用可能落後的全市場 latest endpoint，也不退回前一日價格。",
+      "指定公司由外層 market=all master 與單股官方來源的 code、name、market 精確核對；exact price dependency 不重複取得 current master。",
     ],
   };
 }
 
 function validEnvelope(
   data = validData(),
-  resolverEvidence = completedSessionEvidenceFixture({ status: "unresolved" }),
+  resolverEvidence = completedCloseResolverEvidenceFixture(),
 ) {
   const contract = observedPriceMetaContract(data, resolverEvidence);
   return {
@@ -238,7 +249,7 @@ function validEnvelope(
         issues: observedPriceQualityIssues(data),
         snapshotId: contract.snapshotId,
       },
-      "2026-08-28T06:05:00.000Z",
+      "2026-08-28T07:15:00.000Z",
     ),
     ...data,
   };
@@ -275,27 +286,7 @@ function sameDayData(observedAt: string): ObservedPriceAnalysisResult {
   data.query.observedAt = observedAt;
   data.observedAt = observedAt;
   data.observedTaipeiDate = "2026-08-28";
-  data.latestOfficialCloseDate = "2026-08-28";
-  data.officialHistoryCutoff = "2026-08-28";
   data.provenance.observedPrice.observedAt = observedAt;
-  data.provenance.officialBaseline.dataDate = "2026-08-28";
-  data.provenance.officialBaseline.sourceIds = [
-    "official_close:listed:2026-08-28",
-  ];
-  const source = closeSource(data);
-  source.sourceId = "official_close:listed:2026-08-28";
-  source.dataDate = "2026-08-28";
-  source.retrievedAt = "2026-08-28T05:45:00.000Z";
-  source.cache = {
-    status: "bypass",
-    observedAt: "2026-08-28T05:45:00.000Z",
-    storedAt: null,
-    ageMs: null,
-    ttlMs: 0,
-  };
-  data.dependencyLedger[1].sourceIds = [
-    "official_close:listed:2026-08-28",
-  ];
   return data;
 }
 
@@ -375,14 +366,8 @@ describe("analyze observed price MCP schemas", () => {
     ).toBe(false);
   });
 
-  it("accepts resolver-confirmed fresh official close and rejects resolver mutations", () => {
-    const envelope = validEnvelope(
-      validData(),
-      completedSessionEvidenceFixture({
-        status: "resolved",
-        expectedAsOf: "2026-08-27",
-      }),
-    );
+  it("accepts resolver-confirmed exact close and rejects unresolved or date-mismatched evidence", () => {
+    const envelope = validEnvelope();
     const parsed = analyzeObservedPriceOutputSchema.safeParse(envelope);
     expect(
       parsed.success,
@@ -392,6 +377,13 @@ describe("analyze observed price MCP schemas", () => {
     expect(parsed.data.meta.quality.freshness).toBe(
       "within_expected_window",
     );
+    expect(parsed.data.meta.quality.freshnessDetails[1]).toMatchObject({
+      policyId: "official.completed-session.v1",
+      status: "within_expected_window",
+      observedAsOf: "2026-08-28",
+      expectedAsOf: "2026-08-28",
+      lag: { value: 0, unit: "trading_session" },
+    });
     expect(
       parsed.data.meta.quality.issues.some(
         (issue) => issue.code === "FRESHNESS_UNVERIFIED",
@@ -407,9 +399,25 @@ describe("analyze observed price MCP schemas", () => {
     expect(
       analyzeObservedPriceOutputSchema.safeParse(wrongMarket).success,
     ).toBe(false);
+
+    const unresolved = validEnvelope(
+      validData(),
+      completedCloseResolverEvidenceFixture({ status: "unresolved" }),
+    );
+    expect(
+      analyzeObservedPriceOutputSchema.safeParse(unresolved).success,
+    ).toBe(false);
+
+    const wrongExpectedDate = validEnvelope(
+      validData(),
+      completedCloseResolverEvidenceFixture({ expectedAsOf: "2026-08-27" }),
+    );
+    expect(
+      analyzeObservedPriceOutputSchema.safeParse(wrongExpectedDate).success,
+    ).toBe(false);
   });
 
-  it("accepts stale master evidence with stale aggregate freshness and both required issues", () => {
+  it("accepts stale master evidence only when authoritative completed close stays exact and fresh", () => {
     const envelope = validEnvelope(staleData());
     const parsed = analyzeObservedPriceOutputSchema.safeParse(envelope);
 
@@ -429,31 +437,33 @@ describe("analyze observed price MCP schemas", () => {
     });
     expect(parsed.data.meta.quality.freshnessDetails[1]).toMatchObject({
       policyId: "official.completed-session.v1",
-      status: "unknown",
+      observedAsOf: "2026-08-28",
+      expectedAsOf: "2026-08-28",
+      status: "within_expected_window",
     });
-    expect(parsed.data.meta.quality.issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining(["DATA_STALE", "FRESHNESS_UNVERIFIED"]),
+    expect(parsed.data.meta.quality.issues.map((issue) => issue.code)).toContain(
+      "DATA_STALE",
+    );
+    expect(parsed.data.meta.quality.issues.map((issue) => issue.code)).not.toContain(
+      "FRESHNESS_UNVERIFIED",
     );
   });
 
-  it("rejects stale freshness whose aggregate or required issues are mutated", () => {
+  it("rejects stale aggregate or required DATA_STALE issue mutations", () => {
     const wrongAggregate = validEnvelope(staleData());
     wrongAggregate.meta.quality.freshness = "unknown";
     expect(
       analyzeObservedPriceOutputSchema.safeParse(wrongAggregate).success,
     ).toBe(false);
 
-    for (const code of ["DATA_STALE", "FRESHNESS_UNVERIFIED"]) {
-      const missingIssue = validEnvelope(staleData());
-      missingIssue.meta.quality.issues =
-        missingIssue.meta.quality.issues.filter(
-          (issue) => issue.code !== code,
-        );
-      expect(
-        analyzeObservedPriceOutputSchema.safeParse(missingIssue).success,
-        code,
-      ).toBe(false);
-    }
+    const missingIssue = validEnvelope(staleData());
+    missingIssue.meta.quality.issues =
+      missingIssue.meta.quality.issues.filter(
+        (issue) => issue.code !== "DATA_STALE",
+      );
+    expect(
+      analyzeObservedPriceOutputSchema.safeParse(missingIssue).success,
+    ).toBe(false);
   });
 
   it("rejects advertised output time, cache, source-set and cutoff contradictions", () => {
@@ -464,14 +474,14 @@ describe("analyze observed price MCP schemas", () => {
       {
         label: "served before domain generation",
         mutate: (envelope) => {
-          envelope.meta.asOf.servedAt = "2026-08-28T05:59:59.999Z";
-          envelope.meta.asOf.assembledAt = "2026-08-28T05:59:59.999Z";
+          envelope.meta.asOf.servedAt = "2026-08-28T07:09:59.999Z";
+          envelope.meta.asOf.assembledAt = "2026-08-28T07:09:59.999Z";
         },
       },
       {
         label: "assembled instant differs from served instant",
         mutate: (envelope) => {
-          envelope.meta.asOf.assembledAt = "2026-08-28T06:05:00.001Z";
+          envelope.meta.asOf.assembledAt = "2026-08-28T07:15:00.001Z";
         },
       },
       {
@@ -521,9 +531,9 @@ describe("analyze observed price MCP schemas", () => {
         },
       },
       {
-        label: "freshness is optimistic",
+        label: "freshness aggregate is contradictory",
         mutate: (envelope) => {
-          envelope.meta.quality.freshness = "within_expected_window";
+          envelope.meta.quality.freshness = "unknown";
         },
       },
       {
@@ -536,6 +546,68 @@ describe("analyze observed price MCP schemas", () => {
         label: "freshness policy set is incomplete",
         mutate: (envelope) => {
           envelope.meta.quality.freshnessDetails.pop();
+        },
+      },
+      {
+        label: "caller observation is later than request-start resolver evaluatedAt",
+        mutate: (envelope) => {
+          const observedAt = "2026-08-28T15:05:00+08:00";
+          envelope.query.observedAt = observedAt;
+          envelope.observedAt = observedAt;
+          envelope.provenance.observedPrice.observedAt = observedAt;
+          const detail = envelope.meta.quality.freshnessDetails.find(
+            (item) => item.policyId === "official.completed-session.v1",
+          );
+          if (!detail?.resolverEvidence) throw new Error("resolver fixture missing");
+          envelope.meta.asOf.snapshotId = observedPriceMetaContract(
+            envelope,
+            detail.resolverEvidence,
+          ).snapshotId;
+        },
+      },
+      {
+        label: "resolver evaluatedAt is later than generatedAt",
+        mutate: (envelope) => {
+          const detail = envelope.meta.quality.freshnessDetails.find(
+            (item) => item.policyId === "official.completed-session.v1",
+          );
+          if (!detail?.resolverEvidence) throw new Error("resolver fixture missing");
+          detail.resolverEvidence.evaluatedAt =
+            "2026-08-28T07:10:00.001Z";
+        },
+      },
+      {
+        label: "resolver source retrieval is later than generatedAt",
+        mutate: (envelope) => {
+          const detail = envelope.meta.quality.freshnessDetails.find(
+            (item) => item.policyId === "official.completed-session.v1",
+          );
+          if (!detail?.resolverEvidence) throw new Error("resolver fixture missing");
+          const source = detail.resolverEvidence.marketResolutions[0].sources[0];
+          source.retrievedAt = "2026-08-28T07:10:00.001Z";
+          const cutoff = envelope.meta.asOf.sourceCutoffs.find(
+            (candidate) => candidate.sourceUrl === source.sourceUrl,
+          );
+          if (!cutoff) throw new Error("resolver cutoff missing");
+          cutoff.retrievedAt = source.retrievedAt;
+          envelope.meta.asOf.snapshotId = observedPriceMetaContract(
+            envelope,
+            detail.resolverEvidence,
+          ).snapshotId;
+        },
+      },
+      {
+        label: "embedded resolver budget omits the marker load",
+        mutate: (envelope) => {
+          const detail = envelope.meta.quality.freshnessDetails.find(
+            (item) => item.policyId === "official.completed-session.v1",
+          );
+          if (!detail?.resolverEvidence) throw new Error("resolver fixture missing");
+          const evidence = detail.resolverEvidence;
+          evidence.marketResolutions[0].workBudget.sessionMarkerLogicalLoads = 0;
+          evidence.marketResolutions[0].workBudget.actualTotal = 1;
+          evidence.workBudget.sessionMarkerLogicalLoads = 0;
+          evidence.workBudget.actualTotal = 1;
         },
       },
       {
@@ -574,11 +646,12 @@ describe("analyze observed price MCP schemas", () => {
         },
       },
       {
-        label: "required unverified issue is missing",
+        label: "fresh authoritative result invents FRESHNESS_UNVERIFIED",
         mutate: (envelope) => {
-          envelope.meta.quality.issues = envelope.meta.quality.issues.filter(
-            (issue) => issue.code !== "FRESHNESS_UNVERIFIED",
-          );
+          envelope.meta.quality.issues.push({
+            ...envelope.meta.quality.issues[0],
+            code: "FRESHNESS_UNVERIFIED",
+          });
         },
       },
       {
@@ -650,7 +723,7 @@ describe("analyze observed price MCP schemas", () => {
         mutate: (envelope) => {
           Object.assign(envelope.sources[2].cache, {
             status: "bypass" as const,
-            storedAt: "2026-08-28T05:45:00.000Z",
+            storedAt: "2026-08-28T07:05:00.000Z",
             ageMs: 0,
           });
         },
@@ -688,9 +761,9 @@ describe("analyze observed price MCP schemas", () => {
         },
       },
       {
-        label: "nested dependency invents unexposed evidence",
+        label: "resolver dependency invents top-level source evidence",
         mutate: (envelope) => {
-          Object.assign(envelope.dependencyLedger[2], {
+          Object.assign(envelope.dependencyLedger[1], {
             sourceIds: ["company_master:listed:2026-08-27"],
           });
         },
@@ -737,10 +810,11 @@ describe("analyze observed price MCP schemas", () => {
     cases.push({ label: "semantic warnings", data: weakWarnings });
 
     const undercountedBudget = structuredClone(validData());
-    Object.assign(
-      undercountedBudget.workBudget.plannedOfficialSourceRequests,
-      { maximumTotal: 3 },
-    );
+    (
+      undercountedBudget.workBudget.plannedOfficialSourceRequests as {
+        maximumTotal: number;
+      }
+    ).maximumTotal = 3;
     cases.push({ label: "work budget", data: undercountedBudget });
 
     for (const entry of cases) {
@@ -768,12 +842,40 @@ describe("analyze observed price MCP schemas", () => {
     });
     cases.push({ label: "snapshot identity", data: unverified });
 
+    const wrongMonth = structuredClone(validData());
+    closeSource(wrongMonth).dataMonth = "2026-07";
+    cases.push({ label: "monthly snapshot identity", data: wrongMonth });
+
+    const wrongSelectedDate = structuredClone(validData());
+    closeSource(wrongSelectedDate).selectedBarDate = "2026-08-27";
+    cases.push({ label: "selected exact bar date", data: wrongSelectedDate });
+
+    const wrongObservedName = structuredClone(validData());
+    closeSource(wrongObservedName).observedName = "不是台積電";
+    cases.push({ label: "official observed name", data: wrongObservedName });
+
+    const wrongCompanyCode = structuredClone(validData());
+    closeSource(wrongCompanyCode).companyCode = "2317";
+    cases.push({ label: "official source company code", data: wrongCompanyCode });
+
+    const wrongUrlCode = structuredClone(validData());
+    closeSource(wrongUrlCode).sourceUrl = closeSource(
+      wrongUrlCode,
+    ).sourceUrl.replace("stockNo=2330", "stockNo=2317");
+    cases.push({ label: "official URL company code", data: wrongUrlCode });
+
+    const nonOfficialHost = structuredClone(validData());
+    closeSource(nonOfficialHost).sourceUrl = closeSource(
+      nonOfficialHost,
+    ).sourceUrl.replace("www.twse.com.tw", "example.com");
+    cases.push({ label: "official URL host", data: nonOfficialHost });
+
     const afterGeneration = structuredClone(validData());
-    closeSource(afterGeneration).retrievedAt = "2026-08-28T06:00:00.001Z";
+    closeSource(afterGeneration).retrievedAt = "2026-08-28T07:10:00.001Z";
     cases.push({ label: "retrieved after generated", data: afterGeneration });
 
     const noOffset = structuredClone(validData());
-    closeSource(noOffset).retrievedAt = "2026-08-28T05:45:00";
+    closeSource(noOffset).retrievedAt = "2026-08-28T07:05:00";
     cases.push({ label: "retrieved without offset", data: noOffset });
 
     const dataAfterRetrieval = structuredClone(validData());

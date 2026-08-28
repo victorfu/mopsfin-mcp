@@ -32,11 +32,11 @@ const callerBridgeSchema = z
       "enterprise-to-equity bridge 的退休金缺口；0 也必須由 caller 明示",
     ),
     other_debt_like_items_twd: nonNegativeTwdSchema.describe(
-      "未含在 v0.8 aggregate interest-bearing debt 的其他 debt-like claims；0 也必須由 caller 明示",
+      "未含在 normalized aggregate interest-bearing debt 的其他 debt-like claims；0 也必須由 caller 明示",
     ),
   })
   .strict()
-  .describe("所有非 v0.8 normalized fields 的 EV bridge caller assumptions；不提供隱藏 0 預設");
+  .describe("所有非 normalized valuation-model fields 的 EV bridge caller assumptions；不提供隱藏 0 預設");
 
 const solveRangeSchema = z
   .object({
@@ -110,7 +110,7 @@ const commonInputShape = {
     .describe("單一四碼、目前公司 master 可核對的台股公司股票代號"),
   price_source: z
     .literal("latest_completed_close")
-    .describe("固定使用官方最近完成交易日收盤價；不接受盤中價或外部 quote"),
+    .describe("固定使用 request-start authoritative resolver expectedAsOf 同日的官方 exact 單股 OHLC close；不接受或回退全市場 latest、盤中價或外部 quote"),
   forecast_years: z
     .number()
     .int()
@@ -373,13 +373,13 @@ const bridgeSchema = z
     sharesOutstanding: z.number().finite().positive().describe("current-master issued common shares"),
     shareCountBasis: z.literal("issued_common_shares").describe("此 orchestration 固定使用 issued common shares，非 diluted shares"),
     observedEquityValueTwd: z.number().finite().positive().describe("close × issued shares"),
-    plusInterestBearingDebtTwd: z.number().finite().nonnegative().describe("v0.8 aggregate interest-bearing debt，已含 exact lease roles"),
+    plusInterestBearingDebtTwd: z.number().finite().nonnegative().describe("normalized aggregate interest-bearing debt，已含 exact lease roles"),
     plusLeaseLiabilitiesTwd: z.literal(0).describe("防止 aggregate debt 中 lease roles 被 double counted 的 bridge normalization；不表示租賃負債為零"),
     plusNonControllingInterestsTwd: z.number().finite().nonnegative().describe("caller 明示 NCI"),
     plusPreferredEquityTwd: z.number().finite().nonnegative().describe("caller 明示 preferred equity"),
     plusPensionDeficitTwd: z.number().finite().nonnegative().describe("caller 明示 pension deficit"),
     plusOtherDebtLikeItemsTwd: z.number().finite().nonnegative().describe("caller 明示其他 debt-like claims"),
-    lessCashAndCashEquivalentsTwd: z.number().finite().nonnegative().describe("v0.8 normalized cash and cash equivalents"),
+    lessCashAndCashEquivalentsTwd: z.number().finite().nonnegative().describe("normalized cash and cash equivalents"),
     lessNonOperatingAssetsTwd: z.number().finite().nonnegative().describe("caller 明示 non-operating assets"),
     targetEnterpriseValueTwd: z.number().finite().positive().describe("由官方 close 與顯性 bridge 算得的 market-implied target EV"),
     formula: z.literal("observed_equity_value_plus_debt_like_claims_minus_cash_and_non_operating_assets").describe("EV bridge 固定公式識別碼"),
@@ -500,7 +500,7 @@ const reverseDcfModelSchema = z
           .describe("一般企業 FCFF 模型只接受非金融公司"),
       })
       .strict()
-      .describe("通過 v0.8 current-master identity 與非金融業 applicability gate 的公司"),
+      .describe("通過 current-master identity 與非金融業 applicability gate 的公司"),
     solution: solutionSchema,
     forecast: z.array(forecastPeriodSchema).min(1).max(20).describe("逐年可重算 FCFF forecast"),
     terminal: terminalValueSchema,
@@ -545,21 +545,21 @@ const mappingSchema = z
   .object({
     mappingId: z.string().min(1).describe("model evidence lineageIds 指向的 adapter mapping ID"),
     engineFactId: z.string().min(1).describe("此 mapping 對應的 engine fact ID"),
-    evidenceClass: sourceEvidenceClassSchema.describe("沿用 v0.8 OFFICIAL/MOPSFIN evidence class"),
+    evidenceClass: sourceEvidenceClassSchema.describe("沿用 upstream normalized OFFICIAL/MOPSFIN evidence class"),
     origin: z.enum([
       "valuation_model_field",
       "valuation_model_company_identity",
       "valuation_model_source_date",
       "aggregate_debt_bridge_normalization",
     ]).describe("normalized fact 的精確來源／轉換類型"),
-    originFieldIds: z.array(valuationModelInputsDataSchema.shape.quality.shape.dataGapFields.element).describe("使用的 v0.8 normalized field IDs；公司 identity 可為空"),
-    upstreamLineageIds: z.array(z.string().min(1)).describe("回指 v0.8 lineageLedger 的 IDs"),
+    originFieldIds: z.array(valuationModelInputsDataSchema.shape.quality.shape.dataGapFields.element).describe("使用的 normalized valuation-model field IDs；公司 identity 可為空"),
+    upstreamLineageIds: z.array(z.string().min(1)).describe("回指 valuation-model lineageLedger 的 IDs"),
     sourceIds: z.array(z.string().min(1)).describe("回指 sourceLedger 的 official source IDs"),
     transformation: z.string().min(1).nullable().describe("adapter transformation；直接取值時 null"),
     notes: z.array(z.string().min(1)).describe("口徑或 double-count 防護說明"),
   })
   .strict()
-  .describe("engine fact 到 v0.8 field、row lineage 與 official source 的 adapter mapping");
+  .describe("engine fact 到 normalized valuation-model field、row lineage 與 official source 的 adapter mapping");
 
 const reverseDcfDataBaseSchema = z
   .object({
@@ -569,20 +569,20 @@ const reverseDcfDataBaseSchema = z
     currency: z.literal("TWD").describe("模型金額幣別"),
     scope: z.literal("market_implied_reverse_dcf").describe("市場隱含單一變數 reverse DCF"),
     posture: z.literal("research_model_output_not_investment_advice").describe("研究模型，不輸出買賣建議或評級"),
-    company: valuationModelInputsDataSchema.shape.company.describe("v0.8 current-master 核對後的公司 identity"),
+    company: valuationModelInputsDataSchema.shape.company.describe("current-master 核對後的公司 identity"),
     model: reverseDcfModelSchema,
     normalizedInputEvidence: z
       .object({
-        valuationModelGeneratedAt: z.string().regex(strictIsoInstantPattern).describe("v0.8 normalized inputs 的 strict ISO UTC 生成時間"),
-        usedFieldIds: z.array(valuationModelInputsDataSchema.shape.quality.shape.dataGapFields.element).min(5).describe("本 solve mode 實際讀取的 v0.8 fields"),
-        fields: valuationModelInputsDataSchema.shape.fields.describe("完整 v0.8 normalized field snapshot；usedFieldIds 指出實際使用欄位"),
-        periods: valuationModelInputsDataSchema.shape.periods.describe("v0.8 TTM period 與 consolidation-scope 證據"),
-        factMappings: z.array(mappingSchema).min(9).describe("engine fact 到 v0.8 fields／lineage／sources 的可重算 mapping ledger"),
-        lineageLedger: valuationModelInputsDataSchema.shape.lineage.describe("v0.8 原始 row-role lineage ledger"),
-        sourceLedger: valuationModelInputsDataSchema.shape.sources.describe("v0.8 官方／Mopsfin source ledger，保留 retrievedAt 與 cache provenance"),
+        valuationModelGeneratedAt: z.string().regex(strictIsoInstantPattern).describe("normalized valuation-model inputs 的 strict ISO UTC 生成時間"),
+        usedFieldIds: z.array(valuationModelInputsDataSchema.shape.quality.shape.dataGapFields.element).min(5).describe("本 solve mode 實際讀取的 normalized valuation-model fields"),
+        fields: valuationModelInputsDataSchema.shape.fields.describe("完整 normalized valuation-model field snapshot；usedFieldIds 指出實際使用欄位"),
+        periods: valuationModelInputsDataSchema.shape.periods.describe("valuation-model TTM period 與 consolidation-scope 證據"),
+        factMappings: z.array(mappingSchema).min(9).describe("engine fact 到 normalized valuation-model fields／lineage／sources 的可重算 mapping ledger"),
+        lineageLedger: valuationModelInputsDataSchema.shape.lineage.describe("valuation-model 原始 row-role lineage ledger"),
+        sourceLedger: valuationModelInputsDataSchema.shape.sources.describe("normalized valuation-model 官方／Mopsfin source ledger，保留 retrievedAt 與 cache provenance"),
       })
       .strict()
-      .describe("本次模型使用的 v0.8 field snapshot、fact mappings、row lineage 與 source ledger"),
+      .describe("本次模型使用的 normalized valuation-model field snapshot、fact mappings、row lineage 與 source ledger"),
     sources: valuationModelInputsDataSchema.shape.sources.describe(
       "供共用 MCP result-contract 產生 sourceCutoffs 的 top-level sources；必須與 normalizedInputEvidence.sourceLedger 完全一致",
     ),
@@ -590,12 +590,12 @@ const reverseDcfDataBaseSchema = z
       .object({
         valuationModelInputCalls: z
           .object({
-            actual: z.literal(1).describe("本次 v0.8 orchestration 實際呼叫數"),
+            actual: z.literal(1).describe("本次 normalized valuation-model orchestration 實際呼叫數"),
             maximum: z.literal(1).describe("單公司硬上限"),
           })
           .strict()
           .describe("normalized valuation-input orchestration call budget"),
-        valuationModelInputs: valuationModelInputsDataSchema.shape.workBudget.describe("v0.8 normalization 的完整 bounded dependency budget"),
+        valuationModelInputs: valuationModelInputsDataSchema.shape.workBudget.describe("normalized valuation-model input 的完整 bounded dependency budget"),
         reverseDcfEngineOrchestrations: z
           .object({
             actual: z.literal(1).describe("deterministic engine 實際執行一次"),
@@ -627,11 +627,11 @@ const reverseDcfDataBaseSchema = z
           .describe("不是實際耗用值，而是固定 solver policy 下的 deterministic evaluation upper bound"),
       })
       .strict()
-      .describe("v0.8 dependencies、主模型與 sensitivity 的 bounded work budget"),
+      .describe("normalized input dependencies、主模型與 sensitivity 的 bounded work budget"),
     warnings: z.array(z.string().min(1)).min(5).describe("來源、股數、lease double-count、caller assumptions 與非投資建議警語"),
   })
   .strict()
-  .describe("可由 v0.8 source lineage、caller assumptions 與 deterministic formulas 完整重算的 reverse DCF result");
+  .describe("可由 normalized valuation-model source lineage、caller assumptions 與 deterministic formulas 完整重算的 reverse DCF result");
 
 type ReverseDcfData = z.infer<typeof reverseDcfDataBaseSchema>;
 
@@ -703,7 +703,7 @@ function validateReverseDcfData(
       bridge.plusInterestBearingDebtTwd !==
         normalizedFields.interestBearingDebt.value
     ) {
-      context.addIssue({ code: "custom", path: ["model", "bridge"], message: "official price/shares/cash/aggregate debt 必須與 v0.8 normalized fields 完全一致" });
+      context.addIssue({ code: "custom", path: ["model", "bridge"], message: "official price/shares/cash/aggregate debt 必須與 normalized valuation-model fields 完全一致" });
     }
     const expectedEquityValue =
       bridge.observedPricePerShareTwd * bridge.sharesOutstanding;
@@ -751,7 +751,7 @@ function validateReverseDcfData(
       JSON.stringify(result.normalizedInputEvidence.usedFieldIds) !==
       JSON.stringify(expectedUsedFieldIds)
     ) {
-      context.addIssue({ code: "custom", path: ["normalizedInputEvidence", "usedFieldIds"], message: "usedFieldIds 必須精確對應 solve mode 的必要 v0.8 fields" });
+      context.addIssue({ code: "custom", path: ["normalizedInputEvidence", "usedFieldIds"], message: "usedFieldIds 必須精確對應 solve mode 的必要 normalized valuation-model fields" });
     }
     for (const fieldId of expectedUsedFieldIds) {
       const field = normalizedFields[fieldId];
@@ -1069,7 +1069,7 @@ function validateReverseDcfData(
       cashAndCashEquivalents: "statement",
       interestBearingDebt: "statement",
       issuedShares: "company_master",
-      latestOfficialClose: "market_valuation",
+      latestOfficialClose: "latest_official_completed_close",
       normalizedFcff: "statement",
       ttmRevenue: "statement",
       ttmOperatingIncomeEbitProxy: "statement",
@@ -1092,7 +1092,7 @@ function validateReverseDcfData(
           return true;
         }
         return source.stage === "company_master" ||
-          source.stage === "market_valuation"
+          source.stage === "latest_official_completed_close"
           ? source.market !== result.company.market ||
               source.exchange !== result.company.exchange
           : false;
@@ -1461,7 +1461,7 @@ function validateReverseDcfData(
 
 export const reverseDcfDataSchema = reverseDcfDataBaseSchema
   .superRefine(validateReverseDcfData)
-  .describe("可由 v0.8 source lineage、caller assumptions 與 deterministic formulas 完整重算的 reverse DCF result");
+  .describe("可由 normalized valuation-model source lineage、caller assumptions 與 deterministic formulas 完整重算的 reverse DCF result");
 
 export const reverseDcfOutputSchema = z
   .object({

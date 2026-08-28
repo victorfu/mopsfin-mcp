@@ -8,9 +8,11 @@ const liveDescribe =
 
 liveDescribe("live valuation-model input contract", () => {
   it("normalizes 2330 latest statements into an auditable TTM bridge", async () => {
-    const result = await valuationModelInputsClient.getValuationModelInputs({
-      companyCode: "2330",
-    });
+    const execution =
+      await valuationModelInputsClient.getValuationModelInputsWithContext({
+        companyCode: "2330",
+      });
+    const { data: result, completedClose } = execution;
 
     expect(result.applicability.status).toBe("applicable");
     expect(result.periods.latestReportedPeriod).toMatch(/^\d{4}Q[1-4]$/);
@@ -52,17 +54,30 @@ liveDescribe("live valuation-model input contract", () => {
       dataGapReason: null,
     });
     expect(result.fields.latestOfficialClose.value).toBeGreaterThan(0);
+    expect(completedClose).not.toBeNull();
+    expect(completedClose?.expectedAsOf).toBe(
+      completedClose?.selectedBarDate,
+    );
+    expect(completedClose?.selectedBarDate).toBe(
+      result.sources.find(
+        (source) => source.stage === "latest_official_completed_close",
+      )?.selectedBarDate,
+    );
     expect(result.fields.marketCapitalization.status).toBe("derived");
     expect(result.fields.enterpriseValue.status).toBe("derived");
-    expect(result.workBudget.valuationDependencyCalls).toMatchObject({
+    expect(result.workBudget.authoritativeCompletedCloseCalls).toMatchObject({
       actual: 1,
-      internalCurrentMasterPolicy: "compatible",
-      minimumCurrentMasterMatchRatio: 0.95,
-      selectedCompanyIdentityPolicy:
-        "outer_market_all_master_plus_official_row_exact",
+      completedSessionResolver: {
+        actualLogicalLoads: 2,
+        maximumLogicalLoads: 2,
+      },
+      exactStockOhlcAttempts: {
+        actual: expect.any(Number),
+        maximum: 2,
+      },
     });
     expect(result.warnings.join(" ")).not.toContain(
-      "latest official close dependency 失敗",
+      "authoritative completed-close dependency 失敗",
     );
     expect(
       result.lineage.some(
@@ -75,7 +90,7 @@ liveDescribe("live valuation-model input contract", () => {
 
     const reverseDcf = new ReverseDcfMcpClient(
       {
-        getValuationModelInputs: async () => result,
+        getValuationModelInputsWithContext: async () => execution,
       },
       () => new Date(Date.parse(result.generatedAt) + 1_000),
     );

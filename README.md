@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.9.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 23 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、年度開休市日曆、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。另可將 caller 自行觀察的價格與官方最近完成交易日收盤價分開標示後比較；caller 值不會被冒充成官方或即時行情。
+目前版本 `0.10.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 23 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、年度開休市日曆、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。另可將 caller 自行觀察的價格與官方最近完成交易日收盤價分開標示後比較；caller 值不會被冒充成官方或即時行情。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -149,7 +149,7 @@ MCP descriptions 必須與實際行為同步，不能只更新程式邏輯或 RE
 所有成功工具的 `structuredContent` 固定包含 `ok=true` 與 `meta.contractVersion=mopsfin.result.v1`：
 
 - `meta.asOf` 說明 requested selector、實際 resolved 時間範圍、`Asia/Taipei`、snapshot ID 與 `servedAt`；每個 `sourceCutoffs[]` 另分開保留資料 cutoff、官方明示的 `publishedAt`、真正向上游取得的 `retrievedAt`，以及 caller-specific `cache.status/observedAt/storedAt/ageMs/ttlMs`。cache hit 不會用 `servedAt` 覆寫原始 `retrievedAt`。
-- `meta.quality` 分開揭露 source、universe、selection、values、freshness、逐來源／policy 的 `freshnessDetails` 與具體 `issues`。`latest` 只是 selector，不會自動等於 fresh；官方日行情、日估值與 completed-close dependencies 會以市場各自的 TWSE／TPEx 年度開休市日曆、當月 exact benchmark session 及 Asia/Taipei 13:33 guard 解析 `expectedAsOf`。resolver source 不可用、契約漂移或 `market=all` 兩市場日期不一致時 fail closed 為 `unknown + FRESHNESS_UNVERIFIED`；其他沒有可靠 expected as-of 的 policy 也維持 unknown，落後 policy 時回 `stale + DATA_STALE`。freshness 為 unknown/stale、`universe=compatible | unverified`，或 selection/value 尚為 `unknown` 時 overall `status=partial`；`status=complete` 仍不代表每個數值都非 null。
+- `meta.quality` 分開揭露 source、universe、selection、values、freshness、逐來源／policy 的 `freshnessDetails` 與具體 `issues`。`latest` 只是 selector，不會自動等於 fresh；官方日行情、日估值與 completed-session policy 會以市場各自的 TWSE／TPEx 年度開休市日曆、當月 exact benchmark session 及 Asia/Taipei 13:33 guard 解析 `expectedAsOf`。凡是宣稱 `latest_completed_close` 的單股工具，會先以公司所屬市場的 authoritative resolver 固定 `expectedAsOf`，再查該公司當月 exact single-stock OHLC 並只接受日期完全相等的 bar；不使用全市場 latest snapshot 猜日期，也不退回前一日價格。resolver source 不可用、契約漂移或 `market=all` 兩市場日期不一致時 fail closed 為 `unknown + FRESHNESS_UNVERIFIED`；其他沒有可靠 expected as-of 的 policy 也維持 unknown，落後 policy 時回 `stale + DATA_STALE`。freshness 為 unknown/stale、`universe=compatible | unverified`，或 selection/value 尚為 `unknown` 時 overall `status=partial`；`status=complete` 仍不代表每個數值都非 null。
 - `meta.page` 統一表示 `none`、`offset` 或 `cursor` 分頁，以及下一頁 token。`list_companies`、單日全市場 OHLC、估值與月營收在省略 `page_size`／`cursor` 時維持完整回傳，提供 `page_size` 後才啟用 stateless cursor；批次指標與 reaction signals 則預設分頁。
 
 HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `coverage.nextCursor` 續頁，reaction signals 以 `pagination.nextCursor` 續頁。cursor 不需要資料庫，也不保存伺服器端 session；`meta.asOf.snapshotId` 表示該工具可驗證的 snapshot scope。先取得整個 accepted rowset 再切頁的工具可綁內容快照，但這不額外證明官方 rowset 完整；`get_company_metrics_batch` 只綁 query／catalog，reaction cursor v2 綁 query／目前 master／benchmark，以及 full-market 公司行動 range contracts/summaries 與整個 requested company scope 的 TWSE 權息 detail fingerprint。各頁財務值或個股 OHLC 仍於該頁即時取得，因此會以 `STATELESS_PAGE_VALUES_NOT_PINNED` 明示不具跨頁 point-in-time 保證。`get_company_catalyst_events` 的 offset 也是重新查詢的非 pinned 分頁，必須比對 `fingerprint` 與 `meta.asOf.snapshotId`；出現 `CATALYST_OFFSET_PAGE_NOT_PINNED` 不代表資料已被鎖定。若錯誤 `reason` 是 `CURSOR_INVALID` 或 `SNAPSHOT_CHANGED`，依 `action=restart_pagination` 從第一頁重啟。
@@ -166,9 +166,9 @@ HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `
 
 ### `analyze_observed_price` Caller 觀察價比較
 
-這個工具處理「我目前看到 33.35 元」之類的使用情境，但不新增或假裝存在外部即時行情來源。caller 必須提供單一四碼 `company_code`、大於 0 的 `observed_price_twd`、含明確 `Z` 或 UTC offset 的 `observed_at`，以及非空 `source_label`。`-00:00` 表示未知 local offset，因此不被接受。工具先以 `market=all` 目前公司 master 的 listed／otc 兩份來源核對 identity；官方價格 dependency 使用 `compatible` current-master reconciliation，各市場 `matchRatio` 至少 95% 才接受，以免疑似截斷來源因只查一個代號而漏網。非目標公司的 master 差異不會阻斷查詢，但目標公司的 code、name、market 必須由外層 master 與官方行情列精確吻合，才能取得最近完成交易日的 `raw_unadjusted` 收盤價。
+這個工具處理「我目前看到 33.35 元」之類的使用情境，但不新增或假裝存在外部即時行情來源。caller 必須提供單一四碼 `company_code`、大於 0 的 `observed_price_twd`、含明確 `Z` 或 UTC offset 的 `observed_at`，以及非空 `source_label`。`-00:00` 表示未知 local offset，因此不被接受。工具先以 `market=all` 目前公司 master 的 listed／otc 兩份來源核對 company identity，再凍結同一個 `evaluatedAt`：依公司所屬市場呼叫 authoritative completed-session resolver 取得 `expectedAsOf`，接著查該公司的 exact single-stock monthly OHLC，且只接受 `selectedBarDate=expectedAsOf`、市場與名稱都精確吻合的 `raw_unadjusted` 已成交正數收盤價。全市場 latest OHLC 不參與這條價格 routing，也不會在 exact bar 缺少時退回前一交易日。
 
-輸出固定分開 `CALLER_SUPPLIED` 觀察值、`OFFICIAL_MASTER_RAW` 公司 identity、`OFFICIAL_MARKET_RAW` completed close 與 `MOPSFIN_CALC` 機械價差；`priceOrigin=caller_supplied`、`officialHistoryCutoff`、三份 evidence sources、caller-specific cache provenance 與 `dependencyLedger` 都是契約的一部分。價格 dependency 內部的 nested compatible-master acquisition source evidence 目前不會由該 dependency 回傳，因此 ledger 明示 `not_exposed_by_dependency`，`meta.quality.source=partial`，不以外層 master 證據冒充同一次 nested retrieval。
+輸出固定分開 `CALLER_SUPPLIED` 觀察值、`OFFICIAL_MASTER_RAW` 公司 identity、`OFFICIAL_MARKET_RAW` completed close 與 `MOPSFIN_CALC` 機械價差；`priceOrigin=caller_supplied`、`officialHistoryCutoff`、三份 evidence sources、caller-specific cache provenance 與 `dependencyLedger` 都是契約的一部分。resolver 的 calendar／exact benchmark evidence 由 `meta.quality.freshnessDetails[].resolverEvidence` 揭露，exact single-stock OHLC source 則直接保留在 `sources`；其中 `dataMonth` 是月資料文件身分，`selectedBarDate` 才是被採用的完成交易日，兩者不可互相代填。`workBudget` 分開列出 resolver logical loads、exact OHLC 一次查詢及 current-month cache 缺少 expected bar 時最多一次的 bounded refresh。
 
 若 caller observation 與官方 completed close 落在同一個台北日曆日期，只有 `13:33:00 Asia/Taipei`（含）之後才接受比較，藉此涵蓋一般 13:30 收盤及可能的暫緩收盤；更早的同日觀察值會 fail closed。這是保守 session guard，不代表 MopsFin 驗證了 observed price。結果只回答「caller 值相對最近官方完成收盤差多少」，不是 real-time quote、fair value、合理進場區、adjusted close、目標價、評級或投資建議。
 
@@ -200,23 +200,23 @@ N-session 視窗依 benchmark 交易日曆的 exact 起訖日期計算，個股�
 
 ### `get_valuation_model_inputs` 可追溯估值模型資料層
 
-這個工具只接受單一四碼 `company_code`，為目前上市櫃非金融公司整理 14 個可重算欄位：TTM revenue、營業利益 EBIT proxy、cash tax rate、D&A、只含 PPE acquisition 的 CapEx、ΔNWC、`source/sign-normalized historical FCFF proxy`、cash、有息負債、net debt、目前 issued shares、最近完成官方估值日收盤、market capitalization 與 enterprise value。它只做模型輸入正規化，不執行 DCF，也不提供隱藏 WACC／terminal growth、評級、目標價或投資建議。
+這個工具只接受單一四碼 `company_code`，為目前上市櫃非金融公司整理 14 個可重算欄位：TTM revenue、營業利益 EBIT proxy、cash tax rate、D&A、只含 PPE acquisition 的 CapEx、ΔNWC、`source/sign-normalized historical FCFF proxy`、cash、有息負債、net debt、目前 issued shares、最近完成官方交易日收盤、market capitalization 與 enterprise value。它只做模型輸入正規化，不執行 DCF，也不提供隱藏 WACC／terminal growth、評級、目標價或投資建議。
 
-最近官方收盤的內部全市場 dependency 採 `compatible`，但每個市場仍須通過至少 95% current-master match ratio，以拒絕疑似截斷來源；指定公司的 code、name、market 還必須由外層 `market=all` current master 與官方 selected row 精確一致。這讓非目標公司的正常集合差異不再把合法單股價格誤判成 `data_gap`，同時對目標 identity、source contract、query、raw close 與 reconciliation 算術維持 fail closed。
+最近官方收盤與 `analyze_observed_price` 共用 authoritative completed-close routing。外層 `market=all` current master 先唯一核對指定公司的 code、short name、market 與 exchange；同一個凍結的 `evaluatedAt` 再交給公司所屬市場 resolver 解析 `expectedAsOf`，最後只從官方 exact single-stock monthly OHLC 選取日期完全相等、identity 一致的 bar。這條路徑不以日估值或全市場行情的 latest 日期作替代；resolver 未解析、source month／selected bar date 不一致、exact bar 缺少、無成交、close 非正數或 identity 不符時，`latestOfficialClose` 維持 `data_gap/null`，不 fallback。
 
 TTM 嚴格採 Q4 FY，或 `current YTD + prior FY - prior-year YTD`。每份 Mopsfin 報表都核對公司 identity、報表類型、期別、合併範圍、唯一 row role，以及 HTML／catalog 的金額單位證據；金額從明示的新台幣仟／千元乘以 1,000 正規化為 TWD。任一必要條件不成立就回 `data_gap`、`value=null` 與 search-attempt lineage，不猜科目、不換來源，也不補 0。CapEx 第一版只含取得不動產、廠房及設備，未含無形資產或其他投資支出；`normalizedFcff` 是可重算的歷史 proxy，不代表分析師正規化或預測 FCFF。
 
 每個欄位都有 `status`、`evidenceClass`、`formula`、`inputFieldIds`、`inputLineageIds` 與 notes。證據類別分開標示 `MOPSFIN_RAW`、`MOPSFIN_CALC`、`OFFICIAL_MASTER_RAW`、`OFFICIAL_MARKET_RAW`、`OFFICIAL_CALC`、`MIXED_OFFICIAL_CALC` 與 `UNAVAILABLE`；market cap 是目前 master issued shares × official completed-session close，enterprise value 才會再混合 Mopsfin net debt。issued shares 不是歷史期末、加權平均或 fully diluted shares。歷史財報是查詢當下 Mopsfin 可見、可能已重編的版本，不是 point-in-time filing vintage。
 
-`meta.asOf.resolved.granularity=mixed` 且 from／through 維持 null，不把 quarter 與 calendar date 排成假的單一時間軸；真實時間只從逐來源 cutoff 分開讀取 master date、statement quarter 與 market date。Mopsfin latest 財報沒有可靠 expected quarter 時 freshness 為 `unknown`；官方 latest close 則以公司所屬市場的年度開休市日曆與 exact benchmark session 驗證，成功才可為 `within_expected_window`，任一 resolver 證據不足仍維持 `unknown + FRESHNESS_UNVERIFIED`。金融公司回 `not_applicable`，不得硬套一般企業 FCFF／enterprise-value DCF；應改用 residual income、dividend discount 或 excess-return 類模型。
+`meta.asOf.resolved.granularity=mixed` 且 from／through 維持 null，不把 quarter 與 calendar date 排成假的單一時間軸；真實時間只從逐來源 cutoff 分開讀取 master date、statement quarter 與 completed-close date。completed-close source 的 `dataMonth` 保留官方月資料文件身分，`selectedBarDate`／`asOf` 則精確指出 resolver `expectedAsOf` 所選 bar；`workBudget.authoritativeCompletedCloseCalls` 另揭露 resolver logical loads、exact OHLC attempts 與是否執行 bounded cache refresh。Mopsfin latest 財報沒有可靠 expected quarter 時 freshness 為 `unknown`；官方 latest close 只有 resolver 與 exact bar 證據一致時才可為 `within_expected_window`，任一 resolver 證據不足仍維持 `unknown + FRESHNESS_UNVERIFIED`。金融公司回 `not_applicable`，不得硬套一般企業 FCFF／enterprise-value DCF；應改用 residual income、dividend discount 或 excess-return 類模型。
 
 ### `run_reverse_dcf` 市場隱含 Reverse DCF
 
-這個工具沿用 `get_valuation_model_inputs` 的 current-master identity、normalized financial facts、cash、aggregate interest-bearing debt、目前 issued common shares 與官方最近完成交易日收盤，以 FCFF／WACC、year-end discounting 和 perpetuity-growth terminal value 建立 deterministic market-implied reverse DCF。每次只能反解 `revenue_cagr`、`fcff_cagr` 或 `terminal_operating_margin` 其中一項；其餘 forecast years、WACC、terminal growth、solve range 與 mode-specific forward assumptions 都必須由 caller 明示。`WACC <= terminal growth`、必要 normalized fact／lineage 不完整、解區間未 bracket 市場 enterprise value，或數值 residual 無法在 tolerance 內收斂時會 fail closed，不會外插或產生看似合理的答案。
+這個工具沿用 `get_valuation_model_inputs` 的 current-master identity、normalized financial facts、cash、aggregate interest-bearing debt、目前 issued common shares，以及由 resolver `expectedAsOf` 與 exact single-stock OHLC 共同鎖定的官方最近完成交易日收盤，以 FCFF／WACC、year-end discounting 和 perpetuity-growth terminal value 建立 deterministic market-implied reverse DCF。每次只能反解 `revenue_cagr`、`fcff_cagr` 或 `terminal_operating_margin` 其中一項；其餘 forecast years、WACC、terminal growth、solve range 與 mode-specific forward assumptions 都必須由 caller 明示。`WACC <= terminal growth`、必要 normalized fact／lineage 不完整、解區間未 bracket 市場 enterprise value，或數值 residual 無法在 tolerance 內收斂時會 fail closed，不會外插或產生看似合理的答案。
 
 enterprise-value bridge 的 `non_operating_assets_twd`、`non_controlling_interests_twd`、`preferred_equity_twd`、`pension_deficit_twd` 與 `other_debt_like_items_twd` 也都是必填 caller assumptions；輸入 0 仍是顯性聲明，不代表官方來源已驗證為零。`non_operating_assets_twd` 必須排除已在 cash 欄位中的金額，`other_debt_like_items_twd` 必須排除已彙總進 interest-bearing debt 的負債與 lease roles，避免 bridge double count。股數基礎是目前 issued common shares，不是 fully diluted shares；金融公司固定回 `NOT_APPLICABLE_FINANCIAL_COMPANY`。
 
-輸出保留逐年 forecast、terminal value、enterprise-to-equity bridge、PV tie-out、solver tolerance、checks，以及 `MOPSFIN_RAW`／`MOPSFIN_CALC`、官方來源、`CALLER_ASSUMPTION` 與 `MODEL_OUTPUT` 的分離證據。可選 sensitivity grid 每軸最多 5 個值、合計最多 25 cells；每個 cell 會重新反解，無可行解會個別標記，不能拿主模型或鄰近值代填。`workBudget` 分開揭露單次 orchestration、`1 + sensitivity cells` 個 solve attempts（最多 26），以及固定 solver policy 下每次最多 323、整體最多 8,398 次 model evaluations 的保守上限。來源時間維持 `source.retrievedAt <= valuationModelGeneratedAt <= generatedAt <= meta.asOf.servedAt`，財報季度、master date 與 market date 仍以 mixed source cutoffs 分開揭露。這個結果描述「caller assumptions 下，現在市場價格隱含什麼」，不是 intrinsic value、目標價、分析師共識、買賣評級或投資建議，也不會偷偷改變 `balanced_non_financial_v2`；未來若納入 screening，必須另開新 preset。
+輸出保留逐年 forecast、terminal value、enterprise-to-equity bridge、PV tie-out、solver tolerance、checks，以及 `MOPSFIN_RAW`／`MOPSFIN_CALC`、官方來源、`CALLER_ASSUMPTION` 與 `MODEL_OUTPUT` 的分離證據。可選 sensitivity grid 每軸最多 5 個值、合計最多 25 cells；每個 cell 會重新反解，無可行解會個別標記，不能拿主模型或鄰近值代填。`workBudget` 分開揭露 completed-close routing、單次 model orchestration、`1 + sensitivity cells` 個 solve attempts（最多 26），以及固定 solver policy 下每次最多 323、整體最多 8,398 次 model evaluations 的保守上限。來源時間維持 `source.retrievedAt <= valuationModelGeneratedAt <= generatedAt <= meta.asOf.servedAt`，財報季度、master date 與 completed-close selected bar date 仍以 mixed source cutoffs 分開揭露。這個結果描述「caller assumptions 下，現在市場價格隱含什麼」，不是 intrinsic value、目標價、分析師共識、買賣評級或投資建議，也不會偷偷改變 `balanced_non_financial_v2`；未來若納入 screening，必須另開新 preset。
 
 `get_monthly_revenue` 接受 `latest` 或 `2013-01` 起的 `YYYY-MM`。latest 以 OpenAPI 發現月份並與 MOPS archive 核對；同月不同出表日的少量重疊公司數值差異視為官方修訂，採較新 snapshot 並加入 warning，同出表日或大範圍衝突則報錯。歷史月份直接讀取 archive。歷史 archive 是目前可取得的修訂後檔案，不是當時發布內容的 vintage snapshot，不適合無偏誤 point-in-time backtest。MOPS CSV 沒有 declared row count、footer 或 checksum；工具會接受官方舊版短欄名與目前帶前綴的 14 欄格式，並驗證 RFC 4180、必要欄位、資料年月／出表日、四碼 eligible 代號唯一性，以 `sources[].integrity` 明示「結構可驗證、完整 rowset 不可證明」。`sourceCoverage` 與 `filingCoverage` 分別代表 rowset 完整性與 latest 申報進度，歷史月份的 `coverageComplete=false`、`filingCoverage.status=historical_cross_timepoint_unverified`。
 
@@ -296,7 +296,7 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 - 「查台積電最近 12 季營業收入，整理成表格並標示期別、單位與 warnings。」
 - 「用 get_valuation_model_inputs 整理台積電的 TTM、歷史 FCFF proxy、net debt、目前 issued shares、最近完成官方收盤與 enterprise value；逐欄列出 evidenceClass、formula、lineage、data_gap 與 freshness，不補 0、不當成 point-in-time vintage，也不要執行 DCF。」
 - 「用 run_reverse_dcf 反解台積電目前官方收盤價隱含的 5 年 revenue CAGR；明示 WACC、terminal growth、normalized margin、cash tax、sales-to-capital、solve range 與每一項 EV bridge assumption，列出 forecast、terminal value、PV tie-out、evidenceClass、source cutoffs 與 sensitivity cell failures，不要把結果稱為目標價、共識或投資建議。」
-- 「用 analyze_observed_price 比較我在 2026-08-28T09:32:00+08:00 看到的台積電 1,200 元，與官方最近完成交易日收盤價；把 caller-supplied 與 official evidence 分開，列出 cutoff、cache、價差與 warnings，不要稱為即時行情、合理價或投資建議。」
+- 「用 analyze_observed_price 比較我在 2026-08-28T14:00:00+08:00 看到的台積電 1,200 元，與官方最近完成交易日收盤價；把 caller-supplied 與 official evidence 分開，列出 cutoff、cache、價差與 warnings，不要稱為即時行情、合理價或投資建議。」
 - 「查台積電 2025-01-01 到 2026-08-24 的原始日線 OHLC，若尚未完整請沿 nextCursor 繼續。」
 - 「用 get_stock_price_series 查台積電 2025-01-01 到 2026-08-24 的 price-index-compatible 公司行動調整日線並附 event ledger；同時保留 raw OHLC、標示 backward anchor、現金股利 factor=1 與 raw shares，任何 adjustment 證據不足請回 null，不要回退 raw，也不要稱為 adjusted close 或 total return。」
 - 「列出 2026-08-24 全部上市與上櫃公司的原始日線 OHLC，標示實際資料日期與來源。」
@@ -327,7 +327,7 @@ npm test
 npm run build
 ```
 
-一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、raw／公司行動調整價格序列、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、官方重大訊息／法說會事件、current official catalyst snapshots、latest 候選篩選四柱與 funnel、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
+一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、resolver `expectedAsOf` 到 exact single-stock completed close 的 routing、raw／公司行動調整價格序列、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、官方重大訊息／法說會事件、current official catalyst snapshots、latest 候選篩選四柱與 funnel、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
 
 Live contract tests 預設從一般測試跳過，只有明確設定時才會查詢原站。只執行低流量的 screening semantic catalog canary：
 
@@ -335,7 +335,7 @@ Live contract tests 預設從一般測試跳過，只有明確設定時才會查
 npm run test:live:catalog-screen
 ```
 
-只執行 TWSE／TPEx 年度開休市日曆與 exact benchmark session 的 completed-session canary：
+只執行 TWSE／TPEx 年度開休市日曆、exact benchmark session，以及單一 `2330` authoritative expectedAsOf → exact single-stock close routing canary：
 
 ```bash
 npm run test:live:completed-session
@@ -353,13 +353,13 @@ npm run test:live:corporate-actions
 npm run test:live:catalysts
 ```
 
-只執行 caller-supplied observed-price 的單一公司 production contract：
+只執行 caller-supplied observed-price 與 authoritative completed-close routing 的單一公司 production contract：
 
 ```bash
 npm run test:live:observed-price
 ```
 
-只執行單一 2330、bounded 的 valuation-model input contract（檢查財報 label、單位、期別與 TTM bridge drift）：
+只執行單一 2330、bounded 的 valuation-model input contract（檢查財報 label、單位、期別、TTM bridge 與 completed-close routing drift）：
 
 ```bash
 npm run test:live:valuation-model-inputs
@@ -371,7 +371,9 @@ npm run test:live:valuation-model-inputs
 npm run test:live
 ```
 
-既有 GitHub Actions 以每週一次、單一 concurrency group 的低頻 live contract workflow 稽核官方 schema／snapshot identity。`catalog-screen` suite 會先強制取得即時 Mopsfin catalog，驗證七項 screening semantic roles 均唯一解析至 `family=data`，再以單一 `2330` bounded screen 確認 `company_metrics_batch` 沒有失敗且 `deepScored=1`；這是避免 catalog 代號或名稱漂移再次被寬鬆 screen test 漏掉的低成本 production canary。`completed-session` suite 會以兩個市場各一份官方年度開休市日曆與一個 exact benchmark session marker 驗證 resolver contract、source identity 與 bounded work budget。公司行動 focused canary 覆蓋 TWSE／TPEx 各自除權息、減資與面額變更六組 range-family 來源的空與非空回應、必要欄位與 range identity schema drift，並另外驗證選定事件的 TWSE `TWT49UDetail`。`catalysts` suite 會同時執行原有 events canary 與 `catalyst-snapshots.live.test.ts`：前者以兩個 current OpenAPI 請求及三個固定歷史 MOPS 查詢工作單位，後者低頻稽核 current snapshot routes 的 schema、sourceSnapshotDate、freshness 與 unsupported 語意。`observed-price` suite 以單一 `2330` 實際走過 market=all master、compatible current-market 95% 防截斷門檻與目標公司精確 identity 核對，避免非目標公司的正常母體差異讓單一公司比較失敗。`valuation-model-inputs` suite 只查單一 `2330`，在最多七個 statement calls 與一次 official valuation dependency 內檢查三大報表 label、HTML unit provenance、共同期別、合併範圍與 TTM bridge，防止 row-role 或 unit drift。只有可核對 identity 的合法空回應才是 `verified_empty`；缺少 identity、stale、failed 或 unsupported 不能解釋為 current no-data。這些 canary 直接讀取官方來源，不使用資料庫、不寫入 persistence，也不改變 MCP runtime result contract。`workflow_dispatch` 的 `suite` 可選 `catalog-screen`、`completed-session`、`corporate-actions`、`catalysts`、`observed-price`、`valuation-model-inputs` 或 `all`；每週排程固定執行六類 focused canaries。請勿提高排程頻率或加入高基數掃描，以免對官方來源造成不必要流量。
+既有 GitHub Actions 以每週一次、單一 concurrency group 的低頻 live contract workflow 稽核官方 schema／snapshot identity。`catalog-screen` suite 會先強制取得即時 Mopsfin catalog，驗證七項 screening semantic roles 均唯一解析至 `family=data`，再以單一 `2330` bounded screen 確認 `company_metrics_batch` 沒有失敗且 `deepScored=1`；這是避免 catalog 代號或名稱漂移再次被寬鬆 screen test 漏掉的低成本 production canary。`completed-session` suite 會以兩個市場各一份官方年度開休市日曆與一個 exact benchmark session marker 驗證 resolver contract、source identity 與 bounded work budget。公司行動 focused canary 覆蓋 TWSE／TPEx 各自除權息、減資與面額變更六組 range-family 來源的空與非空回應、必要欄位與 range identity schema drift，並另外驗證選定事件的 TWSE `TWT49UDetail`。`catalysts` suite 會同時執行原有 events canary 與 `catalyst-snapshots.live.test.ts`：前者以兩個 current OpenAPI 請求及三個固定歷史 MOPS 查詢工作單位，後者低頻稽核 current snapshot routes 的 schema、sourceSnapshotDate、freshness 與 unsupported 語意。`observed-price` suite 以單一 `2330` 實際走過 market=all company identity、company-market authoritative resolver `expectedAsOf`、exact single-stock monthly OHLC selected bar 與 bounded routing work budget；全市場 latest snapshot 不參與 completed-close 選價，也不 fallback 前一日。`valuation-model-inputs` suite 只查單一 `2330`，在最多七個 statement calls 與一次 authoritative completed-close orchestration 內檢查三大報表 label、HTML unit provenance、共同期別、合併範圍、TTM bridge，以及 source `dataMonth`／`selectedBarDate` 與 resolver 日期完全一致。只有可核對 identity 的合法空回應才是 `verified_empty`；缺少 identity、stale、failed 或 unsupported 不能解釋為 current no-data。這些 canary 直接讀取官方來源，不使用資料庫、不寫入 persistence，也不改變 MCP runtime result contract。`workflow_dispatch` 的 `suite` 可選 `catalog-screen`、`completed-session`、`corporate-actions`、`catalysts`、`observed-price`、`valuation-model-inputs` 或 `all`；每週排程固定執行六類 focused canaries。請勿提高排程頻率或加入高基數掃描，以免對官方來源造成不必要流量。
+
+`completed-session` suite 另以單一 `2330` 驗證 resolved listed `expectedAsOf` 確實路由到同日 exact single-stock close；這條 direct canary 不依賴兩市場 company-master `reportDate` 必須同日，因此可在 observed-price／valuation-model 外層 identity gate 因上游日期偏差而 fail closed 時，繼續獨立監測 completed-close routing。
 
 公司行動 canary 中，缺少可核對 range identity 的空回應仍是 `unverified_empty`，不能宣稱已證明沒有事件。
 
@@ -401,13 +403,13 @@ npm run test:live
 
 ## 資料來源、更新與使用條件
 
-財務、報表、附註、產業與金融機構資料來源是 [Mopsfin](https://mopsfin.twse.com.tw/)。依其[網站使用說明](https://mopsfin.twse.com.tw/terms)，Mopsfin 財務資料每日更新一次，可能較申報落後約一日；這項描述只適用於 Mopsfin 財務資料，不代表所有 TWSE／TPEx 資料都固定落後一天。公司母體來源是 [TWSE 上市公司基本資料](https://openapi.twse.com.tw/v1/opendata/t187ap03_L)與 [TPEx 上櫃股票基本資料](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O)，freshness 依各來源自己的 `reportDate` 判讀。OHLC 與估值以官方交易日為時間身分，`latest` 指最近可驗證的完成交易日而非固定延遲；月營收按資料年月與 `sourceReportDate` 判讀；重大訊息、法說會與 current catalyst snapshots 則分別保留事件日期、發布時間或 `sourceSnapshotDate`，不可套用 Mopsfin 的約一日規則。
+財務、報表、附註、產業與金融機構資料來源是 [Mopsfin](https://mopsfin.twse.com.tw/)。依其[網站使用說明](https://mopsfin.twse.com.tw/terms)，Mopsfin 財務資料每日更新一次，可能較申報落後約一日；這項描述只適用於 Mopsfin 財務資料，不代表所有 TWSE／TPEx 資料都固定落後一天。公司母體來源是 [TWSE 上市公司基本資料](https://openapi.twse.com.tw/v1/opendata/t187ap03_L)與 [TPEx 上櫃股票基本資料](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O)，freshness 依各來源自己的 `reportDate` 判讀。一般 OHLC 與估值以官方交易日為時間身分，`latest` 指最近可驗證的完成交易日而非固定延遲；宣稱 `latest_completed_close` 的單股 routing 則必須讓 resolver `expectedAsOf`、source `selectedBarDate` 與實際 bar date 完全一致，而 `dataMonth` 只表示官方月資料文件身分。月營收按資料年月與 `sourceReportDate` 判讀；重大訊息、法說會與 current catalyst snapshots 則分別保留事件日期、發布時間或 `sourceSnapshotDate`，不可套用 Mopsfin 的約一日規則。
 
 事件資料的近期重大訊息來自 [TWSE 上市公司每日重大訊息](https://openapi.twse.com.tw/v1/opendata/t187ap04_L)與 [TPEx 上櫃公司每日重大訊息](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O)；指定範圍的歷史重大訊息與法說會分別由 MOPS 官方 [重大訊息歷史查詢](https://mopsov.twse.com.tw/mops/web/ajax_t05st01)與 [法人說明會歷史查詢](https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1)即時取得。這些是官方公告／排定事件，不是分析師 consensus、情緒或市場反應判斷。
 
 Current snapshot families 來自 TWSE [t187ap15_L](https://openapi.twse.com.tw/v1/opendata/t187ap15_L)、[t187ap16_L](https://openapi.twse.com.tw/v1/opendata/t187ap16_L)、[t187ap41_L](https://openapi.twse.com.tw/v1/opendata/t187ap41_L)、[t187ap45_L](https://openapi.twse.com.tw/v1/opendata/t187ap45_L)，以及 TPEx [mopsfin_t187ap15_O](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap15_O)、[mopsfin_t187ap16_O](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap16_O)、[t187ap41_O](https://www.tpex.org.tw/openapi/v1/t187ap41_O)。TPEx current dividend route 是 `unsupported`，故不將 stale `mopsfin_t187ap39_O` 列為 current 來源。
 
-估值的 latest 日期由 [TWSE BWIBBU_ALL](https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL)與 [TPEx 本益比分析](https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis)發現，再以 TWSE `BWIBBU_d` 與 TPEx `peQryDate` 指定日端點補強；歷史日直接使用相同指定日端點。月營收 latest 由 [TWSE t187ap05_L](https://openapi.twse.com.tw/v1/opendata/t187ap05_L)與 [TPEx t187ap05_O](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O)發現月份，再與 `https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{民國年}_{月}.csv` archive 核對；指定月與趨勢直接讀 archive。completed-session resolver 使用 [TWSE 年度開休市日曆](https://www.twse.com.tw/holidaySchedule/holidaySchedule)、[TPEx 年度開休市日曆](https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate)，以及 TWSE `MI_5MINS_HIST`／TPEx `tradingIndex` 官方價格指數端點確認 exact session。
+估值的 latest 日期由 [TWSE BWIBBU_ALL](https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL)與 [TPEx 本益比分析](https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis)發現，再以 TWSE `BWIBBU_d` 與 TPEx `peQryDate` 指定日端點補強；歷史日直接使用相同指定日端點。這套估值 discovery 只服務 `get_daily_market_valuation`，不再作為 `latest_completed_close` 的日期或價格來源。月營收 latest 由 [TWSE t187ap05_L](https://openapi.twse.com.tw/v1/opendata/t187ap05_L)與 [TPEx t187ap05_O](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O)發現月份，再與 `https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{民國年}_{月}.csv` archive 核對；指定月與趨勢直接讀 archive。completed-session resolver 使用 [TWSE 年度開休市日曆](https://www.twse.com.tw/holidaySchedule/holidaySchedule)、[TPEx 年度開休市日曆](https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate)，以及 TWSE `MI_5MINS_HIST`／TPEx `tradingIndex` 官方價格指數端點確認 exact session；authoritative completed-close routing 再以 `expectedAsOf` 查 TWSE `STOCK_DAY` 或 TPEx `tradingStock` 的單股月資料，並只接受同日 exact selected bar。
 
 每次結果會保留各官方來源、擷取時間、可由回應驗證的資料日期或年月、coverage 與統一 `meta`；若空回應缺少 snapshot identity，會明示 unverified 而不填造日期，不把不同日期、不同年月或局部頁面冒充完整資料。本服務不使用測試 fixtures 作為正式資料或 fallback。
 

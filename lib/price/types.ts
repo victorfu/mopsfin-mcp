@@ -85,6 +85,57 @@ export interface StockOhlcResult {
   warnings: string[];
 }
 
+/**
+ * Narrow identity supplied by an outer current-company-master orchestration.
+ * The exact-price seam deliberately does not reacquire the company master.
+ */
+export interface CurrentCompanyPriceIdentity {
+  code: string;
+  shortName: string;
+  market: CompanyMarket;
+  exchange: "TWSE" | "TPEx";
+}
+
+export interface ExactCurrentCompanyOhlcQuery {
+  company: CurrentCompanyPriceIdentity;
+  date: string;
+}
+
+export interface ExactCurrentCompanyOhlcSource
+  extends Omit<
+    PriceSource,
+    "snapshotIdentity" | "dataDate" | "dataMonth"
+  > {
+  snapshotIdentity: "verified";
+  dataMonth: string;
+  dataDate?: never;
+}
+
+/**
+ * Internal exact-date seam over the official single-stock monthly endpoint.
+ * `bars` contains only rows matching query.date so the authoritative close
+ * dependency can independently enforce zero/one/many-row semantics.
+ */
+export interface ExactCurrentCompanyOhlcResult {
+  query: {
+    companyCode: string;
+    market: CompanyMarket;
+    date: string;
+  };
+  companyCode: string;
+  market: CompanyMarket;
+  observedName: string | null;
+  dataMonth: string;
+  selectedBarDate: string | null;
+  coverageComplete: true;
+  bars: OhlcBar[];
+  source: ExactCurrentCompanyOhlcSource;
+  cacheRefresh: {
+    attempted: boolean;
+    initialCacheStatus: CacheProvenance["status"] | null;
+  };
+}
+
 export interface DailyMarketOhlcQuery {
   market: CompanyMarketSelection;
   date: "latest" | string;

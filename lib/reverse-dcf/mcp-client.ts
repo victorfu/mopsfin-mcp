@@ -1,13 +1,15 @@
+import type { AuthoritativeCompletedCloseResult } from "@/lib/completed-close/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { valuationModelInputsClient } from "@/lib/valuation-model/client";
 import type {
   ValuationModelEvidenceClass,
   ValuationModelFieldId,
   ValuationModelInputField,
+  ValuationModelInputsExecution,
   ValuationModelInputsQuery,
   ValuationModelInputsResult,
   ValuationModelLineageEntry,
-  ValuationModelMarketSource,
+  ValuationModelCompletedCloseSource,
   ValuationModelSource,
 } from "@/lib/valuation-model/types";
 
@@ -26,9 +28,9 @@ import type {
 } from "./types";
 
 export interface ReverseDcfValuationInputsLike {
-  getValuationModelInputs(
+  getValuationModelInputsWithContext(
     query: ValuationModelInputsQuery,
-  ): Promise<ValuationModelInputsResult>;
+  ): Promise<ValuationModelInputsExecution>;
 }
 
 export interface ReverseDcfCallerBridgeAssumptions {
@@ -137,6 +139,11 @@ export interface ReverseDcfOrchestrationResult {
   warnings: string[];
 }
 
+export interface ReverseDcfExecution {
+  data: ReverseDcfOrchestrationResult;
+  completedClose: AuthoritativeCompletedCloseResult;
+}
+
 const COMMON_FIELD_IDS = [
   "cashAndCashEquivalents",
   "interestBearingDebt",
@@ -199,7 +206,7 @@ const REQUIRED_FIELD_CONTRACTS = {
     unit: "TWD_per_share",
     status: "reported",
     evidenceClass: "OFFICIAL_MARKET_RAW",
-    sourceStage: "market_valuation",
+    sourceStage: "latest_official_completed_close",
     viability: "positive",
   },
 } as const satisfies Partial<
@@ -415,7 +422,7 @@ function assertValuationInputIdentity(
   ) {
     failContract(
       query.company_code,
-      "Reverse DCF query 與 v0.8 normalized-input company／selector identity 不一致。",
+      "Reverse DCF query 與 normalized valuation-model input company／selector identity 不一致。",
       { inputQuery: inputs.query, company: inputs.company },
     );
   }
@@ -431,7 +438,7 @@ function assertValuationInputIdentity(
   if (!applicableNonFinancial && !notApplicableFinancial) {
     failContract(
       query.company_code,
-      "v0.8 normalized-input applicability status、reason 與 company.isFinancial 組合不合法。",
+      "normalized valuation-model input applicability status、reason 與 company.isFinancial 組合不合法。",
       {
         applicability: inputs.applicability,
         isFinancial: inputs.company.isFinancial,
@@ -466,7 +473,7 @@ function assertValuationInputIdentity(
   ) {
     failContract(
       query.company_code,
-      "v0.8 normalized-input provenance 必須滿足 strict ISO 與 source retrievedAt <= valuation generatedAt。",
+      "normalized valuation-model input provenance 必須滿足 strict ISO 與 source retrievedAt <= valuation generatedAt。",
       {
         valuationModelGeneratedAt: inputs.generatedAt,
         invalidSourceTime: invalidSourceTime
@@ -486,7 +493,7 @@ function assertValuationInputIdentity(
   ) {
     failContract(
       query.company_code,
-      "v0.8 normalized-input sourceId／lineageId 必須唯一。",
+      "normalized valuation-model input sourceId／lineageId 必須唯一。",
       { sourceIds, lineageIds },
     );
   }
@@ -497,7 +504,7 @@ function assertValuationInputIdentity(
   if (danglingLineage.length > 0) {
     failContract(
       query.company_code,
-      "v0.8 normalized-input lineage 引用了不存在的 sourceId。",
+      "normalized valuation-model input lineage 引用了不存在的 sourceId。",
       { lineageIds: danglingLineage.map((entry) => entry.lineageId) },
     );
   }
@@ -516,6 +523,74 @@ function assertValuationInputIdentity(
         companyMarket: inputs.company.market,
         companyExchange: inputs.company.exchange,
         companyMasterSources,
+      },
+    );
+  }
+}
+
+function assertCompletedCloseContext(
+  inputs: ValuationModelInputsResult,
+  completedClose: AuthoritativeCompletedCloseResult,
+): void {
+  const sourceIds = new Set(
+    sourceIdsForLineage(
+      inputs,
+      inputs.fields.latestOfficialClose.inputLineageIds,
+    ),
+  );
+  const completedSources = inputs.sources.filter(
+    (source): source is ValuationModelCompletedCloseSource =>
+      source.stage === "latest_official_completed_close" &&
+      sourceIds.has(source.sourceId),
+  );
+  const source = completedSources[0];
+  const budget = inputs.workBudget.authoritativeCompletedCloseCalls;
+  if (
+    completedSources.length !== 1 ||
+    !source ||
+    completedClose.company.code !== inputs.company.code ||
+    completedClose.company.market !== inputs.company.market ||
+    completedClose.company.exchange !== inputs.company.exchange ||
+    completedClose.expectedAsOf !== completedClose.selectedBarDate ||
+    completedClose.selectedBarDate !== source.selectedBarDate ||
+    completedClose.selectedBarDate !== source.asOf ||
+    completedClose.source.companyCode !== inputs.company.code ||
+    source.companyCode !== inputs.company.code ||
+    completedClose.source.sourceUrl !== source.sourceUrl ||
+    completedClose.source.retrievedAt !== source.retrievedAt ||
+    completedClose.source.dataMonth !== source.dataMonth ||
+    completedClose.source.observedName !== source.observedName ||
+    completedClose.source.snapshotIdentity !== source.snapshotIdentity ||
+    JSON.stringify(completedClose.source.cache ?? null) !==
+      JSON.stringify(source.cache ?? null) ||
+    JSON.stringify(completedClose.source.normalization) !==
+      JSON.stringify(source.normalization) ||
+    completedClose.close !== inputs.fields.latestOfficialClose.value ||
+    completedClose.close !== completedClose.bar.close ||
+    completedClose.resolverEvidence.status !== "resolved" ||
+    completedClose.resolverEvidence.expectedAsOf !==
+      completedClose.expectedAsOf ||
+    completedClose.resolverEvidence.evaluatedAt !==
+      completedClose.query.evaluatedAt ||
+    budget.actual !== 1 ||
+    budget.completedSessionResolver.actualLogicalLoads !==
+      completedClose.workBudget.completedSessionResolver.actualTotal ||
+    budget.completedSessionResolver.maximumLogicalLoads !==
+      completedClose.workBudget.completedSessionResolver.maximumTotal ||
+    budget.exactStockOhlcAttempts.actual !==
+      completedClose.workBudget.exactStockOhlcAttempts.actual ||
+    budget.exactStockOhlcAttempts.cacheRefreshPerformed !==
+      completedClose.workBudget.exactStockOhlcAttempts.cacheRefreshPerformed
+  ) {
+    failContract(
+      inputs.company.code,
+      "Reverse DCF 的 valuation input 與 authoritative completed-close execution context 不一致。",
+      {
+        expectedAsOf: completedClose.expectedAsOf,
+        selectedBarDate: completedClose.selectedBarDate,
+        sourceDates: completedSources.map((candidate) =>
+          candidate.selectedBarDate
+        ),
       },
     );
   }
@@ -545,7 +620,7 @@ function fieldOrGap<FieldId extends RequiredFieldId>(
   ) {
     failContract(
       inputs.company.code,
-      `v0.8 field ${fieldId} 不符合 Reverse DCF semantic contract。`,
+      `normalized valuation-model field ${fieldId} 不符合 Reverse DCF semantic contract。`,
       {
         fieldId,
         observed: {
@@ -576,7 +651,7 @@ function fieldOrGap<FieldId extends RequiredFieldId>(
     if (!source || source.stage !== contract.sourceStage) return true;
     if (
       source.stage === "company_master" ||
-      source.stage === "market_valuation"
+      source.stage === "latest_official_completed_close"
     ) {
       return (
         source.market !== inputs.company.market ||
@@ -588,7 +663,7 @@ function fieldOrGap<FieldId extends RequiredFieldId>(
   if (invalidLineage) {
     failContract(
       inputs.company.code,
-      `v0.8 field ${fieldId} 必須只引用 resolved 且 stage／market／exchange 相符的 lineage sources。`,
+      `normalized valuation-model field ${fieldId} 必須只引用 resolved 且 stage／market／exchange 相符的 lineage sources。`,
       {
         fieldId,
         expectedSourceStage: contract.sourceStage,
@@ -692,7 +767,7 @@ function companyIdentityMappings(
       sourceIds: companySources.map((source) => source.sourceId),
       transformation: null,
       notes: [
-        "公司代號、市場與金融業分類沿用 v0.8 current company master identity。",
+        "公司代號、市場與金融業分類沿用 normalized valuation-model current company master identity。",
       ],
     }),
   );
@@ -706,12 +781,12 @@ function marketDateMapping(
     sourceIdsForLineage(inputs, close.inputLineageIds),
   );
   const marketSources = inputs.sources.filter(
-    (source): source is ValuationModelMarketSource =>
-      source.stage === "market_valuation" &&
+    (source): source is ValuationModelCompletedCloseSource =>
+      source.stage === "latest_official_completed_close" &&
       source.market === inputs.company.market &&
       closeSourceIds.has(source.sourceId),
   );
-  const dates = unique(marketSources.map((source) => source.dataDate));
+  const dates = unique(marketSources.map((source) => source.selectedBarDate));
   if (dates.length !== 1) {
     failDataGap(
       inputs.company.code,
@@ -729,8 +804,11 @@ function marketDateMapping(
       originFieldIds: ["latestOfficialClose"],
       upstreamLineageIds: [...close.inputLineageIds],
       sourceIds: marketSources.map((source) => source.sourceId),
-      transformation: "market_valuation source dataDate",
-      notes: ["latest completed official session date；不是盤中 quote time。"],
+      transformation:
+        "latest_official_completed_close source selectedBarDate",
+      notes: [
+        "authoritative resolver expectedAsOf 與 exact single-stock selected bar date；不是全市場 latest 或盤中 quote time。",
+      ],
     },
   };
 }
@@ -1001,10 +1079,10 @@ export function mapReverseDcfEngineError(error: ReverseDcfError): MopsfinError {
 function stableWarnings(inputs: ValuationModelInputsResult): string[] {
   return unique([
     ...inputs.warnings,
-    "price_source=latest_completed_close 使用官方最近完成交易日收盤價，不是盤中即時行情。",
+    "price_source=latest_completed_close 使用 request-start authoritative resolver expectedAsOf 同日的官方 exact 單股 OHLC 收盤價；不使用或回退全市場 latest，也不是盤中即時行情。",
     "股數基礎為 current-master issued common shares，不是 fully diluted shares。",
     "interestBearingDebt 已彙總 exact debt 與 lease-liability roles；engine 的 leaseLiabilitiesTwd 固定為 0 只為避免 EV bridge 重複計入，不代表租賃負債為零。",
-    "caller 的 other_debt_like_items_twd 必須排除已包含在 v0.8 aggregate interestBearingDebt 的借款、公司債與 exact lease-liability roles，否則會重複加回 debt-like claims。",
+    "caller 的 other_debt_like_items_twd 必須排除已包含在 normalized aggregate interestBearingDebt 的借款、公司債與 exact lease-liability roles，否則會重複加回 debt-like claims。",
     "caller 的 non_operating_assets_twd 必須排除已包含在 cashAndCashEquivalents 的現金及約當現金，否則 EV bridge 會重複扣除；0 也必須是 caller 的顯性判斷。",
     "所有 forward、WACC、terminal growth、solve range、sensitivity 與非營運／其他 claims bridge 值均為 caller 明示假設；模型不提供隱藏預設。",
     "market-implied reverse DCF 是可重算研究模型輸出，不是共識預估、目標價、買賣評級或投資建議。",
@@ -1021,10 +1099,22 @@ export class ReverseDcfMcpClient {
   async runReverseDcf(
     query: ReverseDcfPublicQuery,
   ): Promise<ReverseDcfOrchestrationResult> {
+    return (await this.runReverseDcfWithContext(query)).data;
+  }
+
+  async runReverseDcfWithContext(
+    query: ReverseDcfPublicQuery,
+  ): Promise<ReverseDcfExecution> {
     assertPublicBounds(query);
-    const inputs = await this.valuationInputs.getValuationModelInputs({
-      companyCode: query.company_code,
-    });
+    const valuationExecution =
+      await this.valuationInputs.getValuationModelInputsWithContext({
+        companyCode: query.company_code,
+      });
+    const {
+      data: inputs,
+      completedClose,
+      completedCloseError,
+    } = valuationExecution;
     assertValuationInputIdentity(query, inputs);
     if (
       inputs.applicability.status === "not_applicable" ||
@@ -1049,6 +1139,15 @@ export class ReverseDcfMcpClient {
         },
       );
     }
+    if (completedClose === null) {
+      if (completedCloseError) throw completedCloseError;
+      failDataGap(
+        inputs.company.code,
+        [inputs.fields.latestOfficialClose],
+        "Reverse DCF 必須取得與 valuation inputs 相同 orchestration 的 authoritative completed-close context。",
+      );
+    }
+    assertCompletedCloseContext(inputs, completedClose);
     const prepared = engineInput(query, inputs);
     let model: ReverseDcfResult;
     try {
@@ -1093,7 +1192,7 @@ export class ReverseDcfMcpClient {
         },
       );
     }
-    return {
+    const data: ReverseDcfOrchestrationResult = {
       query,
       generatedAt,
       timezone: "Asia/Taipei",
@@ -1135,6 +1234,7 @@ export class ReverseDcfMcpClient {
       },
       warnings: stableWarnings(inputs),
     };
+    return { data, completedClose };
   }
 }
 

@@ -15,6 +15,7 @@ import type {
 } from "@/lib/observed-price/types";
 import type { QualityIssue } from "@/lib/mcp/result-contract";
 
+import { completedSessionSnapshotEvidence } from "./completed-session-snapshot";
 import { fingerprint } from "./cursor";
 
 type ObservedPriceMetaData = Pick<
@@ -47,7 +48,6 @@ export const OBSERVED_PRICE_REQUIRED_QUALITY_ISSUE_CODES = [
   "CONSERVATIVE_SAME_DAY_SESSION_GUARD",
   "MECHANICAL_PRICE_COMPARISON_NOT_FAIR_VALUE",
   "MASTER_ROWSET_HEURISTIC",
-  "NESTED_MASTER_SOURCE_EVIDENCE_NOT_EXPOSED",
 ] as const;
 
 function unique(values: string[]): string[] {
@@ -115,7 +115,7 @@ export function observedPriceQualityIssues(
       severity: "info",
       scope: "period",
       message:
-        "官方基準是最近完成交易日的 raw_unadjusted 收盤價，不是盤中價、adjusted close 或 total return。",
+        "官方基準先由 authoritative completed-session resolver 固定 expectedAsOf，再取同日 exact single-stock raw_unadjusted 收盤價；不是盤中價、adjusted close 或 total return，也不退回前一日價格。",
       refs: refs(
         data,
         [
@@ -174,24 +174,12 @@ export function observedPriceQualityIssues(
         },
       ),
     },
-    {
-      code: "NESTED_MASTER_SOURCE_EVIDENCE_NOT_EXPOSED",
-      severity: "warning",
-      scope: "source",
-      message:
-        "官方價格 dependency 內部另執行 compatible current-master reconciliation 與至少 95% match-ratio 防截斷檢查，但不回傳 nested master acquisition source evidence；本結果另以外層 orchestration market=all master 與官方行情列精確核對指定公司 identity，並在 dependencyLedger 明示此 lineage 邊界。",
-      refs: refs(data, [
-        "dependencyLedger.official_daily_market_internal_compatible_master",
-        "workBudget.dependencyInvocations",
-        "workBudget.selectedCompanyIdentityPolicy",
-      ]),
-    },
   ];
 }
 
 export function observedPriceFreshnessDetails(
   data: ObservedPriceMetaData,
-  resolverEvidence?: CompletedSessionResolverEvidence,
+  resolverEvidence: CompletedSessionResolverEvidence,
 ): [FreshnessEvaluation, FreshnessEvaluation] {
   const masterSources = data.sources.filter(
     (source) => source.stage === "company_master",
@@ -199,7 +187,7 @@ export function observedPriceFreshnessDetails(
   const closeSources = data.sources.filter(
     (source) => source.stage === "latest_official_completed_close",
   );
-  const marketResolution = resolverEvidence?.marketResolutions.find(
+  const marketResolution = resolverEvidence.marketResolutions.find(
     (resolution) => resolution.market === data.company.market,
   );
   return [
@@ -213,7 +201,7 @@ export function observedPriceFreshnessDetails(
       policy: FRESHNESS_POLICIES.completedOfficialSession,
       observedAsOf: data.latestOfficialCloseDate,
       expectedAsOf:
-        resolverEvidence?.status === "resolved"
+        resolverEvidence.status === "resolved"
           ? completedSessionExpectedAsOfForMarket(
               resolverEvidence,
               data.company.market,
@@ -223,12 +211,15 @@ export function observedPriceFreshnessDetails(
         ...closeSources.map((source) => source.sourceUrl),
         ...(marketResolution?.sources.map((source) => source.sourceUrl) ?? []),
       ]),
-      ...(resolverEvidence ? { resolverEvidence } : {}),
+      resolverEvidence,
     }),
   ];
 }
 
-export function observedPriceSnapshotId(data: ObservedPriceMetaData): string {
+export function observedPriceSnapshotId(
+  data: ObservedPriceMetaData,
+  resolverEvidence: CompletedSessionResolverEvidence,
+): string {
   return fingerprint({
     query: data.query,
     company: data.company,
@@ -238,6 +229,8 @@ export function observedPriceSnapshotId(data: ObservedPriceMetaData): string {
       priceBasis: data.officialPriceBasis,
     },
     sources: snapshotSources(data.sources),
+    completedSessionResolver:
+      completedSessionSnapshotEvidence(resolverEvidence),
   });
 }
 
@@ -250,7 +243,7 @@ export function observedPriceFreshnessDetailsMatch(
 
 export function observedPriceMetaContract(
   data: ObservedPriceMetaData,
-  resolverEvidence?: CompletedSessionResolverEvidence,
+  resolverEvidence: CompletedSessionResolverEvidence,
 ): ObservedPriceMetaContract {
   const freshnessDetails = observedPriceFreshnessDetails(
     data,
@@ -272,6 +265,6 @@ export function observedPriceMetaContract(
     freshnessDetails,
     freshness,
     requiredFreshnessIssueCodes,
-    snapshotId: observedPriceSnapshotId(data),
+    snapshotId: observedPriceSnapshotId(data, resolverEvidence),
   };
 }

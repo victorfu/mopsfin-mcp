@@ -3,9 +3,10 @@ export {
   ObservedPriceClient,
   observedPriceClient,
   type ObservedPriceCompanyMasterLike,
-  type ObservedPriceOfficialPriceLike,
+  type ObservedPriceCompletedCloseLike,
 } from "./client";
 export type {
+  ObservedPriceAnalysisContext,
   ObservedPriceAnalysisResult,
   ObservedPriceCompanyMasterSource,
   ObservedPriceDependencyLedgerEntry,

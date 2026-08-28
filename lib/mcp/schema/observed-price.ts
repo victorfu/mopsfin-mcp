@@ -10,6 +10,7 @@ import {
   calendarDateSchema,
   sourceCacheObservationSchema,
   successResultShape,
+  yearMonthSchema,
 } from "./common";
 
 const OFFSET_ISO_DATE_TIME =
@@ -98,6 +99,53 @@ function completionMs(dataDate: string): number {
 function round(value: number, digits: number): number {
   const rounded = Number(value.toFixed(digits));
   return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function canonicalName(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/g, "").trim();
+}
+
+function officialSingleStockSourceUrlMatches(value: {
+  sourceUrl: string;
+  market: "listed" | "otc";
+  companyCode: string;
+  dataMonth: string;
+}): boolean {
+  let url: URL;
+  try {
+    url = new URL(value.sourceUrl);
+  } catch {
+    return false;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.port !== "" ||
+    url.hash !== ""
+  ) {
+    return false;
+  }
+  const [year, month] = value.dataMonth.split("-");
+  if (value.market === "listed") {
+    return (
+      url.hostname === "www.twse.com.tw" &&
+      url.pathname === "/rwd/zh/afterTrading/STOCK_DAY" &&
+      [...url.searchParams.keys()].sort().join(",") ===
+        "date,response,stockNo" &&
+      url.searchParams.get("date") === `${year}${month}01` &&
+      url.searchParams.get("stockNo") === value.companyCode &&
+      url.searchParams.get("response") === "json"
+    );
+  }
+  return (
+    url.hostname === "www.tpex.org.tw" &&
+    url.pathname === "/www/zh-tw/afterTrading/tradingStock" &&
+    [...url.searchParams.keys()].sort().join(",") === "code,date,response" &&
+    url.searchParams.get("code") === value.companyCode &&
+    url.searchParams.get("date") === `${year}/${month}/01` &&
+    url.searchParams.get("response") === "json"
+  );
 }
 
 const offsetIsoSchema = z
@@ -315,21 +363,32 @@ const tradeCountNormalizationSchema = z
 
 const officialCloseSourceSchema = z
   .object({
-    sourceId: sourceIdSchema.describe("格式為 official_close:{market}:{dataDate} 的來源識別碼"),
+    sourceId: sourceIdSchema.describe(
+      "格式為 official_close:{market}:{selectedBarDate} 的來源識別碼",
+    ),
     stage: z
       .literal("latest_official_completed_close")
       .describe("此來源提供官方最近完成交易日的 raw close baseline"),
+    companyCode: z
+      .string()
+      .regex(/^[1-9]\d{3}$/)
+      .describe("官方單股 endpoint query 與 outer current master 共同核對的公司代號"),
     market: marketSchema.describe("此 completed-close source 負責的市場"),
-    sourceName: z.string().min(1).describe("TWSE／TPEx 官方日成交行情資料集名稱"),
-    sourceUrl: z.string().url().describe("本次取得 completed close 的官方固定 URL"),
+    exchange: exchangeSchema.describe("提供單股 completed close 的官方市場機構"),
+    sourceName: z.string().min(1).describe("TWSE／TPEx 官方單股月成交資訊資料集名稱"),
+    sourceUrl: z.string().url().describe("本次取得 exact single-stock OHLC 的官方 query URL"),
     retrievedAt: offsetIsoSchema.describe("真正取得此 completed-close response 的時間，不以 generatedAt 代填"),
     cache: observedSourceCacheSchema.describe(
       "completed-close source 的必要 caller-specific cache provenance",
     ),
     snapshotIdentity: z
       .literal("verified")
-      .describe("官方 response 的 market 與 dataDate snapshot identity 已核對"),
-    dataDate: realCalendarDateSchema.describe("官方最近完成交易日的實際資料日期"),
+      .describe("官方 response 的 company、market 與 requested month identity 已核對"),
+    dataMonth: yearMonthSchema.describe("官方單股 response 經核對的 requested snapshot month"),
+    observedName: z.string().min(1).describe("直接由官方單股 response 取得並與 current master 核對的名稱"),
+    selectedBarDate: realCalendarDateSchema.describe(
+      "從 verified monthly snapshot 選出的唯一 exact completed-session bar date",
+    ),
     normalization: z
       .object({
         volumeShares: volumeNormalizationSchema.describe("成交量由官方原始單位轉為 shares 的規則"),
@@ -340,7 +399,17 @@ const officialCloseSourceSchema = z
       .describe("官方價量欄位的完整單位正規化規則"),
   })
   .strict()
-  .describe("具 verified snapshot identity 的單一官方 completed-close source");
+  .superRefine((source, context) => {
+    if (!officialSingleStockSourceUrlMatches(source)) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceUrl"],
+        message:
+          "sourceUrl 必須是對應市場的官方單股 endpoint，且 query company code、month 與 response=json 必須精確一致",
+      });
+    }
+  })
+  .describe("具 verified monthly snapshot identity 與 exact selected bar date 的單一官方 completed-close source");
 
 const observedPriceSourceSchema = z
   .discriminatedUnion("stage", [
@@ -441,38 +510,91 @@ const provenanceSchema = z
   })
   .strict()
   .describe("caller input、官方 baseline 與 MopsFin 計算三層分離的 provenance");
-
 const workBudgetSchema = z
   .object({
     requestedCompanies: z.literal(1).describe("每次固定只分析一家公司"),
     dependencyInvocations: z
       .object({
-        orchestrationCompanyMaster: z.literal(1).describe("外層 current company-master invocation 固定一次"),
-        officialDailyMarketPrice: z.literal(1).describe("外層 official daily-market price invocation 固定一次"),
-        officialDailyMarketInternalCompatibleMaster: z.literal(1).describe("price dependency 內部 compatible current-master invocation 固定一次"),
-        maximumIncludingNestedDependencies: z.literal(3).describe("包含 nested compatible-master 的 logical dependency invocation 上限"),
+        orchestrationCompanyMaster: z
+          .literal(1)
+          .describe("外層 current company-master invocation 固定一次"),
+        authoritativeCompletedSessionResolver: z
+          .literal(1)
+          .describe("authoritative completed-session resolver invocation 固定一次"),
+        officialExactSingleStockOhlc: z
+          .literal(1)
+          .describe("exact single-stock OHLC dependency invocation 固定一次"),
+        maximumIncludingNestedDependencies: z
+          .literal(3)
+          .describe("三個 logical dependency invocations 的固定上限"),
       })
       .strict()
-      .describe("外層與 nested dependencies 的精確 logical invocation budget"),
+      .describe("不含重複 current-master 或 metadata resolver 的 logical invocation budget"),
     plannedOfficialSourceRequests: z
       .object({
-        orchestrationCompanyMasterMarkets: z.literal(2).describe("外層 market=all 預計核對 TWSE 與 TPEx 兩個 master sources"),
-        officialDailyMarketSnapshot: z.literal(1).describe("單一 current market 的 latest official price snapshot source"),
-        officialDailyMarketInternalCompatibleMasterMarkets: z.literal(1).describe("price dependency 內部以 compatible policy 核對公司目前所屬的一個 master market"),
-        maximumTotal: z.literal(4).describe("cache 與 bounded retry 前的 logical official source-load 上限"),
+        orchestrationCompanyMasterMarkets: z
+          .literal(2)
+          .describe("外層 market=all 核對 TWSE 與 TPEx 兩份 master sources"),
+        completedSessionResolver: z
+          .object({
+            actual: z.literal(2).describe("成功解析單一市場固定取得 calendar 與 exact benchmark marker"),
+            maximum: z.literal(2).describe("單一市場 resolver 最多兩份 logical official source loads"),
+          })
+          .strict()
+          .describe("單一市場 authoritative completed-session resolver 的 source-load budget"),
+        exactSingleStockOhlc: z
+          .object({
+            actual: z
+              .union([z.literal(1), z.literal(2)])
+              .describe("initial exact-month load，加上必要時唯一一次 bounded cache refresh"),
+            maximum: z.literal(2).describe("exact OHLC 最多 initial + one bounded refresh"),
+            cacheRefreshPerformed: z
+              .boolean()
+              .describe("是否因 current-month cache 缺 expectedAsOf 而失效重取一次"),
+          })
+          .strict()
+          .describe("exact single-stock OHLC initial load 與 bounded cache refresh budget"),
+        actualTotal: z
+          .union([z.literal(5), z.literal(6)])
+          .describe("兩份 master + 兩份 resolver + 一或兩次 exact OHLC logical loads"),
+        maximumTotal: z.literal(6).describe("成功路徑的 bounded logical source-load 上限"),
         unitDefinition: z
           .literal("one_logical_official_source_load_before_cache_and_bounded_retry")
-          .describe("planned request unit 不等於實際 HTTP attempts，明確位於 cache 與 bounded retry 之前"),
+          .describe("logical source load 位於 transport retry 之前；有界 cache refresh 另計一個 logical load"),
       })
       .strict()
-      .describe("不低估 market=all 與 nested compatible-master 的 planned official source loads"),
-    universePolicy: z.literal("compatible").describe("官方 close 使用至少 95% current-master match-ratio 防截斷的 compatible policy"),
+      .superRefine((value, context) => {
+        const expectedExactLoads = value.exactSingleStockOhlc
+          .cacheRefreshPerformed
+          ? 2
+          : 1;
+        if (
+          value.exactSingleStockOhlc.actual !== expectedExactLoads ||
+          value.actualTotal !==
+            value.orchestrationCompanyMasterMarkets +
+              value.completedSessionResolver.actual +
+              value.exactSingleStockOhlc.actual
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["actualTotal"],
+            message:
+              "actualTotal 與 exact OHLC loads 必須可由 master、resolver 與 cache refresh evidence 精確重算",
+          });
+        }
+      })
+      .describe("包含 resolver 與 bounded exact-OHLC refresh 的實際／最大 source-load budget"),
+    priceRoutingPolicy: z
+      .literal(
+        "authoritative_completed_session_expected_as_of_then_exact_single_stock_ohlc",
+      )
+      .describe("先解析 expectedAsOf，再只取同日單股 OHLC；不可使用 bulk latest fallback"),
     selectedCompanyIdentityPolicy: z
-      .literal("outer_market_all_master_plus_official_row_exact")
-      .describe("指定公司仍由外層完整 market=all master 與官方行情 code/name/market 精確核對"),
+      .literal("outer_market_all_master_plus_exact_single_stock_source")
+      .describe("外層完整 current master 與官方單股 response 的 code/name/market 必須精確一致"),
   })
   .strict()
-  .describe("本次單公司 observed-price orchestration 的精確 bounded work budget");
+  .describe("單公司 observed-price authoritative completed-close orchestration budget");
 
 const dependencyLedgerSchema = z
   .tuple([
@@ -500,42 +622,42 @@ const dependencyLedgerSchema = z
     z
       .object({
         dependency: z
-          .literal("official_daily_market_price")
-          .describe("外層 completed-close price dependency"),
+          .literal("authoritative_completed_session_resolver")
+          .describe("固定 request-start evaluatedAt 的 authoritative session resolver"),
         logicalInvocations: z.literal(1).describe("固定一次 logical invocation"),
         plannedOfficialSourceLoads: z
-          .literal(1)
-          .describe("固定載入公司所屬市場的一份 official price snapshot"),
+          .literal(2)
+          .describe("單一市場固定一份 calendar 與一份 exact benchmark marker"),
         sourceEvidence: z
-          .literal("exposed")
-          .describe("price dependency 回傳 acquisition source evidence"),
+          .literal("exposed_in_meta_resolver_evidence")
+          .describe("resolver acquisition evidence 位於 completed-session freshness metadata"),
         sourceIds: z
-          .tuple([sourceIdSchema.describe("official completed-close sourceId")])
-          .describe("price dependency 實際回傳的唯一來源"),
+          .tuple([])
+          .describe("resolver sources 不冒用 top-level domain sourceId"),
       })
       .strict()
-      .describe("外層 official completed-close dependency ledger entry"),
+      .describe("authoritative completed-session resolver ledger entry"),
     z
       .object({
         dependency: z
-          .literal("official_daily_market_internal_compatible_master")
-          .describe("price dependency 內部 compatible current-master 防截斷核對"),
-        logicalInvocations: z.literal(1).describe("固定一次 nested logical invocation"),
+          .literal("official_exact_single_stock_ohlc")
+          .describe("以 resolver expectedAsOf 查詢的 exact single-stock OHLC dependency"),
+        logicalInvocations: z.literal(1).describe("固定一次 logical dependency invocation"),
         plannedOfficialSourceLoads: z
-          .literal(1)
-          .describe("內部固定規劃載入公司所屬的一個 master market"),
+          .union([z.literal(1), z.literal(2)])
+          .describe("initial load，必要時加唯一一次 bounded cache refresh"),
         sourceEvidence: z
-          .literal("not_exposed_by_dependency")
-          .describe("price result 未公開 nested master acquisition source，不能冒用外層 evidence"),
+          .literal("exposed")
+          .describe("exact OHLC dependency 回傳 acquisition source evidence"),
         sourceIds: z
-          .tuple([])
-          .describe("未暴露 nested source evidence，因此必須保持空 tuple"),
+          .tuple([sourceIdSchema.describe("official completed-close sourceId")])
+          .describe("exact OHLC dependency 實際回傳的唯一來源"),
       })
       .strict()
-      .describe("nested compatible-master dependency load ledger entry"),
+      .describe("exact single-stock completed-close dependency ledger entry"),
   ])
   .describe(
-    "依實際執行順序分開 logical dependency loads 與可引用 source evidence 的完整 ledger",
+    "依實際執行順序分開 master、resolver 與 exact single-stock OHLC 的完整 ledger",
   );
 
 export const analyzeObservedPriceDataSchema = z
@@ -567,7 +689,9 @@ export const analyzeObservedPriceDataSchema = z
     dependencyLedger: dependencyLedgerSchema.describe(
       "logical dependency loads 與 actual source evidence 的分離 ledger",
     ),
-    workBudget: workBudgetSchema.describe("精確揭露 nested dependencies 與 planned official source loads 的 bounded budget"),
+    workBudget: workBudgetSchema.describe(
+      "精確揭露 master、resolver 與 exact single-stock OHLC 的 bounded source-load budget",
+    ),
     warnings: z
       .array(z.string().min(1).describe("不可忽略的來源、時點、價格基礎或非投資建議限制"))
       .min(4)
@@ -659,12 +783,23 @@ export const analyzeObservedPriceDataSchema = z
     ) {
       issue(["sources"], "兩份 current-master sources 必須唯一涵蓋 listed/TWSE 與 otc/TPEx，且 reportDate 相同");
     }
-    if (closeSource.market !== value.market || closeSource.dataDate !== value.latestOfficialCloseDate) {
-      issue(["sources", 2], "official-close source market/dataDate 必須與頂層 baseline 一致");
+    if (
+      closeSource.companyCode !== value.company.code ||
+      closeSource.market !== value.market ||
+      closeSource.exchange !== value.exchange ||
+      closeSource.selectedBarDate !== value.latestOfficialCloseDate ||
+      closeSource.dataMonth !== value.latestOfficialCloseDate.slice(0, 7) ||
+      canonicalName(closeSource.observedName) !==
+        canonicalName(value.company.shortName)
+    ) {
+      issue(
+        ["sources", 2],
+        "official-close source companyCode/market/exchange/month/selectedBarDate/observedName 必須與頂層 baseline 及 company identity 一致",
+      );
     }
     const expectedListedMasterId = `company_master:listed:${listedMasterSource.reportDate}`;
     const expectedOtcMasterId = `company_master:otc:${otcMasterSource.reportDate}`;
-    const expectedCloseId = `official_close:${closeSource.market}:${closeSource.dataDate}`;
+    const expectedCloseId = `official_close:${closeSource.market}:${closeSource.selectedBarDate}`;
     if (listedMasterSource.sourceId !== expectedListedMasterId) {
       issue(["sources", 0, "sourceId"], "listed master sourceId 必須由 market/reportDate 重建");
     }
@@ -672,7 +807,7 @@ export const analyzeObservedPriceDataSchema = z
       issue(["sources", 1, "sourceId"], "otc master sourceId 必須由 market/reportDate 重建");
     }
     if (closeSource.sourceId !== expectedCloseId) {
-      issue(["sources", 2, "sourceId"], "official-close sourceId 必須由 market/dataDate 重建");
+      issue(["sources", 2, "sourceId"], "official-close sourceId 必須由 market/selectedBarDate 重建");
     }
     if (new Set(value.sources.map((source) => source.sourceId)).size !== 3) {
       issue(["sources"], "sourceId 不得重複");
@@ -711,7 +846,9 @@ export const analyzeObservedPriceDataSchema = z
         }
       }
       const sourceDate =
-        source.stage === "company_master" ? source.reportDate : source.dataDate;
+        source.stage === "company_master"
+          ? source.reportDate
+          : source.selectedBarDate;
       if (sourceDate > retrieved.taipeiDate) {
         issue(["sources", index, "retrievedAt"], "source 資料日期不得晚於 retrievedAt 的台北日期");
       }
@@ -751,18 +888,24 @@ export const analyzeObservedPriceDataSchema = z
     ) {
       issue(["provenance", "officialBaseline"], "official baseline provenance 必須精確引用唯一 close source");
     }
-    const [masterDependency, priceDependency, nestedMasterDependency] =
+    const [masterDependency, resolverDependency, priceDependency] =
       value.dependencyLedger;
     if (
       JSON.stringify(masterDependency.sourceIds) !==
         JSON.stringify(masterSourceIds) ||
+      resolverDependency.sourceIds.length !== 0 ||
       JSON.stringify(priceDependency.sourceIds) !==
         JSON.stringify([closeSource.sourceId]) ||
-      nestedMasterDependency.sourceIds.length !== 0
+      resolverDependency.plannedOfficialSourceLoads !==
+        value.workBudget.plannedOfficialSourceRequests.completedSessionResolver
+          .actual ||
+      priceDependency.plannedOfficialSourceLoads !==
+        value.workBudget.plannedOfficialSourceRequests.exactSingleStockOhlc
+          .actual
     ) {
       issue(
         ["dependencyLedger"],
-        "dependency ledger 必須精確連到 exposed source evidence，nested 未暴露來源不得冒用外層 sourceId",
+        "dependency ledger 必須精確連到 master、resolver metadata 與 exact OHLC source evidence/work budget",
       );
     }
     const warningText = value.warnings.join(" ");
@@ -772,10 +915,12 @@ export const analyzeObservedPriceDataSchema = z
       "13:33",
       "fair value",
       "買賣建議",
-      "compatible",
-      "95%",
       "外層 market=all master",
       "code、name、market 精確核對",
+      "expectedAsOf",
+      "exact single-stock OHLC",
+      "不退回前一日價格",
+      "不重複取得 current master",
     ]) {
       if (!warningText.includes(required)) {
         issue(["warnings"], `warnings 必須明示 ${required}`);
@@ -792,7 +937,6 @@ export const analyzeObservedPriceOutputSchema =
       (detail) => detail.policyId === "official.completed-session.v1",
     );
     const resolverEvidence = officialFreshness?.resolverEvidence;
-    const expectedMeta = observedPriceMetaContract(value, resolverEvidence);
     if (!resolverEvidence) {
       context.addIssue({
         code: "custom",
@@ -800,11 +944,28 @@ export const analyzeObservedPriceOutputSchema =
         message:
           "observed-price official completed-session freshness 必須嵌入 resolver evidence。",
       });
-    } else if (
+      return;
+    }
+    const expectedMeta = observedPriceMetaContract(value, resolverEvidence);
+    const resolverEvaluatedAt = parseOffsetIso(resolverEvidence.evaluatedAt);
+    const generatedAt = parseOffsetIso(value.generatedAt);
+    const observedAt = parseOffsetIso(value.observedAt);
+    const resolverMarket = resolverEvidence.marketResolutions[0];
+    if (
       resolverEvidence.markets.length !== 1 ||
       resolverEvidence.markets[0] !== value.company.market ||
       resolverEvidence.marketResolutions.length !== 1 ||
-      resolverEvidence.marketResolutions[0]?.market !== value.company.market
+      resolverEvidence.marketResolutions[0]?.market !== value.company.market ||
+      resolverEvidence.status !== "resolved" ||
+      resolverEvidence.expectedAsOf !== value.latestOfficialCloseDate ||
+      resolverEvidence.marketResolutions[0]?.status !== "resolved" ||
+      resolverEvidence.marketResolutions[0]?.expectedAsOf !==
+        value.latestOfficialCloseDate ||
+      !resolverEvaluatedAt ||
+      !generatedAt ||
+      !observedAt ||
+      observedAt.timestampMs > resolverEvaluatedAt.timestampMs ||
+      resolverEvaluatedAt.timestampMs > generatedAt.timestampMs
     ) {
       context.addIssue({
         code: "custom",
@@ -816,7 +977,104 @@ export const analyzeObservedPriceOutputSchema =
           "markets",
         ],
         message:
-          "observed-price resolver evidence 必須只涵蓋 company／official-close 所屬市場。",
+          "observed-price resolver evidence 必須只涵蓋 company market，符合 observedAt <= request-start evaluatedAt <= generatedAt，且 resolved expectedAsOf 必須等於公開 close date。",
+      });
+    }
+    const resolverBudget = resolverEvidence.workBudget;
+    const marketBudget = resolverMarket?.workBudget;
+    const publicResolverBudget =
+      value.workBudget.plannedOfficialSourceRequests.completedSessionResolver;
+    if (
+      resolverBudget.scope !== "freshness_meta_layer" ||
+      resolverBudget.marketCount !== 1 ||
+      resolverBudget.calendarLogicalLoads !== 1 ||
+      resolverBudget.sessionMarkerLogicalLoads !== 1 ||
+      resolverBudget.actualTotal !== 2 ||
+      resolverBudget.maximumTotal !== 2 ||
+      marketBudget?.calendarLogicalLoads !== 1 ||
+      marketBudget.sessionMarkerLogicalLoads !== 1 ||
+      marketBudget.actualTotal !== 2 ||
+      marketBudget.maximumTotal !== 2 ||
+      publicResolverBudget.actual !== resolverBudget.actualTotal ||
+      publicResolverBudget.maximum !== resolverBudget.maximumTotal ||
+      value.dependencyLedger[1].plannedOfficialSourceLoads !==
+        resolverBudget.actualTotal
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["workBudget", "plannedOfficialSourceRequests"],
+        message:
+          "公開 ledger/workBudget 必須與 embedded single-market resolver 的 calendar、marker、actual 與 maximum loads 完全一致。",
+      });
+    }
+    if (generatedAt && resolverEvaluatedAt) {
+      const storedStatuses = new Set(["hit", "miss", "shared"]);
+      for (const source of resolverEvidence.marketResolutions.flatMap(
+        (resolution) => resolution.sources,
+      )) {
+        const retrievedAt = parseOffsetIso(source.retrievedAt);
+        const cacheObservedAt = source.cache.observedAt
+          ? parseOffsetIso(source.cache.observedAt)
+          : null;
+        const cacheStoredAt = source.cache.storedAt
+          ? parseOffsetIso(source.cache.storedAt)
+          : null;
+        const stored = storedStatuses.has(source.cache.status);
+        const storedAge =
+          cacheObservedAt && cacheStoredAt
+            ? cacheObservedAt.timestampMs - cacheStoredAt.timestampMs
+            : null;
+        const coherent =
+          retrievedAt !== null &&
+          cacheObservedAt !== null &&
+          retrievedAt.timestampMs <= generatedAt.timestampMs &&
+          cacheObservedAt.timestampMs <= generatedAt.timestampMs &&
+          resolverEvaluatedAt.timestampMs <= cacheObservedAt.timestampMs &&
+          retrievedAt.timestampMs <= cacheObservedAt.timestampMs &&
+          (stored
+            ? cacheStoredAt !== null &&
+              retrievedAt.timestampMs <= cacheStoredAt.timestampMs &&
+              cacheStoredAt.timestampMs <= cacheObservedAt.timestampMs &&
+              source.cache.ageMs === storedAge &&
+              source.cache.ttlMs !== null &&
+              source.cache.ttlMs > 0
+            : cacheStoredAt === null &&
+              source.cache.ageMs === null &&
+              ((source.cache.status === "bypass" &&
+                source.cache.ttlMs === 0) ||
+                ((source.cache.status === "not_applicable" ||
+                  source.cache.status === "unknown") &&
+                  source.cache.ttlMs === null)));
+        if (!coherent) {
+          context.addIssue({
+            code: "custom",
+            path: [
+              "meta",
+              "quality",
+              "freshnessDetails",
+              "resolverEvidence",
+              "marketResolutions",
+              "sources",
+            ],
+            message:
+              "resolver source 必須符合 retrievedAt/cache chronology、request-start observation 與 generatedAt 上限。",
+          });
+        }
+      }
+    }
+    if (
+      officialFreshness?.status !== "within_expected_window" ||
+      officialFreshness.observedAsOf !== value.latestOfficialCloseDate ||
+      officialFreshness.expectedAsOf !== value.latestOfficialCloseDate ||
+      officialFreshness.lag?.value !== 0 ||
+      officialFreshness.lag.unit !== "trading_session" ||
+      officialFreshness.reasonCode !== "MATCHES_EXPECTED_AS_OF"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["meta", "quality", "freshnessDetails"],
+        message:
+          "成功的 observed-price completed-close freshness 必須精確證明 observedAsOf=expectedAsOf=public close date 且 trading-session lag=0。",
       });
     }
     if (
@@ -918,7 +1176,7 @@ export const analyzeObservedPriceOutputSchema =
         code: "custom",
         path: ["meta", "quality", "issues"],
         message:
-          "observed-price quality issues 必須精確包含六項 domain issues 與 freshness evidence 所需動態 issues，不得夾帶其他代碼",
+          "observed-price quality issues 必須精確包含五項 domain issues 與 freshness evidence 所需動態 issues，不得夾帶其他代碼",
       });
     }
     if (
@@ -930,7 +1188,7 @@ export const analyzeObservedPriceOutputSchema =
         code: "custom",
         path: ["meta", "asOf", "snapshotId"],
         message:
-          "snapshotId 必須是由 canonical query/company/baseline/sources（排除 cache 與 dependency ledger）重算的 32 字元 base64url fingerprint",
+          "snapshotId 必須由 canonical query/company/baseline/top-level sources 與 resolver calendar/marker provenance（排除 caller cache 與 dependency ledger）重算為 32 字元 base64url fingerprint",
       });
     }
     const served = parseOffsetIso(value.meta.asOf.servedAt);
@@ -950,17 +1208,17 @@ export const analyzeObservedPriceOutputSchema =
     }
     const resolverSources = [
       ...new Map(
-        (resolverEvidence?.marketResolutions.flatMap(
-          (resolution) => resolution.sources,
-        ) ?? []).map((source) => [
-          [
-            source.sourceUrl,
-            source.retrievedAt,
-            source.asOfGranularity,
-            source.asOf,
-          ].join("\u0000"),
-          source,
-        ]),
+        resolverEvidence.marketResolutions
+          .flatMap((resolution) => resolution.sources)
+          .map((source) => [
+            [
+              source.sourceUrl,
+              source.retrievedAt,
+              source.asOfGranularity,
+              source.asOf,
+            ].join("\u0000"),
+            source,
+          ]),
       ).values(),
     ];
     if (
@@ -994,14 +1252,15 @@ export const analyzeObservedPriceOutputSchema =
       const asOf =
         source.stage === "company_master"
           ? source.reportDate
-          : source.dataDate;
+          : source.selectedBarDate;
+      const granularity = "date";
       if (
         !consumeCutoff(
           (cutoff) =>
             cutoff.publishedAt === null &&
             cutoff.sourceUrl === source.sourceUrl &&
             cutoff.retrievedAt === source.retrievedAt &&
-            cutoff.resolved.granularity === "date" &&
+            cutoff.resolved.granularity === granularity &&
             cutoff.resolved.from === asOf &&
             cutoff.resolved.through === asOf &&
             JSON.stringify(cutoff.cache) === JSON.stringify(source.cache),
