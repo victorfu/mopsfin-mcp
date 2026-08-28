@@ -112,7 +112,7 @@ export class MopsfinHttpClient {
             signal: scope.signal,
             headers: {
               Accept: "application/json, text/html;q=0.9, */*;q=0.8",
-              "User-Agent": "mopsfin-mcp/0.6.0 (+https://mopsfin.twse.com.tw/)",
+              "User-Agent": "mopsfin-mcp/0.6.1 (+https://mopsfin.twse.com.tw/)",
               ...init.headers,
             },
           });

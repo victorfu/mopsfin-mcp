@@ -24,8 +24,8 @@ function metric(
 
 describe("LLM-facing official guidance", () => {
   it("routes the new market tools and preserves completeness semantics", () => {
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("v0.6.0");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("共提供 17 個工具");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("v0.6.1");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("共提供 18 個工具");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_daily_market_valuation");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("get_monthly_revenue");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("成交量正規化為股");
@@ -61,6 +61,42 @@ describe("LLM-facing official guidance", () => {
       expect.arrayContaining([
         expect.objectContaining({
           dataType: "官方重大訊息與法人說明會",
+        }),
+      ]),
+    );
+  });
+
+  it("keeps current catalyst snapshots distinct from historical events and consensus", () => {
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "get_company_catalyst_snapshots",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("forecast_achievement");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "forecast_material_variance",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("sourceSnapshotDate");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "pointInTimeHistoryAvailable",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("firstKnownAt");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("upcomingEligible");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "stale、failed、unsupported 或 identity_unverified 不是 current no-data",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "任何 sourceSnapshotDate 晚於 Asia/Taipei as-of date",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).not.toContain("未來超過 1 日");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "公司自行揭露財測不是分析師 EPS／營收 consensus",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "不請求或以 stale mopsfin_t187ap39_O 冒充當期資料",
+    );
+    expect(MOPSFIN_OFFICIAL_GUIDANCE.valueBasis).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          dataType: "當期官方 catalyst snapshot evidence",
         }),
       ]),
     );

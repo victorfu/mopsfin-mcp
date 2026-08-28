@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.6.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十七個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收、大盤指數、公司行動實際結果、重大訊息與法人說明會直接取自 MOPS、TWSE 與 TPEx 官方資料。
+目前版本 `0.6.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露十八個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、日線價量、歷史估值、月營收、大盤指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -17,7 +17,7 @@ Next.js /api/mcp on Vercel
        │    └─ HTML → 展開 rowspan/colspan 的二維 tables
        ├─ openapi.twse.com.tw → 上市公司母體
        ├─ www.tpex.org.tw/openapi → 上櫃公司母體
-       └─ TWSE／TPEx／MOPS 官方資料 → 原始日線價量、日估值、月營收、市場指數、公司行動實際結果、重大訊息與法說會
+       └─ TWSE／TPEx／MOPS 官方資料 → 原始日線價量、日估值、月營收、市場指數、公司行動實際結果、重大訊息／法說會與 current catalyst snapshots
 ```
 
 - 不使用資料庫、Redis 或已淘汰的 HTTP+SSE transport。
@@ -43,6 +43,7 @@ Next.js /api/mcp on Vercel
 | `get_monthly_revenue` | 查詢上市、上櫃或全部市場 latest／指定月份營收、MoM、YoY 與累計營收 |
 | `get_monthly_revenue_trend` | 查詢 3–24 個月營收序列、滾動 YoY 與改善加速度 |
 | `get_company_catalyst_events` | 查詢 selected companies 指定日期範圍的官方重大訊息與法人說明會；`isConsensus=false` |
+| `get_company_catalyst_snapshots` | 查詢 selected companies 的財測達成／重大差異、股東會與股利決議 current official snapshot evidence |
 | `screen_taiwan_stock_candidates` | 以四柱固定規則分流最多 5 個 latest 非金融台股研究候選 |
 | `list_companies` | 取得目前上市／上櫃公司母體；以 heuristic coverage gate 偵測明顯截斷，可排除金融業與 KY 公司 |
 | `list_catalog` | 即時列出指標、endpoint family、產業、金融機構及期間 |
@@ -55,7 +56,7 @@ Next.js /api/mcp on Vercel
 
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。成功結果固定包含 `ok=true` 與 `meta`；`meta.asOf`、`meta.quality`、`meta.page` 分別揭露實際資料時間、來源／母體／selection／值品質與續頁狀態。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
-LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對十七個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、申報頻率、缺值、平均數、研究代理或分頁警示。
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對十八個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
 
 需要目前上市櫃代號母體或全市場掃描候選代號時使用 `list_companies`；只知道特定公司名稱或代號時使用 `find_companies`，不要以 `find_companies` 枚舉全市場。不知道資料指標或期間時使用 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
@@ -81,9 +82,21 @@ LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions �
 
 單次呼叫的 catalyst 計畫查詢工作單位上限為 40；重大訊息每個 company×month 為一單位，歷史法說每個 company×month 會分上市與上櫃兩單位，另加近期 market snapshot。這是執行前的 logical work budget，不包含 company-master hint、cache hit、single-flight 或 retry attempts，也不是實際 HTTP attempt 計數；超限時應縮小公司、日期或 event family 範圍。執行時的 failure isolation 是 `per_company_event_type_calendar_month`：上游錯誤、security block 或 parser failure 只標記對應單位並保留其他結果，不得解讀為無事件。`familyCoverage` 只計 selected-company 歷史月份，近期補強另列於 `coverage.currentSnapshots`。只有官方回應的明確空結果可核對、所有 requested families 完成、`companies[].eventCount=0`、沒有 failures，且 `meta.quality.selection=complete` 已確認公司 identity，才能說該公司在指定範圍「已驗證無事件」。
 
-`publishedAt`、`factDate`、`scheduledAt` 與 `effectiveAt` 分開保留，官方未提供的日期不會互相代填。`dateConfidence=confirmed` 只表示時間直接來自官方證據，不代表事件為正面、負面或市場尚未反應。事件只作為 screening 後的人工查核證據；v0.6.0 不把它納入 `screen_taiwan_stock_candidates` 分數，也不產生情緒、impact score、目標價或買賣建議。
+`publishedAt`、`factDate`、`scheduledAt` 與 `effectiveAt` 分開保留，官方未提供的日期不會互相代填。`dateConfidence=confirmed` 只表示時間直接來自官方證據，不代表事件為正面、負面或市場尚未反應。事件只作為 screening 後的人工查核證據；v0.6.1 不把它納入 `screen_taiwan_stock_candidates` 分數，也不產生情緒、impact score、目標價或買賣建議。
 
 事件使用 stateless offset 分頁：每頁會重新查詢並組裝官方來源，不是 pinned point-in-time snapshot。續頁必須沿用完全相同的公司、日期與 event types，並在 `fingerprint` 或 `meta.asOf.snapshotId` 改變時由 `offset=0` 重查。
+
+### `get_company_catalyst_snapshots` 當期官方快照證據
+
+這個工具查詢 1–20 家 selected companies 在 `as_of=latest` 的 current official snapshot evidence，不是歷史事件查詢。四個 family 是 `forecast_achievement`、`forecast_material_variance`、`shareholder_meeting` 與 `dividend_decision`；它最多檢查上市／上櫃 × 四 family 的 8 個 full-market source routes，再對 selected codes 分頁，`limit` 為 1–100。不需要資料庫，也不建立歷史 event store。
+
+每個 source 的 `status` 是 `nonempty | verified_empty | failed | unsupported`，`freshness` 是 `within_expected_window | stale | not_applicable`。`sourceSnapshotDate` 只是官方資料集的當次出表／快照日，不是公司財測的 `factDate`、首次公告日或歷史事件日。快照日距 Asia/Taipei `asOf` 不超過 7 日才是 `within_expected_window`，超過即為 `stale`；任何 `sourceSnapshotDate` 晚於 Asia/Taipei as-of date，或日期無法驗證時都 fail closed。只有 fresh、schema-valid snapshot 缺少 selected code 時才能回 `not_disclosed_in_snapshot`；`stale`、`failed`、`unsupported` 或 identity 不可核對都是 unknown／unsupported，不得當成 current no-data。
+
+`pointInTimeHistoryAvailable=false` 明示這些 current snapshots 不提供可回放的歷史 vintage。來源不能證明首次為市場知悉的時間，因此 `firstKnownAt` 固定為 null，不會以 `sourceSnapshotDate` 代填。`upcomingEligible` 只可用於 fresh snapshot 中會議日不早於 as-of 的股東會；財測達成／差異、過期會議、股利決議與 stale evidence 均為 false。TWSE 股利資料的董事會（擬議）分派日是董事會事件日，不是現金股利支付日。
+
+公司自行揭露的財測達成／重大差異不是分析師 EPS／營收 consensus，也不是 consensus revision。TPEx 沒有可用的 current dividend-decision source，因此該 route 固定明示 `unsupported`；工具不會請求或以停在 2021 年的 stale `mopsfin_t187ap39_O` 冒充當期股利證據。`get_company_catalyst_events` 仍是原本的指定日期歷史重大訊息／法說會工具；兩個 catalyst tools 都不會改變 `screen_taiwan_stock_candidates` 四柱分數。
+
+所有 snapshot routes 都沒有 official declared row count。因此 fresh nonempty snapshot 中缺少 selected code 的 `not_disclosed_in_snapshot` 只是「當次官方返回快照未見該代號」，不是絕對完整公司母體的證明。
 
 ### `list_companies` 公司母體
 
@@ -209,7 +222,7 @@ ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` �
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
 4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
-5. 建立後確認 ChatGPT 能辨識十七個工具。
+5. 建立後確認 ChatGPT 能辨識十八個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
 Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流程見 [OpenAI 官方連接說明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。
@@ -228,6 +241,7 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 - 「比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始與 price-index-compatible 報酬、公司行動證據及量能訊號。」
 - 「用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。」
 - 「查台積電與聯發科 2026-07-01 至 2026-08-24 的官方重大訊息與法說會；分開 publishedAt、factDate、scheduledAt、effectiveAt，並標示 failures 與 verified empty，不要當成 consensus 或正負面分數。」
+- 「查台積電與穩懋的 current official catalyst snapshots，分開財測達成、財測重大差異、股東會與股利決議；標示 sourceSnapshotDate、freshness、firstKnownAt、upcomingEligible 與 unsupported，不要當成歷史事件或分析師 consensus。」
 - 「列出全部上市公司代號，不要包含上櫃公司。」
 - 「列出全部上市與上櫃公司，排除金融業與 KY 公司。」
 - 「比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。」
@@ -244,7 +258,7 @@ npm test
 npm run build
 ```
 
-一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、官方重大訊息／法說會事件、latest 候選篩選四柱與 funnel、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
+一般測試只使用固定 fixtures，涵蓋 README 範例、公司母體 profile、OHLC、歷史估值、月營收 CSV／趨勢、多指標批次、TAIEX／TPEx benchmark、reaction signals、官方重大訊息／法說會事件、current official catalyst snapshots、latest 候選篩選四柱與 funnel、stateless cursor、quality／as-of／structured errors，以及 MCP initialize/tools/list/tools/call。
 
 Live contract tests 預設從一般測試跳過，只有明確設定時才會查詢原站。只執行低流量的公司行動 focused canary：
 
@@ -252,7 +266,7 @@ Live contract tests 預設從一般測試跳過，只有明確設定時才會查
 npm run test:live:corporate-actions
 ```
 
-只執行低流量的事件 focused canary（TWSE／TPEx current 共 2 次，固定歷史 MOPS 共 3 個查詢工作單位）：
+只執行低流量的 catalyst focused canaries：
 
 ```bash
 npm run test:live:catalysts
@@ -264,7 +278,9 @@ npm run test:live:catalysts
 npm run test:live
 ```
 
-既有 GitHub Actions 以每週一次、單一 concurrency group 的低頻 live contract workflow 稽核官方 schema／snapshot identity。v0.6.0 延續公司行動 focused canary：覆蓋 TWSE／TPEx 各自除權息、減資與面額變更六組 range-family 來源的空與非空回應、必要欄位與 range identity schema drift，並另外驗證選定事件的 TWSE `TWT49UDetail`。事件 focused canary 以兩個 current OpenAPI 請求及三個固定歷史 MOPS 查詢工作單位（重大訊息一個、法說上市／上櫃各一個）低流量覆蓋來源，稽核 schema、identity 與回應可解析性。只有 range identity 可核對的空回應才是 `verified_empty`；缺少可核對 identity 的空回應仍是 `unverified_empty`，不能解釋為「已證明沒有事件」。這些 canary 直接讀取官方來源，不使用資料庫、不寫入 persistence，也不改變 MCP runtime result contract。`workflow_dispatch` 的 `suite` 可選 `corporate-actions`、`catalysts` 或 `all`；每週排程固定執行兩組 focused canary。請勿提高排程頻率或加入高基數掃描，以免對官方來源造成不必要流量。
+既有 GitHub Actions 以每週一次、單一 concurrency group 的低頻 live contract workflow 稽核官方 schema／snapshot identity。v0.6.1 延續公司行動 focused canary：覆蓋 TWSE／TPEx 各自除權息、減資與面額變更六組 range-family 來源的空與非空回應、必要欄位與 range identity schema drift，並另外驗證選定事件的 TWSE `TWT49UDetail`。`catalysts` suite 會同時執行原有 events canary 與 `catalyst-snapshots.live.test.ts`：前者以兩個 current OpenAPI 請求及三個固定歷史 MOPS 查詢工作單位，後者低頻稽核 current snapshot routes 的 schema、sourceSnapshotDate、freshness 與 unsupported 語意。只有可核對 identity 的合法空回應才是 `verified_empty`；缺少 identity、stale、failed 或 unsupported 不能解釋為 current no-data。這些 canary 直接讀取官方來源，不使用資料庫、不寫入 persistence，也不改變 MCP runtime result contract。`workflow_dispatch` 的 `suite` 可選 `corporate-actions`、`catalysts` 或 `all`；每週排程固定執行兩類 focused canaries。請勿提高排程頻率或加入高基數掃描，以免對官方來源造成不必要流量。
+
+公司行動 canary 中，缺少可核對 range identity 的空回應仍是 `unverified_empty`，不能宣稱已證明沒有事件。
 
 ## 部署到 Vercel
 
@@ -274,7 +290,7 @@ npm run test:live
 4. 部署後以 `npm run test:client -- https://<preview>/api/mcp` 驗收。
 5. 視公開流量在 Vercel Firewall 設定適當規則；應用本身不建立跨 instance rate-limit 資料庫。
 
-建議 Preview 驗收：latest 非金融研究候選篩選、台積電最近 12 季營收、台積電與聯發科 ROE、多家公司多指標 batch、2026-08-24 上市櫃 OHLC、指定日估值、歷史月營收／趨勢、台積電相對 TAIEX reaction signals、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
+建議 Preview 驗收：latest 非金融研究候選篩選、指定公司官方 catalyst events 與 current snapshots、台積電最近 12 季營收、台積電與聯發科 ROE、多家公司多指標 batch、2026-08-24 上市櫃 OHLC、指定日估值、歷史月營收／趨勢、台積電相對 TAIEX reaction signals、指定季資產負債表、半導體產業趨勢、臺企銀最近非 null 資本適足率及台積電財報附註。
 
 ## 錯誤碼
 
@@ -295,6 +311,8 @@ npm run test:live
 財務、報表、附註、產業與金融機構資料來源是 [Mopsfin](https://mopsfin.twse.com.tw/)。依其[網站使用說明](https://mopsfin.twse.com.tw/terms)，網站資料每日更新一次，可能較申報落後約一日。公司母體來源是 [TWSE 上市公司基本資料](https://openapi.twse.com.tw/v1/opendata/t187ap03_L)與 [TPEx 上櫃股票基本資料](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O)；OHLC 來源是 TWSE／TPEx 個股日成交與每日收盤行情。
 
 事件資料的近期重大訊息來自 [TWSE 上市公司每日重大訊息](https://openapi.twse.com.tw/v1/opendata/t187ap04_L)與 [TPEx 上櫃公司每日重大訊息](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O)；指定範圍的歷史重大訊息與法說會分別由 MOPS 官方 [重大訊息歷史查詢](https://mopsov.twse.com.tw/mops/web/ajax_t05st01)與 [法人說明會歷史查詢](https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1)即時取得。這些是官方公告／排定事件，不是分析師 consensus、情緒或市場反應判斷。
+
+Current snapshot families 來自 TWSE [t187ap15_L](https://openapi.twse.com.tw/v1/opendata/t187ap15_L)、[t187ap16_L](https://openapi.twse.com.tw/v1/opendata/t187ap16_L)、[t187ap41_L](https://openapi.twse.com.tw/v1/opendata/t187ap41_L)、[t187ap45_L](https://openapi.twse.com.tw/v1/opendata/t187ap45_L)，以及 TPEx [mopsfin_t187ap15_O](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap15_O)、[mopsfin_t187ap16_O](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap16_O)、[t187ap41_O](https://www.tpex.org.tw/openapi/v1/t187ap41_O)。TPEx current dividend route 是 `unsupported`，故不將 stale `mopsfin_t187ap39_O` 列為 current 來源。
 
 估值的 latest 日期由 [TWSE BWIBBU_ALL](https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL)與 [TPEx 本益比分析](https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis)發現，再以 TWSE `BWIBBU_d` 與 TPEx `peQryDate` 指定日端點補強；歷史日直接使用相同指定日端點。月營收 latest 由 [TWSE t187ap05_L](https://openapi.twse.com.tw/v1/opendata/t187ap05_L)與 [TPEx t187ap05_O](https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O)發現月份，再與 `https://mopsov.twse.com.tw/nas/t21/{sii|otc}/t21sc03_{民國年}_{月}.csv` archive 核對；指定月與趨勢直接讀 archive。benchmark 使用 TWSE `MI_5MINS_HIST` 與 TPEx `tradingIndex` 官方價格指數端點。
 

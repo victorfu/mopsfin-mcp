@@ -17,7 +17,7 @@ const handler = createMcpHandler(
   {
     serverInfo: {
       name: "mopsfin-taiwan-equities",
-      version: "0.6.0",
+      version: "0.6.1",
     },
     instructions: MOPSFIN_SERVER_INSTRUCTIONS,
     maxSubscriptions: 0,

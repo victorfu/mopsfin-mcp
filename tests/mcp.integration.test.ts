@@ -3,6 +3,8 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { catalystClient } from "@/lib/catalyst/client";
+import { companyCatalystSnapshotClient } from "@/lib/catalyst/snapshot-client";
+import type { CompanyCatalystSnapshotsResult } from "@/lib/catalyst/snapshot-types";
 import type { CompanyCatalystEventsResult } from "@/lib/catalyst/types";
 import { companyMasterClient } from "@/lib/company-master/client";
 import {
@@ -176,6 +178,329 @@ const catalystEvents: CompanyCatalystEventsResult = {
   },
   fingerprint: "fixture-catalyst-fingerprint",
   warnings: ["官方揭露事件不是分析師 consensus。"],
+};
+
+const catalystSnapshots: CompanyCatalystSnapshotsResult = {
+  query: {
+    companyCodes: ["3105"],
+    snapshotTypes: [
+      "forecast_achievement",
+      "forecast_material_variance",
+      "shareholder_meeting",
+      "dividend_decision",
+    ],
+    companyMarkets: [{ companyCode: "3105", market: "otc" }],
+    asOf: "latest",
+    offset: 0,
+    limit: 50,
+  },
+  generatedAt: "2026-08-28T00:00:00.000Z",
+  timezone: "Asia/Taipei",
+  scope: "current_official_company_snapshots",
+  isConsensus: false,
+  records: [
+    {
+      recordId: "fixture-stale-forecast-achievement",
+      snapshotType: "forecast_achievement",
+      companyCode: "3105",
+      companyName: "穩懋",
+      market: "otc",
+      sourceMode: "current_official_snapshot",
+      sourceSnapshotDate: "2021-04-16",
+      freshness: "stale",
+      sourceSnapshotAgeDays: 1960,
+      pointInTimeHistoryAvailable: false,
+      firstKnownAt: null,
+      isConsensus: false,
+      upcomingEligible: false,
+      sourceKey: "tpex_forecast_achievement_current",
+      sourceUrl:
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap15_O",
+      sourceRecordKey: "3105:110:1:0",
+      details: {
+        kind: "forecast_achievement",
+        fiscalYear: 2021,
+        fiscalYearRaw: "110",
+        quarter: 1,
+        forecastSequence: "0",
+        coveragePeriod: "一、二、三、四",
+        actualCumulative: 100,
+        actualCumulativeRaw: "100",
+        valueUnit: "source_not_declared",
+        forecastCumulative: {
+          raw: "90~110",
+          lower: 90,
+          upper: 110,
+          unit: "source_not_declared",
+        },
+      },
+    },
+    {
+      recordId: "fixture-upcoming-shareholder-meeting",
+      snapshotType: "shareholder_meeting",
+      companyCode: "3105",
+      companyName: "穩懋",
+      market: "otc",
+      sourceMode: "current_official_snapshot",
+      sourceSnapshotDate: "2026-08-27",
+      freshness: "within_expected_window",
+      sourceSnapshotAgeDays: 1,
+      pointInTimeHistoryAvailable: false,
+      firstKnownAt: null,
+      isConsensus: false,
+      upcomingEligible: true,
+      sourceKey: "tpex_shareholder_meeting_current",
+      sourceUrl: "https://www.tpex.org.tw/openapi/v1/t187ap41_O",
+      sourceRecordKey: "3105:2026-09-30:股東臨時會",
+      details: {
+        kind: "shareholder_meeting",
+        companyAddress: "桃園市",
+        meetingType: "股東臨時會",
+        meetingDate: "2026-09-30",
+        meetingLocation: "桃園市",
+        directorSupervisorElection: "否",
+        electronicVoting: "是",
+        contactPhone: "03-0000000",
+        stockTransferAgent: "測試股務代理",
+        stockTransferAgentPhone: "02-0000000",
+      },
+    },
+  ],
+  sources: [
+    {
+      snapshotType: "forecast_achievement",
+      market: "otc",
+      exchange: "TPEx",
+      sourceKey: "tpex_forecast_achievement_current",
+      sourceName: "證券櫃檯買賣中心－上櫃公司財務預測達成情形",
+      sourceUrl:
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap15_O",
+      sourceMode: "current_official_snapshot",
+      pointInTimeHistoryAvailable: false,
+      isConsensus: false,
+      requestedCompanyCodes: ["3105"],
+      status: "nonempty",
+      freshness: "stale",
+      retrievedAt: "2026-08-28T00:00:00.000Z",
+      sourceSnapshotDate: "2021-04-16",
+      sourceSnapshotAgeDays: 1960,
+      rawRowCount: 1,
+      eligibleRecordCount: 1,
+      duplicateRecordCount: 0,
+      selectedRecordCount: 1,
+      emptyVerification: "not_applicable",
+      officialDeclaredRowCount: null,
+      rowsetCompleteness: "unverified_no_official_declared_count",
+      snapshotIdentity: "fixture-stale-forecast-snapshot",
+      failureId: null,
+    },
+    {
+      snapshotType: "forecast_material_variance",
+      market: "otc",
+      exchange: "TPEx",
+      sourceKey: "tpex_forecast_material_variance_current",
+      sourceName: "證券櫃檯買賣中心－上櫃公司財務預測重大差異",
+      sourceUrl:
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap16_O",
+      sourceMode: "current_official_snapshot",
+      pointInTimeHistoryAvailable: false,
+      isConsensus: false,
+      requestedCompanyCodes: ["3105"],
+      status: "failed",
+      freshness: "not_applicable",
+      retrievedAt: null,
+      sourceSnapshotDate: null,
+      sourceSnapshotAgeDays: null,
+      rawRowCount: 0,
+      eligibleRecordCount: 0,
+      duplicateRecordCount: 0,
+      selectedRecordCount: 0,
+      emptyVerification: "not_applicable",
+      officialDeclaredRowCount: null,
+      rowsetCompleteness: "not_applicable",
+      snapshotIdentity: null,
+      failureId: "fixture-forecast-variance-failure",
+    },
+    {
+      snapshotType: "shareholder_meeting",
+      market: "otc",
+      exchange: "TPEx",
+      sourceKey: "tpex_shareholder_meeting_current",
+      sourceName: "證券櫃檯買賣中心－上櫃公司股東會日期",
+      sourceUrl: "https://www.tpex.org.tw/openapi/v1/t187ap41_O",
+      sourceMode: "current_official_snapshot",
+      pointInTimeHistoryAvailable: false,
+      isConsensus: false,
+      requestedCompanyCodes: ["3105"],
+      status: "nonempty",
+      freshness: "within_expected_window",
+      retrievedAt: "2026-08-28T00:00:00.000Z",
+      sourceSnapshotDate: "2026-08-27",
+      sourceSnapshotAgeDays: 1,
+      rawRowCount: 1,
+      eligibleRecordCount: 1,
+      duplicateRecordCount: 0,
+      selectedRecordCount: 1,
+      emptyVerification: "not_applicable",
+      officialDeclaredRowCount: null,
+      rowsetCompleteness: "unverified_no_official_declared_count",
+      snapshotIdentity: "fixture-current-meeting-snapshot",
+      failureId: null,
+    },
+    {
+      snapshotType: "dividend_decision",
+      market: "otc",
+      exchange: "TPEx",
+      sourceKey: "tpex_dividend_decision_current_unsupported",
+      sourceName:
+        "證券櫃檯買賣中心－上櫃公司股利決議 current snapshot（官方端點未提供）",
+      sourceUrl: null,
+      sourceMode: "current_official_snapshot",
+      pointInTimeHistoryAvailable: false,
+      isConsensus: false,
+      requestedCompanyCodes: ["3105"],
+      status: "unsupported",
+      freshness: "not_applicable",
+      retrievedAt: null,
+      sourceSnapshotDate: null,
+      sourceSnapshotAgeDays: null,
+      rawRowCount: 0,
+      eligibleRecordCount: 0,
+      duplicateRecordCount: 0,
+      selectedRecordCount: 0,
+      emptyVerification: "not_applicable",
+      officialDeclaredRowCount: null,
+      rowsetCompleteness: "not_applicable",
+      snapshotIdentity: null,
+      failureId: null,
+    },
+  ],
+  coverage: {
+    sourceComplete: false,
+    selection: "partial",
+    failureIsolation: "per_snapshot_type_market",
+    snapshots: [
+      {
+        companyCode: "3105",
+        snapshotType: "forecast_achievement",
+        routedMarkets: ["otc"],
+        status: "partial",
+        disclosureStatus: "disclosed",
+        identityStatus: "verified_current_master_hint",
+        resolvedMarket: "otc",
+        freshness: "stale",
+        recordCount: 1,
+        sourceKeys: ["tpex_forecast_achievement_current"],
+        failureIds: [],
+      },
+      {
+        companyCode: "3105",
+        snapshotType: "forecast_material_variance",
+        routedMarkets: ["otc"],
+        status: "failed",
+        disclosureStatus: "unknown_source_failure",
+        identityStatus: "verified_current_master_hint",
+        resolvedMarket: "otc",
+        freshness: "not_applicable",
+        recordCount: 0,
+        sourceKeys: ["tpex_forecast_material_variance_current"],
+        failureIds: ["fixture-forecast-variance-failure"],
+      },
+      {
+        companyCode: "3105",
+        snapshotType: "shareholder_meeting",
+        routedMarkets: ["otc"],
+        status: "complete",
+        disclosureStatus: "disclosed",
+        identityStatus: "verified_current_master_hint",
+        resolvedMarket: "otc",
+        freshness: "within_expected_window",
+        recordCount: 1,
+        sourceKeys: ["tpex_shareholder_meeting_current"],
+        failureIds: [],
+      },
+      {
+        companyCode: "3105",
+        snapshotType: "dividend_decision",
+        routedMarkets: ["otc"],
+        status: "unsupported",
+        disclosureStatus: "unsupported",
+        identityStatus: "verified_current_master_hint",
+        resolvedMarket: "otc",
+        freshness: "not_applicable",
+        recordCount: 0,
+        sourceKeys: ["tpex_dividend_decision_current_unsupported"],
+        failureIds: [],
+      },
+    ],
+  },
+  companies: [
+    {
+      companyCode: "3105",
+      status: "partial",
+      identityStatus: "verified_current_master_hint",
+      resolvedMarket: "otc",
+      recordCount: 2,
+      disclosedSnapshotTypes: [
+        "forecast_achievement",
+        "shareholder_meeting",
+      ],
+      notDisclosedSnapshotTypes: [],
+      staleSnapshotTypes: ["forecast_achievement"],
+      unsupportedSnapshotTypes: ["dividend_decision"],
+      failedSnapshotTypes: ["forecast_material_variance"],
+    },
+  ],
+  failures: [
+    {
+      failureId: "fixture-forecast-variance-failure",
+      snapshotType: "forecast_material_variance",
+      market: "otc",
+      sourceKey: "tpex_forecast_material_variance_current",
+      affectedCompanyCodes: ["3105"],
+      code: "UPSTREAM_TIMEOUT",
+      message: "TPEx forecast variance fixture timeout",
+      reason: "UPSTREAM_TIMEOUT",
+      retryable: true,
+      retryAfterMs: 1000,
+      action: "retry",
+    },
+  ],
+  counts: {
+    requestedCompanies: 1,
+    requestedSnapshotTypes: 4,
+    totalRecords: 2,
+    returnedRecords: 2,
+    completeCompanies: 0,
+    partialCompanies: 1,
+    failedCompanies: 0,
+    nonemptySources: 2,
+    verifiedEmptySources: 0,
+    staleSources: 1,
+    failedSources: 1,
+    unsupportedSources: 1,
+  },
+  workBudget: {
+    companyCount: 1,
+    snapshotTypeCount: 4,
+    plannedSourceRoutes: 4,
+    supportedSourceQueries: 3,
+    unsupportedSourceRoutes: 1,
+    sourceQueryLimit: 8,
+  },
+  pagination: {
+    offset: 0,
+    limit: 50,
+    totalRows: 2,
+    returnedRows: 2,
+    hasMore: false,
+    nextOffset: null,
+  },
+  fingerprint: "fixture-catalyst-snapshot-fingerprint",
+  warnings: [
+    "Current official snapshots 不是 point-in-time 歷史資料。",
+    "TPEx current dividend route unsupported。",
+  ],
 };
 
 const catalog: Catalog = {
@@ -1673,10 +1998,16 @@ describe("MCP protocol integration", () => {
     ).toBe(true);
   });
 
-  it("initializes, lists seventeen tools and calls each tool with structured output", async () => {
+  it("initializes, lists eighteen tools and calls each tool with structured output", async () => {
     const catalystSpy = vi
       .spyOn(catalystClient, "getCompanyCatalystEvents")
       .mockResolvedValue(catalystEvents);
+    const catalystSnapshotSpy = vi
+      .spyOn(
+        companyCatalystSnapshotClient,
+        "getCompanyCatalystSnapshots",
+      )
+      .mockResolvedValue(catalystSnapshots);
     const companyMasterSpy = vi
       .spyOn(companyMasterClient, "listCompanies")
       .mockResolvedValue(companyMaster);
@@ -1777,7 +2108,7 @@ describe("MCP protocol integration", () => {
     });
 
     const server = new McpServer(
-      { name: "mopsfin-test", version: "0.6.0" },
+      { name: "mopsfin-test", version: "0.6.1" },
       {
         capabilities: { tools: {} },
         instructions: MOPSFIN_SERVER_INSTRUCTIONS,
@@ -1791,6 +2122,7 @@ describe("MCP protocol integration", () => {
     await client.connect(clientTransport);
 
     expect(client.getServerVersion()?.name).toBe("mopsfin-test");
+    expect(client.getServerVersion()?.version).toBe("0.6.1");
     expect(client.getInstructions()).toContain("IFRSs");
     expect(client.getInstructions()).toContain("NO_DATA");
     expect(client.getInstructions()).toContain("cumulative_yoy");
@@ -1803,16 +2135,25 @@ describe("MCP protocol integration", () => {
     expect(client.getInstructions()).toContain("get_monthly_revenue");
     expect(client.getInstructions()).toContain("get_monthly_revenue_trend");
     expect(client.getInstructions()).toContain("get_stock_reaction_signals");
+    expect(client.getInstructions()).toContain(
+      "get_company_catalyst_snapshots",
+    );
+    expect(client.getInstructions()).toContain(
+      "current official catalyst snapshots",
+    );
+    expect(client.getInstructions()).toContain("point-in-time");
     expect(client.getInstructions()).toContain("screen_taiwan_stock_candidates");
     expect(client.getInstructions()).toContain("get_company_metrics_batch");
     expect(client.getInstructions()).toContain("filingCoverage");
     const listed = await client.listTools();
+    expect(listed.tools).toHaveLength(18);
     expect(listed.tools.map((tool) => tool.name)).toEqual([
       "find_companies",
       "get_stock_ohlc",
       "get_daily_market_ohlc",
       "get_stock_reaction_signals",
       "get_company_catalyst_events",
+      "get_company_catalyst_snapshots",
       "screen_taiwan_stock_candidates",
       "get_daily_market_valuation",
       "get_monthly_revenue",
@@ -1964,6 +2305,61 @@ describe("MCP protocol integration", () => {
       default: 50,
       maximum: 100,
     });
+    const catalystSnapshotTool = listed.tools.find(
+      (tool) => tool.name === "get_company_catalyst_snapshots",
+    );
+    expect(catalystSnapshotTool?.description).toContain(
+      "current official snapshot evidence",
+    );
+    expect(catalystSnapshotTool?.description).toContain("sourceSnapshotDate");
+    expect(catalystSnapshotTool?.description).toContain(
+      "pointInTimeHistoryAvailable",
+    );
+    expect(catalystSnapshotTool?.description).toContain("upcomingEligible");
+    expect(catalystSnapshotTool?.description).toContain("consensus");
+    expect(catalystSnapshotTool?.description).toContain("t187ap39_O");
+    expect(catalystSnapshotTool?.description).toContain(
+      "TPEx 沒有可用 current dividend endpoint",
+    );
+    expect(
+      catalystSnapshotTool?.inputSchema.properties?.company_codes,
+    ).toMatchObject({ minItems: 1, maxItems: 20 });
+    expect(
+      catalystSnapshotTool?.inputSchema.properties?.snapshot_types,
+    ).toMatchObject({
+      minItems: 1,
+      maxItems: 4,
+      default: [
+        "forecast_achievement",
+        "forecast_material_variance",
+        "shareholder_meeting",
+        "dividend_decision",
+      ],
+    });
+    expect(catalystSnapshotTool?.inputSchema.properties?.as_of).toMatchObject({
+      const: "latest",
+      default: "latest",
+    });
+    expect(catalystSnapshotTool?.inputSchema.properties?.offset).toMatchObject({
+      default: 0,
+      minimum: 0,
+    });
+    expect(catalystSnapshotTool?.inputSchema.properties?.limit).toMatchObject({
+      default: 50,
+      maximum: 100,
+    });
+    const catalystSnapshotOutput = catalystSnapshotTool?.outputSchema as
+      | { properties?: Record<string, { description?: string }> }
+      | undefined;
+    expect(catalystSnapshotOutput?.properties?.records?.description).toContain(
+      "snapshot records",
+    );
+    expect(catalystSnapshotOutput?.properties?.sources?.description).toContain(
+      "stale",
+    );
+    expect(catalystSnapshotOutput?.properties?.isConsensus?.description).toContain(
+      "不是分析師 consensus",
+    );
     const screenTool = listed.tools.find(
       (tool) => tool.name === "screen_taiwan_stock_candidates",
     );
@@ -2065,6 +2461,12 @@ describe("MCP protocol integration", () => {
           company_codes: ["2330"],
           start_date: "2026-01-01",
           end_date: "2026-01-31",
+        },
+      ],
+      [
+        "get_company_catalyst_snapshots",
+        {
+          company_codes: ["3105"],
         },
       ],
       [
@@ -2418,6 +2820,187 @@ describe("MCP protocol integration", () => {
           "per_company_event_type_calendar_month",
         );
       }
+      if (name === "get_company_catalyst_snapshots") {
+        const structured = result.structuredContent as {
+          meta: {
+            asOf: {
+              selector: string;
+              resolved: {
+                granularity: string;
+                from: string | null;
+                through: string | null;
+              };
+              snapshotId: string | null;
+            };
+            quality: {
+              source: string;
+              universe: string;
+              selection: string;
+              values: string;
+              freshness: string;
+              issues: Array<{ code: string }>;
+            };
+            page: { mode: string; unit: string; total: number | null };
+          };
+          scope: string;
+          isConsensus: boolean;
+          records: Array<{
+            snapshotType: string;
+            freshness: string;
+            pointInTimeHistoryAvailable: boolean;
+            firstKnownAt: null;
+            isConsensus: boolean;
+            upcomingEligible: boolean;
+            details: { kind: string; meetingDate?: string };
+          }>;
+          sources: Array<{
+            snapshotType: string;
+            market: string;
+            sourceKey: string;
+            sourceUrl: string | null;
+            status: string;
+            freshness: string;
+            pointInTimeHistoryAvailable: boolean;
+            isConsensus: boolean;
+          }>;
+          coverage: {
+            sourceComplete: boolean;
+            selection: string;
+            failureIsolation: string;
+            snapshots: Array<{
+              snapshotType: string;
+              status: string;
+              disclosureStatus: string;
+              freshness: string;
+            }>;
+          };
+          companies: Array<{
+            staleSnapshotTypes: string[];
+            unsupportedSnapshotTypes: string[];
+            failedSnapshotTypes: string[];
+          }>;
+          failures: Array<{
+            snapshotType: string;
+            affectedCompanyCodes: string[];
+          }>;
+        };
+        expect(structured.meta).toMatchObject({
+          asOf: {
+            selector: "latest",
+            resolved: {
+              granularity: "mixed",
+              from: "2021-04-16",
+              through: "2026-08-27",
+            },
+            snapshotId: "fixture-catalyst-snapshot-fingerprint",
+          },
+          quality: {
+            source: "partial",
+            universe: "verified",
+            selection: "partial",
+            values: "partial",
+            freshness: "stale",
+          },
+          page: { mode: "offset", unit: "row", total: 2 },
+        });
+        expect(structured.meta.quality.issues.map((issue) => issue.code)).toEqual(
+          expect.arrayContaining([
+            "CATALYST_SNAPSHOT_SOURCE_FAILED",
+            "CATALYST_SNAPSHOT_SOURCE_STALE",
+            "CATALYST_SNAPSHOT_ROUTE_UNSUPPORTED",
+            "CATALYST_SNAPSHOT_NO_POINT_IN_TIME_HISTORY",
+            "OFFICIAL_DISCLOSURE_NOT_CONSENSUS",
+          ]),
+        );
+        expect(structured).toMatchObject({
+          scope: "current_official_company_snapshots",
+          isConsensus: false,
+          coverage: {
+            sourceComplete: false,
+            selection: "partial",
+            failureIsolation: "per_snapshot_type_market",
+          },
+          failures: [
+            {
+              snapshotType: "forecast_material_variance",
+              affectedCompanyCodes: ["3105"],
+            },
+          ],
+        });
+        expect(structured.records).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              snapshotType: "forecast_achievement",
+              freshness: "stale",
+              pointInTimeHistoryAvailable: false,
+              firstKnownAt: null,
+              isConsensus: false,
+              upcomingEligible: false,
+            }),
+            expect.objectContaining({
+              snapshotType: "shareholder_meeting",
+              freshness: "within_expected_window",
+              pointInTimeHistoryAvailable: false,
+              firstKnownAt: null,
+              isConsensus: false,
+              upcomingEligible: true,
+              details: expect.objectContaining({
+                kind: "shareholder_meeting",
+                meetingDate: "2026-09-30",
+              }),
+            }),
+          ]),
+        );
+        expect(structured.sources).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              snapshotType: "forecast_achievement",
+              status: "nonempty",
+              freshness: "stale",
+              pointInTimeHistoryAvailable: false,
+              isConsensus: false,
+            }),
+            expect.objectContaining({
+              snapshotType: "forecast_material_variance",
+              status: "failed",
+              freshness: "not_applicable",
+            }),
+            expect.objectContaining({
+              snapshotType: "dividend_decision",
+              market: "otc",
+              sourceKey: "tpex_dividend_decision_current_unsupported",
+              sourceUrl: null,
+              status: "unsupported",
+              freshness: "not_applicable",
+            }),
+          ]),
+        );
+        expect(structured.coverage.snapshots).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              snapshotType: "forecast_achievement",
+              status: "partial",
+              disclosureStatus: "disclosed",
+              freshness: "stale",
+            }),
+            expect.objectContaining({
+              snapshotType: "forecast_material_variance",
+              status: "failed",
+              disclosureStatus: "unknown_source_failure",
+            }),
+            expect.objectContaining({
+              snapshotType: "dividend_decision",
+              status: "unsupported",
+              disclosureStatus: "unsupported",
+            }),
+          ]),
+        );
+        expect(structured.companies[0]).toMatchObject({
+          staleSnapshotTypes: ["forecast_achievement"],
+          unsupportedSnapshotTypes: ["dividend_decision"],
+          failedSnapshotTypes: ["forecast_material_variance"],
+        });
+      }
       if (name === "screen_taiwan_stock_candidates") {
         const structured = result.structuredContent as {
           meta: {
@@ -2606,6 +3189,21 @@ describe("MCP protocol integration", () => {
         ]);
       }
     }
+
+    expect(catalystSnapshotSpy).toHaveBeenCalledTimes(1);
+    expect(catalystSnapshotSpy).toHaveBeenCalledWith({
+      companyCodes: ["3105"],
+      snapshotTypes: [
+        "forecast_achievement",
+        "forecast_material_variance",
+        "shareholder_meeting",
+        "dividend_decision",
+      ],
+      companyMarkets: [{ companyCode: "3105", market: "otc" }],
+      asOf: "latest",
+      offset: 0,
+      limit: 50,
+    });
 
     const isolatedFailure = {
       failureId: "fixture-catalyst-failure",

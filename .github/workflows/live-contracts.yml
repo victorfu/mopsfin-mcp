@@ -36,7 +36,7 @@ jobs:
       - name: Run the focused corporate-action contracts
         if: github.event_name == 'schedule' || inputs.suite == 'corporate-actions'
         run: npm run test:live:corporate-actions
-      - name: Run the focused catalyst contracts
+      - name: Run the focused catalyst event and snapshot contracts
         if: github.event_name == 'schedule' || inputs.suite == 'catalysts'
         run: npm run test:live:catalysts
       - name: Run all live contracts

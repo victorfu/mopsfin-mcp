@@ -339,12 +339,18 @@ function inferSourceCutoffs(
         : [];
   return rawSources.flatMap((raw) => {
     if (!isRecord(raw)) return [];
+    const status = readString(raw, "status");
+    if (status === "failed" || status === "unsupported") return [];
     const sourceUrl = readString(raw, "sourceUrl");
     if (!sourceUrl) return [];
+    const retrievedAt =
+      readString(raw, "retrievedAt") ?? readString(data, "retrievedAt");
+    if (!retrievedAt) return [];
     const snapshotIdentity = readString(raw, "snapshotIdentity");
     const value =
       readString(raw, "dataDate") ??
       readString(raw, "dataMonth") ??
+      readString(raw, "sourceSnapshotDate") ??
       readString(raw, "reportDate") ??
       readString(raw, "sourceReportDate") ??
       readString(raw, "asOf");
@@ -378,11 +384,10 @@ function inferSourceCutoffs(
           ? { granularity, from: value, through: value }
           : { ...fallback },
         publishedAt:
-          readString(raw, "sourceReportDate") ?? readString(raw, "reportDate"),
-        retrievedAt:
-          readString(raw, "retrievedAt") ??
-          readString(data, "retrievedAt") ??
-          new Date().toISOString(),
+          readString(raw, "sourceSnapshotDate") ??
+          readString(raw, "sourceReportDate") ??
+          readString(raw, "reportDate"),
+        retrievedAt,
       },
     ];
   });

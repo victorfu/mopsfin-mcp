@@ -10,9 +10,9 @@ export function GET() {
     {
       status: "ok",
       service: "mopsfin-taiwan-equities",
-      version: "0.6.0",
+      version: "0.6.1",
       resultContractVersion: "mopsfin.result.v1",
-      toolCount: 17,
+      toolCount: 18,
       readiness: {
         status: "ready",
         upstreamChecks: "not_run",
@@ -70,6 +70,20 @@ export function GET() {
           "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
         mopsInvestorConferenceHistory:
           "https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1",
+        twseForecastAchievementSnapshot:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap15_L",
+        tpexForecastAchievementSnapshot:
+          "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap15_O",
+        twseForecastMaterialVarianceSnapshot:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap16_L",
+        tpexForecastMaterialVarianceSnapshot:
+          "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap16_O",
+        twseShareholderMeetingSnapshot:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap41_L",
+        tpexShareholderMeetingSnapshot:
+          "https://www.tpex.org.tw/openapi/v1/t187ap41_O",
+        twseDividendDecisionSnapshot:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap45_L",
       },
       checkedAt: new Date().toISOString(),
       note: "此端點只確認應用程式可回應，不會為健康檢查呼叫 Mopsfin、TWSE 或 TPEx 財務／行情來源。",

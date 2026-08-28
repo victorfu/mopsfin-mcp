@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 
 import { catalystClient } from "@/lib/catalyst/client";
+import { companyCatalystSnapshotClient } from "@/lib/catalyst/snapshot-client";
 import { companyMasterClient } from "@/lib/company-master/client";
 import { MOPSFIN_SOURCE_URL } from "@/lib/mopsfin/constants";
 import { companyMetricsBatchClient } from "@/lib/mopsfin/batch";
@@ -27,6 +28,8 @@ import { fingerprint, paginateByCompany } from "./cursor";
 import {
   companyCatalystEventsInputSchema,
   companyCatalystEventsOutputSchema,
+  companyCatalystSnapshotsInputSchema,
+  companyCatalystSnapshotsOutputSchema,
   companyMetricInputSchema,
   companyMetricOutputSchema,
   companyMetricsBatchInputSchema,
@@ -689,6 +692,299 @@ export function registerMopsfinTools(server: McpServer): void {
                 : "partial",
             values: data.failures.length === 0 ? "complete" : "partial",
             freshness: "unknown",
+            issues,
+          },
+        );
+      } catch (error) {
+        return failure(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_company_catalyst_snapshots",
+    {
+      title: "查詢公司官方催化快照",
+      description:
+        "查詢 1–20 家台股公司的 current official snapshot evidence：公司財測達成、財測重大差異名單、股東會排程與股利決議；as_of 固定 latest，不接受歷史日期。工具依目前上市櫃 master 縮小 current source routes，未匹配代號會安全探測雙市場；共享 full-market source failure 按 snapshotType×market 隔離，不能當成合法空值。sourceSnapshotDate 是官方出表日，不是 factDate、首次公告日或 firstKnownAt；pointInTimeHistoryAvailable 固定 false。距 Asia/Taipei latest 超過 7 日為 stale，stale／failed／unsupported 不得解讀為 current no-data；只有 fresh、schema-valid snapshot 可標 not_disclosed_in_snapshot。upcomingEligible 只可能用於 fresh 且會議日未過的股東會；公司財測與官方揭露不是分析師 consensus。TPEx 沒有可用 current dividend endpoint，固定明示 unsupported，且不使用停在 2021 年的 t187ap39_O 冒充。董事會（擬議）股利分派日是 board action date、不是股利支付日。最多規劃 8 個 family×market routes；offset 續頁會重新查來源，必須核對 fingerprint／meta.asOf.snapshotId。工具不產生情緒、impact score、買賣建議，也不改變 screening 分數。",
+      inputSchema: companyCatalystSnapshotsInputSchema,
+      outputSchema: companyCatalystSnapshotsOutputSchema,
+      annotations,
+    },
+    async ({ company_codes, snapshot_types, as_of, offset, limit }) => {
+      try {
+        let marketHintWarning: string | null = null;
+        let marketHintIssueCode:
+          | "CATALYST_SNAPSHOT_MARKET_HINT_PARTIAL"
+          | "CATALYST_SNAPSHOT_MARKET_HINT_UNAVAILABLE"
+          | null = null;
+        let marketHintMissingCodes: string[] = [];
+        let companyMarkets:
+          | Array<{ companyCode: string; market: "listed" | "otc" }>
+          | undefined;
+        try {
+          const master = await companyMasterClient.listCompanies({
+            market: "all",
+            includeFinancial: true,
+            includeKy: true,
+          });
+          const requestedCodes = new Set(company_codes);
+          companyMarkets = master.companies
+            .filter((company) => requestedCodes.has(company.code))
+            .map((company) => ({
+              companyCode: company.code,
+              market: company.market,
+            }));
+          const matchedCodes = new Set(
+            companyMarkets.map((company) => company.companyCode),
+          );
+          marketHintMissingCodes = company_codes.filter(
+            (code) => !matchedCodes.has(code),
+          );
+          if (marketHintMissingCodes.length > 0) {
+            marketHintIssueCode = "CATALYST_SNAPSHOT_MARKET_HINT_PARTIAL";
+            marketHintWarning = `目前公司 master 找不到 ${marketHintMissingCodes.join(", ")}；current snapshot 將對未匹配代號安全探測上市與上櫃 routes，合法空快照不會另行證明公司 identity。`;
+          }
+        } catch (marketHintError) {
+          const normalized = asMopsfinError(marketHintError);
+          marketHintIssueCode = "CATALYST_SNAPSHOT_MARKET_HINT_UNAVAILABLE";
+          marketHintMissingCodes = [...company_codes];
+          marketHintWarning = `目前公司 master identity／市場 routing 不可用（${normalized.code}）；current snapshot 將安全探測上市與上櫃 routes。`;
+        }
+
+        const data =
+          await companyCatalystSnapshotClient.getCompanyCatalystSnapshots({
+            companyCodes: company_codes,
+            snapshotTypes: snapshot_types,
+            companyMarkets,
+            asOf: as_of,
+            offset,
+            limit,
+          });
+        const outputData = marketHintWarning
+          ? { ...data, warnings: [...data.warnings, marketHintWarning] }
+          : data;
+        const sourceUrls = [
+          ...new Set(
+            data.sources.flatMap((item) =>
+              item.sourceUrl === null ? [] : [item.sourceUrl],
+            ),
+          ),
+        ];
+        const staleSources = data.sources.filter(
+          (item) => item.freshness === "stale",
+        );
+        const unsupportedSources = data.sources.filter(
+          (item) => item.status === "unsupported",
+        );
+        const unverifiedIdentityCodes = data.companies
+          .filter((company) => company.identityStatus === "unverified")
+          .map((company) => company.companyCode);
+        const successfulSnapshotDates = data.sources.flatMap((item) =>
+          item.sourceSnapshotDate === null ? [] : [item.sourceSnapshotDate],
+        );
+        const orderedSnapshotDates = [...new Set(successfulSnapshotDates)].sort();
+        const issues: NonNullable<ResultMetaHints["issues"]> = [
+          ...(data.failures.length > 0
+            ? [
+                {
+                  code: "CATALYST_SNAPSHOT_SOURCE_FAILED",
+                  severity: "warning" as const,
+                  scope: "source" as const,
+                  message:
+                    "部分 snapshotType×market 官方 route 失敗；其他成功 records 仍保留，失敗不得解讀為 current no-data。",
+                  refs: {
+                    companyCodes: [
+                      ...new Set(
+                        data.failures.flatMap(
+                          (item) => item.affectedCompanyCodes,
+                        ),
+                      ),
+                    ],
+                    fields: ["failures", "sources", "coverage.snapshots"],
+                    periods: [],
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+          ...(staleSources.length > 0
+            ? [
+                {
+                  code: "CATALYST_SNAPSHOT_SOURCE_STALE",
+                  severity: "warning" as const,
+                  scope: "period" as const,
+                  message:
+                    "部分官方 snapshot 超過 7 日 freshness window；其缺列不能解讀為目前未揭露，且不得形成 upcoming evidence。",
+                  refs: {
+                    companyCodes: [
+                      ...new Set(
+                        staleSources.flatMap(
+                          (item) => item.requestedCompanyCodes,
+                        ),
+                      ),
+                    ],
+                    fields: [
+                      "sources.sourceSnapshotDate",
+                      "sources.freshness",
+                      "coverage.snapshots.disclosureStatus",
+                    ],
+                    periods: staleSources.flatMap((item) =>
+                      item.sourceSnapshotDate === null
+                        ? []
+                        : [item.sourceSnapshotDate],
+                    ),
+                    sourceUrls: staleSources.flatMap((item) =>
+                      item.sourceUrl === null ? [] : [item.sourceUrl],
+                    ),
+                  },
+                },
+              ]
+            : []),
+          ...(unsupportedSources.length > 0
+            ? [
+                {
+                  code: "CATALYST_SNAPSHOT_ROUTE_UNSUPPORTED",
+                  severity: "warning" as const,
+                  scope: "source" as const,
+                  message:
+                    "部分 market×family 沒有可用 current official route；目前 TPEx 股利決議固定 unsupported，不以 legacy stale dataset 代替。",
+                  refs: {
+                    companyCodes: [
+                      ...new Set(
+                        unsupportedSources.flatMap(
+                          (item) => item.requestedCompanyCodes,
+                        ),
+                      ),
+                    ],
+                    fields: ["sources.status", "coverage.snapshots"],
+                    periods: [],
+                    sourceUrls: [],
+                  },
+                },
+              ]
+            : []),
+          {
+            code: "CATALYST_SNAPSHOT_NO_POINT_IN_TIME_HISTORY",
+            severity: "info" as const,
+            scope: "period" as const,
+            message:
+              "這些 endpoints 是當次 full-market snapshot，不能回放歷史 vintage；sourceSnapshotDate 不會代填 firstKnownAt。",
+            refs: {
+              companyCodes: data.query.companyCodes,
+              fields: [
+                "pointInTimeHistoryAvailable",
+                "sourceSnapshotDate",
+                "firstKnownAt",
+              ],
+              periods: orderedSnapshotDates,
+              sourceUrls,
+            },
+          },
+          {
+            code: "OFFICIAL_DISCLOSURE_NOT_CONSENSUS",
+            severity: "info" as const,
+            scope: "value" as const,
+            message:
+              "公司財測達成／重大差異與其他官方 snapshot evidence 不是分析師 consensus、預估修正或投資建議。",
+            refs: {
+              companyCodes: data.query.companyCodes,
+              fields: ["isConsensus", "records"],
+              periods: orderedSnapshotDates,
+              sourceUrls,
+            },
+          },
+          ...(data.pagination.hasMore || data.pagination.offset > 0
+            ? [
+                {
+                  code: "CATALYST_SNAPSHOT_OFFSET_PAGE_NOT_PINNED",
+                  severity: "info" as const,
+                  scope: "page" as const,
+                  message:
+                    "offset 續頁會重新讀取 current official snapshots；fingerprint 改變時應由 offset=0 重查。",
+                  refs: {
+                    companyCodes: data.query.companyCodes,
+                    fields: ["pagination", "fingerprint"],
+                    periods: orderedSnapshotDates,
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+          ...(marketHintWarning && marketHintIssueCode
+            ? [
+                {
+                  code: marketHintIssueCode,
+                  severity: "info" as const,
+                  scope: "universe" as const,
+                  message: marketHintWarning,
+                  refs: {
+                    companyCodes: marketHintMissingCodes,
+                    fields: ["query.companyMarkets", "companies.identityStatus"],
+                    periods: [],
+                    sourceUrls: [],
+                  },
+                },
+              ]
+            : []),
+          ...(unverifiedIdentityCodes.length > 0
+            ? [
+                {
+                  code: "CATALYST_SNAPSHOT_COMPANY_IDENTITY_UNVERIFIED",
+                  severity: "warning" as const,
+                  scope: "selection" as const,
+                  message:
+                    "部分代號不在目前公司 master，也沒有 snapshot record 可確認 current identity；合法空 snapshot 不能證明公司存在。",
+                  refs: {
+                    companyCodes: unverifiedIdentityCodes,
+                    fields: ["companies.identityStatus", "coverage.snapshots"],
+                    periods: orderedSnapshotDates,
+                    sourceUrls,
+                  },
+                },
+              ]
+            : []),
+        ];
+        return success(
+          `官方 catalyst snapshots 查詢完成：${data.counts.requestedCompanies} 家公司、${data.counts.totalRecords} 筆 records，本頁回傳 ${data.counts.returnedRecords} 筆；stale=${data.counts.staleSources}、failed=${data.counts.failedSources}、unsupported=${data.counts.unsupportedSources}。`,
+          outputData,
+          {
+            selector: "latest",
+            resolved:
+              orderedSnapshotDates.length === 0
+                ? { granularity: "none", from: null, through: null }
+                : {
+                    granularity:
+                      orderedSnapshotDates.length === 1 ? "date" : "mixed",
+                    from: orderedSnapshotDates[0] ?? null,
+                    through: orderedSnapshotDates.at(-1) ?? null,
+                  },
+            page: {
+              mode: "offset",
+              unit: "row",
+              limit: data.pagination.limit,
+              returned: data.pagination.returnedRows,
+              total: data.pagination.totalRows,
+              next:
+                data.pagination.nextOffset === null
+                  ? null
+                  : {
+                      kind: "offset",
+                      offset: data.pagination.nextOffset,
+                    },
+            },
+            snapshotId: data.fingerprint,
+            source: data.coverage.sourceComplete ? "complete" : "partial",
+            universe:
+              marketHintMissingCodes.length === 0 ? "verified" : "unverified",
+            selection: data.coverage.selection,
+            values: data.failures.length === 0 ? "complete" : "partial",
+            freshness:
+              staleSources.length > 0
+                ? "stale"
+                : data.failures.length > 0 || successfulSnapshotDates.length === 0
+                  ? "unknown"
+                  : "within_expected_window",
             issues,
           },
         );

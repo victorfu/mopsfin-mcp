@@ -13,8 +13,8 @@ describe("health route", () => {
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toMatchObject({
       status: "ok",
-      version: "0.6.0",
-      toolCount: 17,
+      version: "0.6.1",
+      toolCount: 18,
       readiness: {
         status: "ready",
         upstreamChecks: "not_run",
@@ -59,6 +59,20 @@ describe("health route", () => {
           "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
         mopsInvestorConferenceHistory:
           "https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1",
+        twseForecastAchievementSnapshot:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap15_L",
+        tpexForecastAchievementSnapshot:
+          "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap15_O",
+        twseForecastMaterialVarianceSnapshot:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap16_L",
+        tpexForecastMaterialVarianceSnapshot:
+          "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap16_O",
+        twseShareholderMeetingSnapshot:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap41_L",
+        tpexShareholderMeetingSnapshot:
+          "https://www.tpex.org.tw/openapi/v1/t187ap41_O",
+        twseDividendDecisionSnapshot:
+          "https://openapi.twse.com.tw/v1/opendata/t187ap45_L",
       },
     });
     expect(fetchSpy).not.toHaveBeenCalled();

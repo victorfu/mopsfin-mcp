@@ -197,6 +197,87 @@ describe("mopsfin.result.v1", () => {
       { granularity: "quarter", from: "2026Q2", through: "2026Q2" },
     ]);
   });
+
+  it("uses catalyst sourceSnapshotDate as the source cutoff", () => {
+    const meta = buildResultMeta(
+      {
+        sources: [
+          {
+            sourceUrl: "https://example.test/catalyst-snapshot",
+            retrievedAt: "2026-08-28T00:00:00.000Z",
+            sourceSnapshotDate: "2026-08-27",
+          },
+        ],
+      },
+      {
+        selector: "latest",
+        resolved: {
+          granularity: "date",
+          from: "2026-08-27",
+          through: "2026-08-27",
+        },
+      },
+      "2026-08-28T00:00:00.000Z",
+    );
+
+    expect(meta.asOf.sourceCutoffs[0]).toMatchObject({
+      resolved: {
+        granularity: "date",
+        from: "2026-08-27",
+        through: "2026-08-27",
+      },
+      publishedAt: "2026-08-27",
+    });
+  });
+
+  it("does not fabricate source cutoffs for failed, unsupported or unretrieved routes", () => {
+    const meta = buildResultMeta(
+      {
+        sources: [
+          {
+            sourceUrl: "https://example.test/failed",
+            status: "failed",
+            retrievedAt: null,
+            sourceSnapshotDate: null,
+          },
+          {
+            sourceUrl: null,
+            status: "unsupported",
+            retrievedAt: null,
+            sourceSnapshotDate: null,
+          },
+          {
+            sourceUrl: "https://example.test/not-retrieved",
+            status: "nonempty",
+            sourceSnapshotDate: "2026-08-27",
+          },
+          {
+            sourceUrl: "https://example.test/success",
+            status: "nonempty",
+            retrievedAt: "2026-08-28T00:00:00.000Z",
+            sourceSnapshotDate: "2026-08-27",
+          },
+        ],
+      },
+      {
+        selector: "latest",
+        resolved: {
+          granularity: "date",
+          from: "2026-08-27",
+          through: "2026-08-27",
+        },
+      },
+      "2026-08-28T00:00:00.000Z",
+    );
+
+    expect(meta.asOf.sourceCutoffs).toEqual([
+      expect.objectContaining({
+        sourceUrl: "https://example.test/success",
+        retrievedAt: "2026-08-28T00:00:00.000Z",
+        publishedAt: "2026-08-27",
+      }),
+    ]);
+  });
 });
 
 describe("stateless company cursor", () => {

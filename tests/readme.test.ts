@@ -21,6 +21,7 @@ const verifiedExamplePrompts = [
   "比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始與 price-index-compatible 報酬、公司行動證據及量能訊號。",
   "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。",
   "查台積電與聯發科 2026-07-01 至 2026-08-24 的官方重大訊息與法說會；分開 publishedAt、factDate、scheduledAt、effectiveAt，並標示 failures 與 verified empty，不要當成 consensus 或正負面分數。",
+  "查台積電與穩懋的 current official catalyst snapshots，分開財測達成、財測重大差異、股東會與股利決議；標示 sourceSnapshotDate、freshness、firstKnownAt、upcomingEligible 與 unsupported，不要當成歷史事件或分析師 consensus。",
   "列出全部上市公司代號，不要包含上櫃公司。",
   "列出全部上市與上櫃公司，排除金融業與 KY 公司。",
   "比較台積電和聯發科最近 8 季 ROE，標示期別、單位與 warnings。",
@@ -41,7 +42,7 @@ describe("README example prompts", () => {
     expect(readme).not.toContain("列出最近完成交易日全部上市櫃公司的 OHLC");
   });
 
-  it("documents the v0.6.0 seventeen-tool contract and official sources", () => {
+  it("documents the v0.6.1 eighteen-tool contract and official sources", () => {
     const tools = [
       "find_companies",
       "get_stock_ohlc",
@@ -51,6 +52,7 @@ describe("README example prompts", () => {
       "get_monthly_revenue",
       "get_monthly_revenue_trend",
       "get_company_catalyst_events",
+      "get_company_catalyst_snapshots",
       "screen_taiwan_stock_candidates",
       "list_companies",
       "list_catalog",
@@ -61,8 +63,8 @@ describe("README example prompts", () => {
       "get_industry_data",
       "get_financial_institution_metric",
     ];
-    expect(readme).toContain("目前版本 `0.6.0`");
-    expect(readme).toContain("十七個工具");
+    expect(readme).toContain("目前版本 `0.6.1`");
+    expect(readme).toContain("十八個工具");
     for (const tool of tools) expect(readme).toContain(`\`${tool}\``);
     expect(readme).toContain("meta.contractVersion=mopsfin.result.v1");
     expect(readme).toContain("meta.asOf");
@@ -152,6 +154,25 @@ describe("README example prompts", () => {
     expect(readme).toContain("https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap04_O");
     expect(readme).toContain("https://mopsov.twse.com.tw/mops/web/ajax_t05st01");
     expect(readme).toContain("https://mopsov.twse.com.tw/mops/web/ajax_t100sb02_1");
+    expect(readme).toContain("forecast_achievement");
+    expect(readme).toContain("forecast_material_variance");
+    expect(readme).toContain("shareholder_meeting");
+    expect(readme).toContain("dividend_decision");
+    expect(readme).toContain("sourceSnapshotDate");
+    expect(readme).toContain("pointInTimeHistoryAvailable");
+    expect(readme).toContain("firstKnownAt");
+    expect(readme).toContain("upcomingEligible");
+    expect(readme).toContain("not_disclosed_in_snapshot");
+    expect(readme).toContain("within_expected_window");
+    expect(readme).toContain(
+      "任何 `sourceSnapshotDate` 晚於 Asia/Taipei as-of date",
+    );
+    expect(readme).not.toContain("未來超過 1 日");
+    expect(readme).toContain("stale `mopsfin_t187ap39_O`");
+    expect(readme).toContain("TPEx current dividend route 是 `unsupported`");
+    expect(readme).toContain("catalyst-snapshots.live.test.ts");
+    expect(readme).toContain("https://openapi.twse.com.tw/v1/opendata/t187ap15_L");
+    expect(readme).toContain("https://www.tpex.org.tw/openapi/v1/t187ap41_O");
     expect(readme).toContain("failureIsolationComplete=false");
     expect(readme).toContain("company×metric");
     expect(readme).toContain("company_metrics_unavailable");
