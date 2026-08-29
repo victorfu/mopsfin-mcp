@@ -96,13 +96,13 @@ function fixture(): ObservedPriceAnalysisContext {
     },
   };
   const otcMaster = {
-    sourceId: "company_master:otc:2026-08-27",
+    sourceId: "company_master:otc:2026-08-28",
     stage: "company_master" as const,
     market: "otc" as const,
     exchange: "TPEx" as const,
     sourceName: "證券櫃檯買賣中心－上櫃公司基本資料",
     sourceUrl: "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
-    reportDate: "2026-08-27",
+    reportDate: "2026-08-28",
     retrievedAt: "2026-08-28T00:31:00.000Z",
     rawCount: 801,
     excludedTdrCount: 1,
@@ -240,6 +240,7 @@ function fixture(): ObservedPriceAnalysisContext {
       "價差只是 caller-supplied 觀察值相對官方完成交易日收盤價的機械比較，不代表 fair value、買賣建議或投資評級。",
       "官方基準先由 authoritative completed-session resolver 固定 expectedAsOf，再查同日 exact single-stock OHLC；不使用可能落後的全市場 latest endpoint，也不退回前一日價格。",
       "指定公司由外層 market=all master 與單股官方來源的 code、name、market 精確核對；exact price dependency 不重複取得 current master。",
+      "上市與上櫃 master 各自驗證 schema、coverage、reportDate 與 source provenance；兩市場 reportDate 可不同，不會阻斷跨來源唯一的指定公司 identity。",
     ],
   };
   return { data, completedClose };
@@ -331,6 +332,24 @@ describe("analyze_observed_price public MCP tool", () => {
       values: "complete",
       freshness: "within_expected_window",
     });
+    const masterFreshness = envelope.meta.quality.freshnessDetails.filter(
+      (detail) =>
+        detail.policyId === "official.current-snapshot.max-age-7d.v1",
+    );
+    expect(masterFreshness).toEqual([
+      expect.objectContaining({
+        observedAsOf: "2026-08-27",
+        sourceUrls: [
+          "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+        ],
+      }),
+      expect.objectContaining({
+        observedAsOf: "2026-08-28",
+        sourceUrls: [
+          "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+        ],
+      }),
+    ]);
     const completedFreshness = envelope.meta.quality.freshnessDetails.find(
       (detail) => detail.policyId === "official.completed-session.v1",
     );

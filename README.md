@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.10.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 23 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、年度開休市日曆、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。另可將 caller 自行觀察的價格與官方最近完成交易日收盤價分開標示後比較；caller 值不會被冒充成官方或即時行情。
+目前版本 `0.10.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 23 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、年度開休市日曆、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。另可將 caller 自行觀察的價格與官方最近完成交易日收盤價分開標示後比較；caller 值不會被冒充成官方或即時行情。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -166,7 +166,7 @@ HTML 表格仍以 `pagination.nextOffset` 續頁，單一個股跨月 OHLC 以 `
 
 ### `analyze_observed_price` Caller 觀察價比較
 
-這個工具處理「我目前看到 33.35 元」之類的使用情境，但不新增或假裝存在外部即時行情來源。caller 必須提供單一四碼 `company_code`、大於 0 的 `observed_price_twd`、含明確 `Z` 或 UTC offset 的 `observed_at`，以及非空 `source_label`。`-00:00` 表示未知 local offset，因此不被接受。工具先以 `market=all` 目前公司 master 的 listed／otc 兩份來源核對 company identity，再凍結同一個 `evaluatedAt`：依公司所屬市場呼叫 authoritative completed-session resolver 取得 `expectedAsOf`，接著查該公司的 exact single-stock monthly OHLC，且只接受 `selectedBarDate=expectedAsOf`、市場與名稱都精確吻合的 `raw_unadjusted` 已成交正數收盤價。全市場 latest OHLC 不參與這條價格 routing，也不會在 exact bar 缺少時退回前一交易日。
+這個工具處理「我目前看到 33.35 元」之類的使用情境，但不新增或假裝存在外部即時行情來源。caller 必須提供單一四碼 `company_code`、大於 0 的 `observed_price_twd`、含明確 `Z` 或 UTC offset 的 `observed_at`，以及非空 `source_label`。`-00:00` 表示未知 local offset，因此不被接受。工具先以 `market=all` 目前公司 master 的 listed／otc 兩份來源核對 company identity；兩市場各自驗證 schema、coverage、`reportDate` 與 provenance，不要求 `reportDate` 同日，但指定代號必須跨來源唯一。接著凍結同一個 `evaluatedAt`：依公司所屬市場呼叫 authoritative completed-session resolver 取得 `expectedAsOf`，查該公司的 exact single-stock monthly OHLC，且只接受 `selectedBarDate=expectedAsOf`、市場與名稱都精確吻合的 `raw_unadjusted` 已成交正數收盤價。全市場 latest OHLC 不參與這條價格 routing，也不會在 exact bar 缺少時退回前一交易日。兩份 master freshness 依各自 `reportDate` 分開揭露，不把不同日期偽裝成同一 snapshot。
 
 輸出固定分開 `CALLER_SUPPLIED` 觀察值、`OFFICIAL_MASTER_RAW` 公司 identity、`OFFICIAL_MARKET_RAW` completed close 與 `MOPSFIN_CALC` 機械價差；`priceOrigin=caller_supplied`、`officialHistoryCutoff`、三份 evidence sources、caller-specific cache provenance 與 `dependencyLedger` 都是契約的一部分。resolver 的 calendar／exact benchmark evidence 由 `meta.quality.freshnessDetails[].resolverEvidence` 揭露，exact single-stock OHLC source 則直接保留在 `sources`；其中 `dataMonth` 是月資料文件身分，`selectedBarDate` 才是被採用的完成交易日，兩者不可互相代填。`workBudget` 分開列出 resolver logical loads、exact OHLC 一次查詢及 current-month cache 缺少 expected bar 時最多一次的 bounded refresh。
 
@@ -373,7 +373,7 @@ npm run test:live
 
 既有 GitHub Actions 以每週一次、單一 concurrency group 的低頻 live contract workflow 稽核官方 schema／snapshot identity。`catalog-screen` suite 會先強制取得即時 Mopsfin catalog，驗證七項 screening semantic roles 均唯一解析至 `family=data`，再以單一 `2330` bounded screen 確認 `company_metrics_batch` 沒有失敗且 `deepScored=1`；這是避免 catalog 代號或名稱漂移再次被寬鬆 screen test 漏掉的低成本 production canary。`completed-session` suite 會以兩個市場各一份官方年度開休市日曆與一個 exact benchmark session marker 驗證 resolver contract、source identity 與 bounded work budget。公司行動 focused canary 覆蓋 TWSE／TPEx 各自除權息、減資與面額變更六組 range-family 來源的空與非空回應、必要欄位與 range identity schema drift，並另外驗證選定事件的 TWSE `TWT49UDetail`。`catalysts` suite 會同時執行原有 events canary 與 `catalyst-snapshots.live.test.ts`：前者以兩個 current OpenAPI 請求及三個固定歷史 MOPS 查詢工作單位，後者低頻稽核 current snapshot routes 的 schema、sourceSnapshotDate、freshness 與 unsupported 語意。`observed-price` suite 以單一 `2330` 實際走過 market=all company identity、company-market authoritative resolver `expectedAsOf`、exact single-stock monthly OHLC selected bar 與 bounded routing work budget；全市場 latest snapshot 不參與 completed-close 選價，也不 fallback 前一日。`valuation-model-inputs` suite 只查單一 `2330`，在最多七個 statement calls 與一次 authoritative completed-close orchestration 內檢查三大報表 label、HTML unit provenance、共同期別、合併範圍、TTM bridge，以及 source `dataMonth`／`selectedBarDate` 與 resolver 日期完全一致。只有可核對 identity 的合法空回應才是 `verified_empty`；缺少 identity、stale、failed 或 unsupported 不能解釋為 current no-data。這些 canary 直接讀取官方來源，不使用資料庫、不寫入 persistence，也不改變 MCP runtime result contract。`workflow_dispatch` 的 `suite` 可選 `catalog-screen`、`completed-session`、`corporate-actions`、`catalysts`、`observed-price`、`valuation-model-inputs` 或 `all`；每週排程固定執行六類 focused canaries。請勿提高排程頻率或加入高基數掃描，以免對官方來源造成不必要流量。
 
-`completed-session` suite 另以單一 `2330` 驗證 resolved listed `expectedAsOf` 確實路由到同日 exact single-stock close；這條 direct canary 不依賴兩市場 company-master `reportDate` 必須同日，因此可在 observed-price／valuation-model 外層 identity gate 因上游日期偏差而 fail closed 時，繼續獨立監測 completed-close routing。
+`completed-session` suite 另以單一 `2330` 驗證 resolved listed `expectedAsOf` 確實路由到同日 exact single-stock close；這條 direct canary 可獨立監測 completed-close routing。`observed-price` live canary 則另外驗證 listed／otc master 即使各自 `reportDate` 不同，仍能保留兩份來源與 freshness，並將跨來源唯一的 2330 identity 路由到上市市場 close。
 
 公司行動 canary 中，缺少可核對 range identity 的空回應仍是 `unverified_empty`，不能宣稱已證明沒有事件。
 

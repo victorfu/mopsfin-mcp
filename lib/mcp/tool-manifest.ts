@@ -115,8 +115,8 @@ export function publicToolContractPayload(
  * title, description, inputSchema, outputSchema, and annotations.
  */
 export const PUBLIC_TOOL_CONTRACT_SHA256 =
-  "aafac6ccbbf89b0048ff7ca05d9466552473bac319cbf5107cbc71ee2ac0a37e" as const;
+  "65fe5ea544e2ed2867ab081b4a90f4c71262790e0f3b678bfc3da90912282f46" as const;
 
 /** Exact UTF-8 SHA-256 of the MCP initialize instructions string. */
 export const PUBLIC_SERVER_INSTRUCTIONS_SHA256 =
-  "4d0346d3d5b27040667e2db908622b2a0d3d9a8b221a345652fa615f6bc9e072" as const;
+  "076fef4a4001e112ad29496a3c4da98b2aac7a7c40b35fa2768ee25089d85f91" as const;

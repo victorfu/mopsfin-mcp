@@ -44,6 +44,12 @@ describe("LLM-facing official guidance", () => {
       "凍結同一 evaluatedAt",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "不要求兩市場 reportDate 同日",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "兩份 master freshness 依各自 reportDate 揭露",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
       "authoritative completed-session resolver 解析 expectedAsOf",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(

@@ -440,6 +440,43 @@ describe("ObservedPriceClient", () => {
     );
   });
 
+  it("accepts independent listed and otc master report dates for one unique company identity", async () => {
+    const master = masterResult();
+    master.sources[1] = {
+      ...master.sources[1],
+      reportDate: "2026-08-28",
+    };
+    master.snapshotId = "listed-2026-08-27+otc-2026-08-28";
+    const deps = dependencies({ master });
+    const client = new ObservedPriceClient(
+      deps.companyMaster,
+      deps.completedClose,
+      now,
+    );
+
+    const result = await client.analyzeObservedPrice(input());
+
+    expect(deps.completedClose.getLatestCompletedClose).toHaveBeenCalledTimes(1);
+    expect(result.company).toMatchObject({
+      code: "2330",
+      market: "listed",
+      exchange: "TWSE",
+    });
+    expect(result.sources.slice(0, 2)).toMatchObject([
+      {
+        sourceId: "company_master:listed:2026-08-27",
+        market: "listed",
+        reportDate: "2026-08-27",
+      },
+      {
+        sourceId: "company_master:otc:2026-08-28",
+        market: "otc",
+        reportDate: "2026-08-28",
+      },
+    ]);
+    expect(result.latestOfficialCompletedClose).toBe(2_420);
+  });
+
   it("supports an OTC company while retaining both outer current-master sources", async () => {
     const otc = {
       code: "3105",

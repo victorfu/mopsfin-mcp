@@ -31,7 +31,11 @@ type ObservedPriceMetaData = Pick<
 };
 
 export interface ObservedPriceMetaContract {
-  freshnessDetails: [FreshnessEvaluation, FreshnessEvaluation];
+  freshnessDetails: [
+    FreshnessEvaluation,
+    FreshnessEvaluation,
+    FreshnessEvaluation,
+  ];
   freshness: Extract<
     FreshnessStatus,
     "within_expected_window" | "stale" | "unknown"
@@ -180,9 +184,15 @@ export function observedPriceQualityIssues(
 export function observedPriceFreshnessDetails(
   data: ObservedPriceMetaData,
   resolverEvidence: CompletedSessionResolverEvidence,
-): [FreshnessEvaluation, FreshnessEvaluation] {
+): [FreshnessEvaluation, FreshnessEvaluation, FreshnessEvaluation] {
   const masterSources = data.sources.filter(
     (source) => source.stage === "company_master",
+  );
+  const listedMasterSource = masterSources.find(
+    (source) => source.market === "listed",
+  );
+  const otcMasterSource = masterSources.find(
+    (source) => source.market === "otc",
   );
   const closeSources = data.sources.filter(
     (source) => source.stage === "latest_official_completed_close",
@@ -193,9 +203,15 @@ export function observedPriceFreshnessDetails(
   return [
     evaluateFreshness({
       policy: FRESHNESS_POLICIES.currentSnapshotSevenDays,
-      observedAsOf: masterSources[0]?.reportDate ?? null,
+      observedAsOf: listedMasterSource?.reportDate ?? null,
       expectedAsOf: taipeiDate(data.generatedAt),
-      sourceUrls: unique(masterSources.map((source) => source.sourceUrl)),
+      sourceUrls: listedMasterSource ? [listedMasterSource.sourceUrl] : [],
+    }),
+    evaluateFreshness({
+      policy: FRESHNESS_POLICIES.currentSnapshotSevenDays,
+      observedAsOf: otcMasterSource?.reportDate ?? null,
+      expectedAsOf: taipeiDate(data.generatedAt),
+      sourceUrls: otcMasterSource ? [otcMasterSource.sourceUrl] : [],
     }),
     evaluateFreshness({
       policy: FRESHNESS_POLICIES.completedOfficialSession,

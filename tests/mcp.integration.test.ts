@@ -3859,6 +3859,7 @@ describe("MCP protocol integration", () => {
                 policyId: string;
                 observedAsOf: string | null;
                 expectedAsOf: string | null;
+                sourceUrls: string[];
               }>;
             };
           };
@@ -3882,6 +3883,24 @@ describe("MCP protocol integration", () => {
           observedAsOf: "2026-08-24",
           expectedAsOf: "2026-08-24",
         });
+        expect(
+          structured.meta.quality.freshnessDetails.filter(
+            (detail) =>
+              detail.policyId ===
+              "official.current-snapshot.max-age-7d.v1",
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            sourceUrls: [
+              "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+            ],
+          }),
+          expect.objectContaining({
+            sourceUrls: [
+              "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+            ],
+          }),
+        ]);
         expect(authoritativeCompletedCloseSpy).toHaveBeenCalledTimes(1);
         expect(exactCompletedCloseSpy).toHaveBeenCalledTimes(1);
       }

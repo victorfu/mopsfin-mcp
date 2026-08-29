@@ -69,13 +69,13 @@ function validData(): ObservedPriceAnalysisResult {
         },
       },
       {
-        sourceId: "company_master:otc:2026-08-27",
+        sourceId: "company_master:otc:2026-08-28",
         stage: "company_master",
         market: "otc",
         exchange: "TPEx",
         sourceName: "證券櫃檯買賣中心－上櫃公司基本資料",
         sourceUrl: "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
-        reportDate: "2026-08-27",
+        reportDate: "2026-08-28",
         retrievedAt: "2026-08-28T00:31:00.000Z",
         rawCount: 801,
         excludedTdrCount: 1,
@@ -144,7 +144,7 @@ function validData(): ObservedPriceAnalysisResult {
         companyMarket: "listed",
         sourceIds: [
           "company_master:listed:2026-08-27",
-          "company_master:otc:2026-08-27",
+          "company_master:otc:2026-08-28",
         ],
       },
       officialBaseline: {
@@ -170,7 +170,7 @@ function validData(): ObservedPriceAnalysisResult {
         sourceEvidence: "exposed",
         sourceIds: [
           "company_master:listed:2026-08-27",
-          "company_master:otc:2026-08-27",
+          "company_master:otc:2026-08-28",
         ],
       },
       {
@@ -221,6 +221,7 @@ function validData(): ObservedPriceAnalysisResult {
       "價差只是 caller-supplied 觀察值相對官方完成交易日收盤價的機械比較，不代表 fair value、買賣建議或投資評級。",
       "官方基準先由 authoritative completed-session resolver 固定 expectedAsOf，再查同日 exact single-stock OHLC；不使用可能落後的全市場 latest endpoint，也不退回前一日價格。",
       "指定公司由外層 market=all master 與單股官方來源的 code、name、market 精確核對；exact price dependency 不重複取得 current master。",
+      "上市與上櫃 master 各自驗證 schema、coverage、reportDate 與 source provenance；兩市場 reportDate 可不同，不會阻斷跨來源唯一的指定公司 identity。",
     ],
   };
 }
@@ -377,7 +378,24 @@ describe("analyze observed price MCP schemas", () => {
     expect(parsed.data.meta.quality.freshness).toBe(
       "within_expected_window",
     );
+    expect(parsed.data.meta.quality.freshnessDetails).toHaveLength(3);
+    expect(parsed.data.meta.quality.freshnessDetails[0]).toMatchObject({
+      policyId: "official.current-snapshot.max-age-7d.v1",
+      observedAsOf: "2026-08-27",
+      expectedAsOf: "2026-08-28",
+      sourceUrls: [
+        "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+      ],
+    });
     expect(parsed.data.meta.quality.freshnessDetails[1]).toMatchObject({
+      policyId: "official.current-snapshot.max-age-7d.v1",
+      observedAsOf: "2026-08-28",
+      expectedAsOf: "2026-08-28",
+      sourceUrls: [
+        "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+      ],
+    });
+    expect(parsed.data.meta.quality.freshnessDetails[2]).toMatchObject({
       policyId: "official.completed-session.v1",
       status: "within_expected_window",
       observedAsOf: "2026-08-28",
@@ -427,7 +445,7 @@ describe("analyze observed price MCP schemas", () => {
     ).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.meta.quality.freshness).toBe("stale");
-    expect(parsed.data.meta.quality.freshnessDetails).toHaveLength(2);
+    expect(parsed.data.meta.quality.freshnessDetails).toHaveLength(3);
     expect(parsed.data.meta.quality.freshnessDetails[0]).toMatchObject({
       policyId: "official.current-snapshot.max-age-7d.v1",
       observedAsOf: "2026-08-20",
@@ -436,6 +454,13 @@ describe("analyze observed price MCP schemas", () => {
       lag: { value: 8, unit: "calendar_day" },
     });
     expect(parsed.data.meta.quality.freshnessDetails[1]).toMatchObject({
+      policyId: "official.current-snapshot.max-age-7d.v1",
+      observedAsOf: "2026-08-20",
+      expectedAsOf: "2026-08-28",
+      status: "stale",
+      lag: { value: 8, unit: "calendar_day" },
+    });
+    expect(parsed.data.meta.quality.freshnessDetails[2]).toMatchObject({
       policyId: "official.completed-session.v1",
       observedAsOf: "2026-08-28",
       expectedAsOf: "2026-08-28",
@@ -621,7 +646,7 @@ describe("analyze observed price MCP schemas", () => {
         label: "freshness source urls differ",
         mutate: (envelope) => {
           envelope.meta.quality.freshnessDetails[0].sourceUrls = [
-            envelope.sources[0].sourceUrl,
+            envelope.sources[1].sourceUrl,
           ];
         },
       },

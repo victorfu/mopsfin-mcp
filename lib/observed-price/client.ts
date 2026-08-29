@@ -506,11 +506,8 @@ function assertMasterResult(
       },
     });
   }
-  if (
-    new Set(orderedRawSources.map((source) => source.sourceUrl)).size !== 2 ||
-    new Set(orderedRawSources.map((source) => source.reportDate)).size !== 1
-  ) {
-    fail("UPSTREAM_BAD_RESPONSE", "market=all 公司母體來源 URL 必須唯一且 reportDate 必須一致。", {
+  if (new Set(orderedRawSources.map((source) => source.sourceUrl)).size !== 2) {
+    fail("UPSTREAM_BAD_RESPONSE", "market=all 公司母體來源 URL 必須唯一。", {
       reason: "CURRENT_MASTER_SOURCE_SET_MISMATCH",
       category: "upstream",
       details: {
@@ -1341,6 +1338,7 @@ export class ObservedPriceClient {
         "價差只是 caller-supplied 觀察值相對官方完成交易日收盤價的機械比較，不代表 fair value、買賣建議或投資評級。",
         "官方基準先由 authoritative completed-session resolver 固定 expectedAsOf，再查同日 exact single-stock OHLC；不使用可能落後的全市場 latest endpoint，也不退回前一日價格。",
         "指定公司由外層 market=all master 與單股官方來源的 code、name、market 精確核對；exact price dependency 不重複取得 current master。",
+        "上市與上櫃 master 各自驗證 schema、coverage、reportDate 與 source provenance；兩市場 reportDate 可不同，不會阻斷跨來源唯一的指定公司 identity。",
         ...(completedClose.cacheRefresh.attempted
           ? [
               "current-month exact OHLC 初次命中缺少 expectedAsOf 的 cache；已做一次有界失效重取並以重取後來源作為證據。",

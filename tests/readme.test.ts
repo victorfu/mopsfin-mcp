@@ -157,6 +157,8 @@ describe("README example prompts", () => {
     expect(readme).toContain("`dataMonth` 是月資料文件身分");
     expect(readme).toContain("`workBudget.authoritativeCompletedCloseCalls`");
     expect(readme).toContain("不會在 exact bar 缺少時退回前一交易日");
+    expect(readme).toContain("不要求 `reportDate` 同日");
+    expect(readme).toContain("兩份 master freshness 依各自 `reportDate` 分開揭露");
     expect(readme).toContain(
       "外層 `market=all` current master 先唯一核對指定公司的 code、short name、market 與 exchange",
     );

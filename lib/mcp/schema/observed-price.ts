@@ -778,10 +778,9 @@ export const analyzeObservedPriceDataSchema = z
       listedMasterSource.market !== "listed" ||
       listedMasterSource.exchange !== "TWSE" ||
       otcMasterSource.market !== "otc" ||
-      otcMasterSource.exchange !== "TPEx" ||
-      listedMasterSource.reportDate !== otcMasterSource.reportDate
+      otcMasterSource.exchange !== "TPEx"
     ) {
-      issue(["sources"], "兩份 current-master sources 必須唯一涵蓋 listed/TWSE 與 otc/TPEx，且 reportDate 相同");
+      issue(["sources"], "兩份 current-master sources 必須唯一涵蓋 listed/TWSE 與 otc/TPEx；各自 reportDate 可不同");
     }
     if (
       closeSource.companyCode !== value.company.code ||
@@ -921,6 +920,7 @@ export const analyzeObservedPriceDataSchema = z
       "exact single-stock OHLC",
       "不退回前一日價格",
       "不重複取得 current master",
+      "兩市場 reportDate 可不同",
     ]) {
       if (!warningText.includes(required)) {
         issue(["warnings"], `warnings 必須明示 ${required}`);

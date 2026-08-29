@@ -36,6 +36,13 @@ liveDescribe("live caller-supplied observed-price contract", () => {
     expect(result.latestOfficialCloseDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(result.officialHistoryCutoff).toBe(result.latestOfficialCloseDate);
     expect(result.sources).toHaveLength(3);
+    const masterSources = result.sources.filter(
+      (source) => source.stage === "company_master",
+    );
+    expect(masterSources.map((source) => source.market)).toEqual([
+      "listed",
+      "otc",
+    ]);
     expect(result.meta.asOf).toMatchObject({
       selector: "snapshot",
       resolved: { granularity: "mixed", from: null, through: null },
@@ -50,6 +57,19 @@ liveDescribe("live caller-supplied observed-price contract", () => {
     const completedFreshness = result.meta.quality.freshnessDetails.find(
       (detail) => detail.policyId === "official.completed-session.v1",
     );
+    const masterFreshness = result.meta.quality.freshnessDetails.filter(
+      (detail) =>
+        detail.policyId === "official.current-snapshot.max-age-7d.v1",
+    );
+    expect(masterFreshness).toHaveLength(2);
+    for (const source of masterSources) {
+      expect(masterFreshness).toContainEqual(
+        expect.objectContaining({
+          observedAsOf: source.reportDate,
+          sourceUrls: [source.sourceUrl],
+        }),
+      );
+    }
     expect(completedFreshness).toMatchObject({
       status: "within_expected_window",
       observedAsOf: result.latestOfficialCloseDate,
