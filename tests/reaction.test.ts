@@ -604,6 +604,50 @@ describe("ReactionClient getStockReactionSignals", () => {
     ]);
   });
 
+  it("does not relabel raw price-path values as adjusted when only market and name identity fail", async () => {
+    const companies = [company("3416", "融程電", "listed")];
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, {
+        historicalMarket: "otc",
+        observedNames: ["融程電", "舊公司"],
+      }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["3416"],
+      asOf: "2026-06-30",
+      horizons: [5],
+    });
+
+    const item = result.companies[0];
+    expect(item.returns[0]).toMatchObject({
+      stockReturnPercent: expect.any(Number),
+      priceIndexCompatibleStockReturnPercent: null,
+      excessReturnStatus: "not_comparable",
+      excessReturnReasons: [
+        "market_transition_or_historical_market_mismatch_within_horizon",
+        "multiple_observed_names",
+      ],
+    });
+    expect(item.pricePath).toMatchObject({
+      maximumDrawdownPercent: null,
+      distanceBelowWindowHighPercent: null,
+      priceBasis: "price_index_compatible_corporate_action_adjusted",
+      status: "not_comparable_corporate_action",
+    });
+    expect(item.comparability.reasons).toEqual([
+      "market_transition_or_historical_market_mismatch",
+      "multiple_observed_names",
+    ]);
+  });
+
   it("applies comparability independently to each requested horizon", async () => {
     const companies = [company("2330", "台積電")];
     const endIndex = allSessions.indexOf("2026-06-30");

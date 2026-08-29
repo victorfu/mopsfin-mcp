@@ -242,8 +242,9 @@ export function calculatePricePathSignal(
   }
   const closes = benchmarkWindow
     .map((benchmark) =>
-      priceIndexCompatibleClosesByDate?.get(benchmark.date) ??
-      numericBarValue(stockBarsByDate, benchmark.date, "close"),
+      priceIndexCompatibleClosesByDate === undefined
+        ? numericBarValue(stockBarsByDate, benchmark.date, "close")
+        : (priceIndexCompatibleClosesByDate.get(benchmark.date) ?? null),
     )
     .filter((value): value is number => value !== null && value > 0);
   const common = {

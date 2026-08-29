@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { CorporateActionClient } from "@/lib/corporate-actions/client";
+import { BoundedSemaphore } from "@/lib/upstream/reliability";
 
 interface CorporateActionFixtures {
   exRight: Record<string, unknown>;
@@ -266,6 +267,86 @@ describe("CorporateActionClient", () => {
       companyCodes: ["2317", "2330"],
     });
     expect(recovered.fingerprint).not.toBe(result.fingerprint);
+  });
+
+  it("bounds large selected TWSE combined-event detail fan-out without self-backpressure", async () => {
+    const listed = structuredClone(twseFixture);
+    const companyCodes = Array.from({ length: 41 }, (_, index) =>
+      String(1001 + index),
+    );
+    const names = new Map(
+      companyCodes.map((companyCode) => [
+        companyCode,
+        `公司${companyCode}`,
+      ]),
+    );
+    listed.exRight = {
+      ...listed.exRight,
+      data: companyCodes.map((companyCode) => [
+        "114年07月03日",
+        companyCode,
+        names.get(companyCode),
+        "100.00",
+        "88.00",
+        "12.000000",
+        "權息",
+      ]),
+    };
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/TWT49UDetail")) {
+        const companyCode = url.searchParams.get("STK_NO") as string;
+        return response({
+          stat: "ok",
+          fields: [
+            "股票代號",
+            "股票名稱",
+            "(每股配發現金股利)除息",
+          ],
+          data: [[companyCode, names.get(companyCode), "3 元／股"]],
+        });
+      }
+      if (url.pathname.endsWith("/TWT49U")) {
+        return response(listed.exRight);
+      }
+      if (url.pathname.endsWith("/TWTAUU")) {
+        return response(listed.capitalReduction);
+      }
+      if (url.pathname.endsWith("/TWTB8U")) {
+        return response(listed.parValueChange);
+      }
+      throw new Error(`unexpected fixture URL: ${url}`);
+    });
+    const client = new CorporateActionClient(
+      fetchMock as typeof fetch,
+      now,
+      {
+        maxAttempts: 1,
+        cacheTtlMs: 0,
+        semaphore: new BoundedSemaphore(2, 2),
+      },
+    );
+
+    const result = await client.getHistory(
+      "listed",
+      "2025-07-01",
+      "2025-07-10",
+      { companyCodes },
+    );
+
+    expect(result.events).toHaveLength(companyCodes.length);
+    expect(
+      result.events.every(
+        (event) =>
+          event.adjustmentStatus === "available" &&
+          event.adjustmentReason ===
+            "official_reference_price_divided_by_prior_close_less_cash_dividend",
+      ),
+    ).toBe(true);
+    expect(
+      result.warnings.some((warning) => warning.includes("detail 查詢失敗")),
+    ).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(3 + companyCodes.length);
   });
 
   it("normalizes TPEx declared counts, encoded dates and price-index factors", async () => {

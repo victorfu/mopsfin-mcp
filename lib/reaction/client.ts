@@ -869,18 +869,20 @@ function companySignals(
     "corporate_action_prior_close_missing",
     "corporate_action_prior_close_mismatch",
     "unmatched_official_change_marker",
+    "market_transition_or_historical_market_mismatch",
     "corporate_action_market_mismatch",
+    "company_identity_name_mismatch",
     "corporate_action_company_code_mismatch",
     "duplicate_raw_bar_date",
   ]);
-  const pricePath = actionPathComparable || rawPricePath.status !== "available"
-    ? rawPricePath
-    : {
+  const pricePath = !actionPathComparable && stock.status === "available"
+    ? {
         ...rawPricePath,
         maximumDrawdownPercent: null,
         distanceBelowWindowHighPercent: null,
         status: "not_comparable_corporate_action" as const,
-      };
+      }
+    : rawPricePath;
   const comparison = comparability(
     company,
     stock.bars.filter(

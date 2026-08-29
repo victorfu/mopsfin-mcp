@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { OfficialHtmlPostLoader } from "@/lib/catalyst/html-loader";
 import { CompanyMasterClient } from "@/lib/company-master/client";
 import { OfficialJsonLoader } from "@/lib/market-data/client-utils";
 import type { CurrentCompanyMasterLike } from "@/lib/market-data/types";
@@ -26,6 +27,12 @@ const twseCompanies = readFileSync(
 const listedRevenue = readFileSync(
   fileURLToPath(
     new URL("./fixtures/revenue-archive-listed-2026-07.csv", import.meta.url),
+  ),
+  "utf8",
+);
+const materialHistoryEmpty = readFileSync(
+  fileURLToPath(
+    new URL("./fixtures/catalyst-material-empty.html", import.meta.url),
   ),
   "utf8",
 );
@@ -218,6 +225,27 @@ describe("single-flight request cancellation isolation", () => {
     );
 
     expect(result.metrics.length).toBeGreaterThan(0);
+    expect(result.cache?.status).toBe("shared");
+  });
+
+  it("keeps a MOPS catalyst HTML flight alive for a healthy follower", async () => {
+    const upstream = controlledFetch(materialHistoryEmpty, "text/html");
+    const loader = new OfficialHtmlPostLoader(
+      upstream.fetchMock as typeof fetch,
+      now,
+      { deadlineMs: 1_000, maxAttempts: 1 },
+    );
+    const result = await abortLeaderAndAwaitFollower(
+      () =>
+        loader.post(
+          "fixture",
+          "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
+          { co_id: "2330", year: "115" },
+        ),
+      upstream,
+    );
+
+    expect(result.body).toBe(materialHistoryEmpty);
     expect(result.cache?.status).toBe("shared");
   });
 });

@@ -10,7 +10,9 @@ import {
   BoundedSemaphore,
   BoundedTtlLru,
   createAttemptAbortScope,
+  createSharedUpstreamFlight,
   delayWithinDeadline,
+  getCurrentDeadline,
   globalUpstreamSemaphore,
   parseRetryAfterMs,
   readResponseTextWithLimit,
@@ -18,6 +20,7 @@ import {
   retryDelayMs,
   UpstreamReliabilityError,
   type AttemptAbortScope,
+  type SharedUpstreamFlight,
 } from "@/lib/upstream/reliability";
 
 export interface CatalystHtmlSnapshot {
@@ -67,7 +70,7 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
   private readonly cache: BoundedTtlLru<string, StoredCatalystHtmlSnapshot>;
   private readonly pending = new Map<
     string,
-    Promise<StoredCatalystHtmlSnapshot>
+    SharedUpstreamFlight<StoredCatalystHtmlSnapshot>
   >();
 
   constructor(
@@ -112,32 +115,52 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
       left.localeCompare(right),
     );
     const cacheKey = `${sourceUrl}?${new URLSearchParams(normalizedFields).toString()}`;
+    const callerDeadline = getCurrentDeadline();
     const observedAtMs = this.now().getTime();
     const cached = this.cache.get(cacheKey, observedAtMs);
     if (cached) return this.observe(cached, "hit", observedAtMs);
     const existing = this.pending.get(cacheKey);
     if (existing) {
-      const stored = await existing;
+      const stored = await this.waitForFlight(
+        existing,
+        callerDeadline,
+        sourceName,
+        sourceUrl,
+      );
       return this.observe(stored, "shared", this.now().getTime());
     }
-    const pending = this.request(sourceName, sourceUrl, fields).then((snapshot) => {
-      const storedAtMs = this.cacheTtlMs > 0 ? this.now().getTime() : null;
-      const stored = { snapshot, storedAtMs };
-      if (storedAtMs !== null) {
-        this.cache.set(cacheKey, stored, {
-          ttlMs: this.cacheTtlMs,
-          weight: Buffer.byteLength(snapshot.body, "utf8"),
-          nowMs: storedAtMs,
-        });
-      }
-      return stored;
-    });
+    const pending = createSharedUpstreamFlight(
+      this.deadlineMs,
+      async (sharedDeadline) => {
+        const snapshot = await this.request(
+          sourceName,
+          sourceUrl,
+          fields,
+          sharedDeadline,
+        );
+        const storedAtMs = this.cacheTtlMs > 0 ? this.now().getTime() : null;
+        const stored = { snapshot, storedAtMs };
+        if (storedAtMs !== null) {
+          this.cache.set(cacheKey, stored, {
+            ttlMs: this.cacheTtlMs,
+            weight: Buffer.byteLength(snapshot.body, "utf8"),
+            nowMs: storedAtMs,
+          });
+        }
+        return stored;
+      },
+    );
     this.pending.set(cacheKey, pending);
     const clear = () => {
       if (this.pending.get(cacheKey) === pending) this.pending.delete(cacheKey);
     };
-    void pending.then(clear, clear);
-    const stored = await pending;
+    void pending.promise.then(clear, clear);
+    const stored = await this.waitForFlight(
+      pending,
+      callerDeadline,
+      sourceName,
+      sourceUrl,
+    );
     return this.observe(
       stored,
       this.cacheTtlMs > 0 ? "miss" : "bypass",
@@ -165,13 +188,12 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
     sourceName: string,
     sourceUrl: string,
     fields: Readonly<Record<string, string>>,
+    deadline: AbsoluteDeadline,
   ): Promise<Omit<CatalystHtmlSnapshot, "cache">> {
     const url = new URL(sourceUrl);
 
-    const deadline = new AbsoluteDeadline(this.deadlineMs);
     let lastError: MopsfinError | undefined;
-    try {
-      for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
+    for (let attempt = 0; attempt < this.maxAttempts; attempt += 1) {
         let scope: AttemptAbortScope | undefined;
         let release: (() => void) | undefined;
         let upstreamRetryAfterMs: number | null = null;
@@ -301,9 +323,6 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
             deadline,
           );
         }
-      }
-    } finally {
-      deadline.dispose();
     }
 
     throw (
@@ -314,6 +333,38 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
         { details: { sourceUrl } },
       )
     );
+  }
+
+  private async waitForFlight(
+    flight: SharedUpstreamFlight<StoredCatalystHtmlSnapshot>,
+    deadline: AbsoluteDeadline | undefined,
+    sourceName: string,
+    sourceUrl: string,
+  ): Promise<StoredCatalystHtmlSnapshot> {
+    try {
+      return await flight.wait(deadline);
+    } catch (error) {
+      if (!(error instanceof UpstreamReliabilityError)) throw error;
+      const deadlineExceeded =
+        error.code === "DEADLINE_EXCEEDED" ||
+        (error.cause instanceof UpstreamReliabilityError &&
+          error.cause.code === "DEADLINE_EXCEEDED");
+      throw new MopsfinError(
+        "UPSTREAM_TIMEOUT",
+        deadlineExceeded
+          ? `MOPS ${sourceName}超過本次工作的總時間上限。`
+          : `MOPS ${sourceName}查詢已取消。`,
+        {
+          cause: error,
+          details: { sourceUrl },
+          reason: deadlineExceeded
+            ? "UPSTREAM_DEADLINE_EXCEEDED"
+            : "UPSTREAM_OPERATION_ABORTED",
+          retryable: true,
+          action: "retry",
+        },
+      );
+    }
   }
 
   private timeoutError(

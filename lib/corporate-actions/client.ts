@@ -71,6 +71,7 @@ const FAMILY_ORDER: CorporateActionFamily[] = [
   "capital_reduction",
   "par_value_change",
 ];
+const TWSE_COMBINED_DETAIL_CONCURRENCY = 4;
 
 const SUPPORTED_FROM: Record<
   CompanyMarket,
@@ -1237,6 +1238,28 @@ function compareEvents(left: CorporateActionEvent, right: CorporateActionEvent):
   );
 }
 
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  task: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, values.length) },
+      async () => {
+        while (nextIndex < values.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          results[index] = await task(values[index]);
+        }
+      },
+    ),
+  );
+  return results;
+}
+
 function eventCore(event: CorporateActionEvent) {
   return {
     companyCode: event.companyCode,
@@ -1603,8 +1626,10 @@ export class CorporateActionClient {
           (event) => event.kind === "rights_and_dividend",
         );
         detailRequestCount = combinedEvents.length;
-        const details = await Promise.all(
-          combinedEvents.map(async (event) => {
+        const details = await mapWithConcurrency(
+          combinedEvents,
+          TWSE_COMBINED_DETAIL_CONCURRENCY,
+          async (event) => {
             try {
               return {
                 status: "fulfilled" as const,
@@ -1620,7 +1645,7 @@ export class CorporateActionClient {
                 reason: errorMessage(error),
               };
             }
-          }),
+          },
         );
         const enrichedByKey = new Map(
           details
