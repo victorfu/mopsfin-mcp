@@ -124,6 +124,12 @@ export class OfficialJsonPostLoader {
       if (cached) return this.observe(cached, "hit", observedAtMs);
       let flight = this.pending.get(cacheKey);
       let status: CacheStatus = "shared";
+      if (flight && flight.state !== "active") {
+        if (this.pending.get(cacheKey) === flight) {
+          this.pending.delete(cacheKey);
+        }
+        flight = undefined;
+      }
       if (!flight) {
         status = this.cacheTtlMs > 0 ? "miss" : "bypass";
         flight = createSharedUpstreamFlight(
@@ -365,17 +371,25 @@ export class OfficialJsonPostLoader {
       scope?.abortKind() === "deadline" ||
       (cause instanceof UpstreamReliabilityError &&
         cause.code === "DEADLINE_EXCEEDED");
+    const operationAborted =
+      scope === undefined &&
+      cause instanceof UpstreamReliabilityError &&
+      cause.code === "ABORTED";
     return new MopsfinError(
       "UPSTREAM_TIMEOUT",
       deadlineExceeded
         ? `${request.sourceName}超過本次工作的總時間上限。`
-        : `${request.sourceName}查詢逾時。`,
+        : operationAborted
+          ? `${request.sourceName}查詢已取消。`
+          : `${request.sourceName}查詢逾時。`,
       {
         cause,
         details: { sourceUrl: request.sourceUrl },
         reason: deadlineExceeded
           ? "UPSTREAM_DEADLINE_EXCEEDED"
-          : "UPSTREAM_ATTEMPT_TIMEOUT",
+          : operationAborted
+            ? "UPSTREAM_OPERATION_ABORTED"
+            : "UPSTREAM_ATTEMPT_TIMEOUT",
         retryable: true,
         action: "retry",
       },

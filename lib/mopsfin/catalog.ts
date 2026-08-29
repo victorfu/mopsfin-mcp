@@ -156,10 +156,11 @@ export class CatalogService {
     if (!force && this.cached && this.cached.expiresAt > now) {
       return this.observe(this.cached.stored, "hit", now);
     }
-    if (this.pending) {
+    if (this.pending?.state === "active") {
       const stored = await this.waitForCatalog(this.pending, callerDeadline);
       return this.observe(stored, "shared", this.now().getTime());
     }
+    if (this.pending) this.pending = undefined;
 
     const request = createSharedUpstreamFlight(
       CATALOG_FLIGHT_DEADLINE_MS,

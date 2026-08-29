@@ -120,7 +120,7 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
     const cached = this.cache.get(cacheKey, observedAtMs);
     if (cached) return this.observe(cached, "hit", observedAtMs);
     const existing = this.pending.get(cacheKey);
-    if (existing) {
+    if (existing?.state === "active") {
       const stored = await this.waitForFlight(
         existing,
         callerDeadline,
@@ -128,6 +128,9 @@ export class OfficialHtmlPostLoader implements CatalystHtmlPostLoader {
         sourceUrl,
       );
       return this.observe(stored, "shared", this.now().getTime());
+    }
+    if (existing && this.pending.get(cacheKey) === existing) {
+      this.pending.delete(cacheKey);
     }
     const pending = createSharedUpstreamFlight(
       this.deadlineMs,

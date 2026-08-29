@@ -6,6 +6,7 @@ import {
   BoundedSemaphore,
   BoundedTtlLru,
   createAttemptAbortScope,
+  createSharedUpstreamFlight,
   getCurrentDeadline,
   getUpstreamReliabilitySnapshot,
   parseRetryAfterMs,
@@ -49,6 +50,37 @@ describe("upstream reliability primitives", () => {
       scope.cleanup();
       deadline.dispose();
     }
+  });
+
+  it("marks a no-waiter shared flight orphaned before its task settles", async () => {
+    let resolveTask: ((value: string) => void) | undefined;
+    let sharedSignal: AbortSignal | undefined;
+    const flight = createSharedUpstreamFlight(1_000, (deadline) => {
+      sharedSignal = deadline.signal;
+      return new Promise<string>((resolve) => {
+        resolveTask = resolve;
+      });
+    });
+    const waiterDeadline = new AbsoluteDeadline(1_000);
+    const waiter = flight.wait(waiterDeadline).then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+
+    expect(flight.state).toBe("active");
+    waiterDeadline.abort(
+      new UpstreamReliabilityError("ABORTED", "waiter disconnected"),
+    );
+    expect((await waiter).status).toBe("rejected");
+    expect(flight.state).toBe("orphaned");
+    expect(flight.settled).toBe(false);
+    expect(sharedSignal?.aborted).toBe(true);
+
+    resolveTask?.("done");
+    await expect(flight.promise).resolves.toBe("done");
+    expect(flight.state).toBe("settled");
+    expect(flight.settled).toBe(true);
+    waiterDeadline.dispose();
   });
 
   it("parses Retry-After seconds and dates with a safe maximum", () => {

@@ -374,6 +374,12 @@ export class OfficialJsonLoader {
       if (cached) return this.observe(cached, "hit", now);
       let flight = this.pending.get(config.sourceUrl);
       let status: CacheStatus = "shared";
+      if (flight && flight.state !== "active") {
+        if (this.pending.get(config.sourceUrl) === flight) {
+          this.pending.delete(config.sourceUrl);
+        }
+        flight = undefined;
+      }
       if (!flight) {
         status = this.cacheTtlMs > 0 ? "miss" : "bypass";
         flight = createSharedUpstreamFlight(
@@ -614,17 +620,25 @@ export class OfficialJsonLoader {
       scope?.abortKind() === "deadline" ||
       (cause instanceof UpstreamReliabilityError &&
         cause.code === "DEADLINE_EXCEEDED");
+    const operationAborted =
+      scope === undefined &&
+      cause instanceof UpstreamReliabilityError &&
+      cause.code === "ABORTED";
     return new MopsfinError(
       "UPSTREAM_TIMEOUT",
       deadlineExceeded
         ? `${config.exchange} ${config.sourceName}超過本次工作的總時間上限。`
-        : `${config.exchange} ${config.sourceName}查詢逾時。`,
+        : operationAborted
+          ? `${config.exchange} ${config.sourceName}查詢已取消。`
+          : `${config.exchange} ${config.sourceName}查詢逾時。`,
       {
         cause,
         details: { sourceUrl: config.sourceUrl },
         reason: deadlineExceeded
           ? "UPSTREAM_DEADLINE_EXCEEDED"
-          : "UPSTREAM_ATTEMPT_TIMEOUT",
+          : operationAborted
+            ? "UPSTREAM_OPERATION_ABORTED"
+            : "UPSTREAM_ATTEMPT_TIMEOUT",
         retryable: true,
         action: "retry",
       },

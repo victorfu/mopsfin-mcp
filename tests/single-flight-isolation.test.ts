@@ -43,6 +43,13 @@ interface ControlledFetch {
   signal(): AbortSignal;
 }
 
+interface StubbornFetch {
+  fetchMock: ReturnType<typeof vi.fn>;
+  release(index: number): void;
+  releaseAll(): void;
+  signal(index: number): AbortSignal;
+}
+
 function controlledFetch(body: string, contentType: string): ControlledFetch {
   let releaseResponse: (() => void) | undefined;
   let requestSignal: AbortSignal | undefined;
@@ -80,6 +87,41 @@ function controlledFetch(body: string, contentType: string): ControlledFetch {
       if (!requestSignal) throw new Error("upstream request has not started");
       return requestSignal;
     },
+  };
+}
+
+function stubbornFetch(body: string, contentType: string): StubbornFetch {
+  const requests: Array<{
+    resolve: (response: Response) => void;
+    signal: AbortSignal;
+    released: boolean;
+  }> = [];
+  const fetchMock = vi.fn(
+    async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> =>
+      new Promise<Response>((resolve) => {
+        requests.push({
+          resolve,
+          signal: init?.signal as AbortSignal,
+          released: false,
+        });
+      }),
+  );
+  const release = (index: number) => {
+    const request = requests[index];
+    if (!request || request.released) return;
+    request.released = true;
+    request.resolve(
+      new Response(body, {
+        status: 200,
+        headers: { "Content-Type": contentType },
+      }),
+    );
+  };
+  return {
+    fetchMock,
+    release,
+    releaseAll: () => requests.forEach((_request, index) => release(index)),
+    signal: (index) => requests[index].signal,
   };
 }
 
@@ -274,5 +316,58 @@ describe("single-flight request cancellation isolation", () => {
     upstream.release();
     await expect(leader).resolves.toMatchObject({ body: materialHistoryEmpty });
     expect(upstream.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts a new OfficialJsonLoader flight after the only waiter orphans the old one", async () => {
+    const upstream = stubbornFetch('[{"Code":"2330"}]', "application/json");
+    const loader = new OfficialJsonLoader(
+      upstream.fetchMock as typeof fetch,
+      now,
+      { deadlineMs: 1_000, maxAttempts: 1, cacheTtlMs: 0 },
+    );
+    const config = {
+      market: "listed" as const,
+      exchange: "TWSE" as const,
+      sourceName: "fixture",
+      sourceUrl: "https://example.test/official.json",
+    };
+    const leaderController = new AbortController();
+    const leader = runWithRequestDeadline(
+      1_000,
+      () => loader.get(config),
+      leaderController.signal,
+    ).then(
+      (value) => ({ status: "fulfilled" as const, value }),
+      (error: unknown) => ({ status: "rejected" as const, error }),
+    );
+    await vi.waitFor(() => expect(upstream.fetchMock).toHaveBeenCalledTimes(1));
+
+    leaderController.abort(
+      new UpstreamReliabilityError("ABORTED", "only waiter disconnected"),
+    );
+    expect(await leader).toMatchObject({
+      status: "rejected",
+      error: {
+        code: "UPSTREAM_TIMEOUT",
+        reason: "UPSTREAM_OPERATION_ABORTED",
+      },
+    });
+    expect(upstream.signal(0).aborted).toBe(true);
+
+    const follower = runWithRequestDeadline(500, () => loader.get(config));
+    try {
+      await vi.waitFor(
+        () => expect(upstream.fetchMock).toHaveBeenCalledTimes(2),
+        { timeout: 100 },
+      );
+      upstream.release(1);
+      await expect(follower).resolves.toMatchObject({
+        payload: [{ Code: "2330" }],
+        cache: { status: "bypass" },
+      });
+    } finally {
+      upstream.releaseAll();
+      await Promise.allSettled([follower]);
+    }
   });
 });

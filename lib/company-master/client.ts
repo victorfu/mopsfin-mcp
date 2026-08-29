@@ -384,9 +384,12 @@ export class CompanyMasterClient {
       return this.observe(cached.stored, "hit", now);
     }
     const existing = this.pending.get(market);
-    if (existing) {
+    if (existing?.state === "active") {
       const stored = await this.waitForSnapshot(existing, callerDeadline);
       return this.observe(stored, "shared", this.now().getTime());
+    }
+    if (existing && this.pending.get(market) === existing) {
+      this.pending.delete(market);
     }
 
     const request = createSharedUpstreamFlight(

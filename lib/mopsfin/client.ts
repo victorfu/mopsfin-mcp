@@ -999,8 +999,11 @@ export class MopsfinClient {
     const callerDeadline = getCurrentDeadline();
 
     const existing = this.identitySingleFlights.get(key);
-    if (existing) {
+    if (existing?.state === "active") {
       return this.waitForIdentityLookup(existing, callerDeadline);
+    }
+    if (existing && this.identitySingleFlights.get(key) === existing) {
+      this.identitySingleFlights.delete(key);
     }
 
     const lookup = createSharedUpstreamFlight(

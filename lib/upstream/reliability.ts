@@ -98,8 +98,11 @@ export async function allOrAbortOnError<const T extends readonly unknown[]>(
   }
 }
 
+export type SharedUpstreamFlightState = "active" | "orphaned" | "settled";
+
 export interface SharedUpstreamFlight<T> {
   readonly promise: Promise<T>;
+  readonly state: SharedUpstreamFlightState;
   readonly settled: boolean;
   readonly waiterCount: number;
   wait(waiterDeadline?: AbsoluteDeadline): Promise<T>;
@@ -117,7 +120,7 @@ export function createSharedUpstreamFlight<T>(
   const sharedDeadline = new AbsoluteDeadline(durationMs, undefined, {
     inheritAmbient: false,
   });
-  let settled = false;
+  let state: SharedUpstreamFlightState = "active";
   let waiterCount = 0;
   let operation: Promise<T>;
   try {
@@ -129,13 +132,16 @@ export function createSharedUpstreamFlight<T>(
     throw error;
   }
   const promise = operation.finally(() => {
-    settled = true;
+    state = "settled";
     sharedDeadline.dispose();
   });
   return {
     promise,
+    get state() {
+      return state;
+    },
     get settled() {
-      return settled;
+      return state === "settled";
     },
     get waiterCount() {
       return waiterCount;
@@ -148,7 +154,8 @@ export function createSharedUpstreamFlight<T>(
           : await promise;
       } finally {
         waiterCount -= 1;
-        if (waiterCount === 0 && !settled) {
+        if (waiterCount === 0 && state === "active") {
+          state = "orphaned";
           sharedDeadline.abort(
             new UpstreamReliabilityError(
               "ABORTED",
