@@ -8,26 +8,6 @@ import { PUBLIC_MCP_URL, SERVER_VERSION } from "@/lib/server/identity";
 
 const endpoint = PUBLIC_MCP_URL;
 
-const setupPrompt = `請協助我把「Mopsfin 台股財務」設定為遠端 MCP Server／自訂連接器。
-
-連線資訊：
-- 名稱：Mopsfin 台股財務
-- 版本：${SERVER_VERSION}
-- 說明：篩選台股研究候選，可選擇只替實際入選的最多 5 家 candidates 附上不影響分數的 current official catalyst snapshots，並查詢 TWSE／TPEx 上市櫃公司母體、官方原始日線、比較 caller 觀察價與官方完成收盤、可稽核的 price-index-compatible 公司行動調整價格序列、歷史估值、可追溯估值模型輸入、顯性假設的 market-implied Reverse DCF、月營收趨勢、benchmark reaction signals、重大訊息與法說會，以及 Mopsfin 財務比較 E 點通提供的公司財報與財務指標。
-- MCP URL：https://mopsfin-mcp.vercel.app/api/mcp
-- 傳輸方式：Streamable HTTP
-- 驗證方式：不需要登入、API Key、Token 或 OAuth
-- 權限：唯讀
-
-請依照以下規則協助我：
-1. 先判斷我目前使用的是 ChatGPT、Claude Web，或其他支援遠端 MCP 的用戶端。
-2. 如果你能操作目前應用程式的設定介面，請帶我完成新增，並在任何會改變帳號設定的步驟前讓我確認。
-3. 如果你不能直接操作設定，請不要聲稱已完成；請按照目前平台的最新介面名稱，一次只告訴我一個清楚步驟，等我完成後再繼續。
-4. URL 必須完整使用 /api/mcp，請勿改成網站首頁、/mcp 或其他路徑；若出現 OAuth 進階欄位，請保持空白。
-5. 連線後確認可以看到 ${TOOL_COUNT} 個唯讀工具，包含 screen_taiwan_stock_candidates、screen_taiwan_stock_candidates_with_catalyst_snapshots、get_stock_price_series、analyze_observed_price、get_valuation_model_inputs、run_reverse_dcf、get_company_catalyst_events、get_company_catalyst_snapshots、get_monthly_revenue_trend、get_company_metrics_batch 與 get_stock_reaction_signals。
-6. 最後在新對話啟用此連接器，並測試：「請先找出 2330 對應的公司，再查詢最近 12 季營業收入；標示期別、單位、來源與資料擷取時間。」
-7. 若我的方案或工作區政策不允許新增自訂 MCP，請明確告訴我限制及需要聯絡的管理員角色。`;
-
 const toolSummaries = {
   find_companies: "用代號或名稱尋找台灣公司",
   get_stock_ohlc: "查詢單一台股跨期原始日線價量",
@@ -77,7 +57,6 @@ export default function Home() {
         <nav aria-label="頁面導覽">
           <a href="#chatgpt">ChatGPT</a>
           <a href="#claude">Claude Web</a>
-          <a href="#prompt">設定 Prompt</a>
         </nav>
       </header>
 
@@ -203,26 +182,9 @@ export default function Home() {
         </section>
       </div>
 
-      <section className="promptSection" id="prompt" aria-labelledby="prompt-title">
-        <div className="promptIntro">
-          <p className="sectionNumber">02</p>
-          <div>
-            <h2 id="prompt-title">想讓 AI 帶你設定？</h2>
-            <p>複製下面的 prompt 貼到 ChatGPT 或 Claude。AI 若能操作設定會請你確認；若不能，會依你的平台逐步引導，不會假裝已經完成。</p>
-          </div>
-        </div>
-        <div className="promptBox">
-          <div className="promptToolbar">
-            <span>SETUP-PROMPT.TXT</span>
-            <CopyButton value={setupPrompt} label="複製 Prompt" />
-          </div>
-          <pre><code>{setupPrompt}</code></pre>
-        </div>
-      </section>
-
       <section className="verifySection" aria-labelledby="verify-title">
         <div>
-          <p className="sectionNumber">03</p>
+          <p className="sectionNumber">02</p>
           <h2 id="verify-title">確認連線成功</h2>
           <p>在已啟用連接器的新對話中貼上：</p>
           <blockquote>請使用 Mopsfin 台股財務，先找出 2330 對應的公司，再查詢最近 12 季營業收入；請標示期別、單位、來源網址與資料擷取時間。</blockquote>
@@ -239,7 +201,7 @@ export default function Home() {
       </section>
 
       <section className="toolsSection" aria-labelledby="tools-title">
-        <p className="sectionNumber">04</p>
+        <p className="sectionNumber">03</p>
         <div>
           <h2 id="tools-title">可以問哪些資料？</h2>
           <ul className="toolGrid">
@@ -254,7 +216,7 @@ export default function Home() {
       </section>
 
       <section className="notice" aria-labelledby="notice-title">
-        <p className="sectionNumber">05</p>
+        <p className="sectionNumber">04</p>
         <div>
           <h2 id="notice-title">資料來源與注意事項</h2>
           <div className="noticeContent">
