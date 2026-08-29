@@ -5,7 +5,6 @@ import {
   FRESHNESS_POLICIES,
   annotations,
   evaluateFreshness,
-  failure,
   fingerprint,
   screenTaiwanStockCandidatesInputSchema,
   screenTaiwanStockCandidatesOutputSchema,
@@ -30,7 +29,6 @@ export const screenTaiwanStockCandidatesTool = defineTool(
       candidate_limit,
       preset,
     }) => {
-      try {
         const data = await taiwanStockScreenClient.screenTaiwanStockCandidates({
           market,
           ...(company_codes ? { companyCodes: company_codes } : {}),
@@ -185,9 +183,6 @@ export const screenTaiwanStockCandidatesTool = defineTool(
             ],
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 

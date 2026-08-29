@@ -6,7 +6,6 @@ import {
   annotations,
   catalogPeriods,
   evaluateFreshness,
-  failure,
   includesQuery,
   listCatalogInputSchema,
   listCatalogOutputSchema,
@@ -27,7 +26,6 @@ export const listCatalogTool = defineTool(
       annotations,
     },
     async ({ kind, query, limit }) => {
-      try {
         const catalog = await mopsfinClient.getCatalog();
         const filter = query?.trim() ?? "";
         const allPeriods = catalogPeriods(catalog);
@@ -115,9 +113,6 @@ export const listCatalogTool = defineTool(
             ],
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 

@@ -9,6 +9,7 @@ import {
   type CatalystHtmlPostLoader,
 } from "@/lib/catalyst/html-loader";
 import { MopsfinError } from "@/lib/mopsfin/errors";
+import { BoundedSemaphore } from "@/lib/upstream/reliability";
 
 function textFixture(name: string): string {
   return readFileSync(
@@ -333,6 +334,80 @@ describe("CatalystClient selected-company history", () => {
     expect(loader.post).not.toHaveBeenCalled();
   });
 
+  it("shares one bounded scheduler across all historical families", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const loader = htmlLoader(async () => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return {
+        body: materialEmpty,
+        contentType: "text/html",
+        retrievedAt: "2026-08-27T00:00:00.000Z",
+      };
+    });
+    const companyCodes = Array.from({ length: 20 }, (_, index) =>
+      String(1101 + index),
+    );
+
+    const result = await new CatalystClient(currentFetch() as typeof fetch, now, {
+      htmlLoader: loader,
+    }).getCompanyCatalystEvents({
+      companyCodes,
+      startDate: "2025-10-01",
+      endDate: "2025-10-31",
+      eventTypes: ["material_information"],
+    });
+
+    expect(loader.post).toHaveBeenCalledTimes(20);
+    expect(maximumActive).toBeLessThanOrEqual(4);
+    expect(result.failures).toEqual([]);
+    expect(result.familyCoverage.map((row) => row.companyCode)).toEqual(
+      companyCodes,
+    );
+  });
+
+  it("completes a 40-unit query while one global upstream slot is occupied", async () => {
+    const semaphore = new BoundedSemaphore(8, 32);
+    const releaseOccupiedSlot = await semaphore.acquire();
+    const fetchMock = vi.fn(async () =>
+      new Response(materialEmpty, {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    const companyCodes = Array.from({ length: 20 }, (_, index) =>
+      String(1101 + index),
+    );
+    try {
+      const result = await new CatalystClient(fetchMock as typeof fetch, now, {
+        maxAttempts: 1,
+        cacheTtlMs: 0,
+        htmlLoaderOptions: {
+          maxAttempts: 1,
+          cacheTtlMs: 0,
+          semaphore,
+        },
+      }).getCompanyCatalystEvents({
+        companyCodes,
+        startDate: "2025-09-01",
+        endDate: "2025-10-31",
+        eventTypes: ["material_information"],
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(40);
+      expect(result.workBudget.plannedUpstreamRequests).toBe(40);
+      expect(result.failures).toEqual([]);
+      expect(result.familyCoverage.every((row) => row.status === "complete")).toBe(
+        true,
+      );
+    } finally {
+      releaseOccupiedSlot();
+    }
+  });
+
   it("merges the current OpenAPI snapshot for a range intersecting current publications", async () => {
     const loader = htmlLoader(async () => ({
       body: materialEmpty,
@@ -498,6 +573,30 @@ describe("OfficialHtmlPostLoader", () => {
       },
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes a retry delay that exceeds the shared deadline", async () => {
+    const loader = new OfficialHtmlPostLoader(
+      vi.fn(async () => new Response("busy", { status: 503 })) as typeof fetch,
+      now,
+      {
+        deadlineMs: 10,
+        maxAttempts: 2,
+        retryDelayMs: 100,
+        cacheTtlMs: 0,
+      },
+    );
+
+    await expect(
+      loader.post(
+        "fixture",
+        "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
+        { co_id: "2330", year: "115" },
+      ),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_TIMEOUT",
+      reason: "UPSTREAM_DEADLINE_EXCEEDED",
+    });
   });
 
   it("rejects non-allowlisted origins before fetch", async () => {

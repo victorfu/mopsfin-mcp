@@ -22,6 +22,7 @@ import type {
 import type { OfficialMarketClientOptions } from "@/lib/market-data/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { priceClient } from "@/lib/price/client";
+import { validateAndAppendRawOhlcPage } from "@/lib/price/raw-page-contract";
 import type {
   OhlcBar,
   PriceSource,
@@ -501,10 +502,6 @@ function stockDataFailure(error: MopsfinError): ReactionStockDataFailure {
   };
 }
 
-function sameBar(left: OhlcBar, right: OhlcBar): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
 function adjustmentForWindow(
   company: MasterCompany,
   benchmarkWindow: BenchmarkHistory["bars"],
@@ -861,20 +858,7 @@ function companySignals(
     stock.status,
     adjustedCloseMap(pathAdjustment),
   );
-  const actionPathComparable = !hasAdjustmentReason(pathAdjustment, [
-    "corporate_action_coverage_incomplete",
-    "corporate_action_factor_unavailable",
-    "cash_only_factor_not_one",
-    "ambiguous_same_day_corporate_actions",
-    "corporate_action_prior_close_missing",
-    "corporate_action_prior_close_mismatch",
-    "unmatched_official_change_marker",
-    "market_transition_or_historical_market_mismatch",
-    "corporate_action_market_mismatch",
-    "company_identity_name_mismatch",
-    "corporate_action_company_code_mismatch",
-    "duplicate_raw_bar_date",
-  ]);
+  const actionPathComparable = pathAdjustment.status === "complete";
   const pricePath = !actionPathComparable && stock.status === "available"
     ? {
         ...rawPricePath,
@@ -1413,58 +1397,27 @@ export class ReactionClient {
     const sources: PriceSource[] = [];
     let cursor: string | undefined;
     const seenCursors = new Set<string>();
+    let coveredThrough: string | null = null;
     try {
       for (let page = 0; page < 24; page += 1) {
-        const result = await this.stockPrice.getStockOhlc({
+        const dependencyQuery: StockOhlcQuery = {
           companyCode: plan.company.code,
           startDate: plan.startDate,
           endDate: plan.endDate,
           ...(cursor ? { cursor } : {}),
-        });
-        if (
-          result.companyCode !== plan.company.code ||
-          result.priceBasis !== "raw_unadjusted" ||
-          result.coverage.requestedStart !== plan.startDate ||
-          result.coverage.requestedEnd !== plan.endDate
-        ) {
-          fail("UPSTREAM_BAD_RESPONSE", "個股 OHLC dependency 回傳查詢 scope 不一致。", {
-            requestedCompanyCode: plan.company.code,
-            returnedCompanyCode: result.companyCode,
-            requestedStart: plan.startDate,
-            returnedStart: result.coverage.requestedStart,
-            requestedEnd: plan.endDate,
-            returnedEnd: result.coverage.requestedEnd,
-            priceBasis: result.priceBasis,
-          });
-        }
+        };
+        const result = await this.stockPrice.getStockOhlc(dependencyQuery);
+        validateAndAppendRawOhlcPage(
+          result,
+          dependencyQuery,
+          cursor,
+          coveredThrough,
+          barsByDate,
+        );
         for (const name of result.observedNames) observedNames.add(name);
         sources.push(...result.sources);
-        for (const bar of result.bars) {
-          if (bar.date < plan.startDate || bar.date > plan.endDate) {
-            fail("UPSTREAM_BAD_RESPONSE", "個股 OHLC dependency 回傳 scope 外日期。", {
-              companyCode: plan.company.code,
-              date: bar.date,
-              requestedStart: plan.startDate,
-              requestedEnd: plan.endDate,
-            });
-          }
-          const existing = barsByDate.get(bar.date);
-          if (existing && !sameBar(existing, bar)) {
-            fail("UPSTREAM_BAD_RESPONSE", "個股 OHLC 分頁包含衝突的重複日期。", {
-              companyCode: plan.company.code,
-              date: bar.date,
-            });
-          }
-          barsByDate.set(bar.date, bar);
-        }
+        coveredThrough = result.coverage.coveredThrough;
         if (result.coverage.coverageComplete) {
-          if (result.coverage.coveredThrough !== plan.endDate) {
-            fail("UPSTREAM_BAD_RESPONSE", "個股 OHLC 宣稱完整但 coveredThrough 不符。", {
-              companyCode: plan.company.code,
-              coveredThrough: result.coverage.coveredThrough,
-              requestedEnd: plan.endDate,
-            });
-          }
           const bars = [...barsByDate.values()].sort((left, right) =>
             left.date.localeCompare(right.date),
           );

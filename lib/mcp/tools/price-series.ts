@@ -7,7 +7,6 @@ import {
 import { defineTool } from "./definition";
 import {
   annotations,
-  failure,
   selectorFreshness,
   success,
 } from "./shared";
@@ -29,7 +28,6 @@ export const getStockPriceSeriesTool = defineTool(
     price_basis,
     include_event_ledger,
   }) => {
-    try {
       const data = await stockPriceSeriesClient.getStockPriceSeries({
         companyCode: company_code,
         startDate: start_date,
@@ -240,9 +238,6 @@ export const getStockPriceSeriesTool = defineTool(
           ],
         },
       );
-    } catch (error) {
-      return failure(error);
-    }
   },
 );
 

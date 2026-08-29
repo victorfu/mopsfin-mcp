@@ -81,6 +81,23 @@ export async function runWithRequestDeadline<T>(
   }
 }
 
+/**
+ * Preserves the first failure while cancelling and draining sibling work that
+ * belongs to the same operation deadline.
+ */
+export async function allOrAbortOnError<const T extends readonly unknown[]>(
+  values: T,
+  deadline: AbsoluteDeadline,
+): Promise<{ -readonly [K in keyof T]: Awaited<T[K]> }> {
+  try {
+    return await Promise.all(values);
+  } catch (error) {
+    deadline.abort(error);
+    await Promise.allSettled(values);
+    throw error;
+  }
+}
+
 export interface SharedUpstreamFlight<T> {
   readonly promise: Promise<T>;
   readonly settled: boolean;

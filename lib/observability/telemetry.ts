@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { PUBLIC_TOOL_NAMES } from "@/lib/mcp/tool-manifest";
+
 type McpHandler = (request: Request) => Promise<Response>;
 
 interface MethodMetrics {
@@ -17,7 +19,9 @@ interface TelemetryState {
   active: number;
   sdkErrors: number;
   toolErrors: number;
+  protocolErrors: number;
   errorCodes: Map<string, number>;
+  protocolErrorCodes: Map<string, number>;
   totalDurationMs: number;
   maxDurationMs: number;
   methods: Map<string, MethodMetrics>;
@@ -33,9 +37,19 @@ interface McpEventLike {
   context?: string;
   source?: "request" | "system";
   severity?: "warning" | "error" | "fatal";
+  parameters?: unknown;
 }
 
-const TELEMETRY_KEY = Symbol.for("mopsfin.telemetry.v1");
+type McpProtocolErrorCode = "INPUT_INVALID" | "UNKNOWN_TOOL";
+
+interface RequestTelemetryContext {
+  method: string;
+  tool: string | null;
+  toolErrorRecorded: boolean;
+  protocolErrorRecorded: boolean;
+}
+
+const TELEMETRY_KEY = Symbol.for("mopsfin.telemetry.v2");
 const MAX_DIMENSION_KEYS = 64;
 const TOOL_ERROR_CODES = new Set([
   "INVALID_ARGUMENT",
@@ -46,10 +60,8 @@ const TOOL_ERROR_CODES = new Set([
   "UPSTREAM_RATE_LIMITED",
   "UPSTREAM_BAD_RESPONSE",
 ]);
-const requestTelemetryStorage = new AsyncLocalStorage<{
-  tool: string | null;
-  toolErrorRecorded: boolean;
-}>();
+const requestTelemetryStorage = new AsyncLocalStorage<RequestTelemetryContext>();
+const publicToolNames = new Set<string>(PUBLIC_TOOL_NAMES);
 
 function initialState(): TelemetryState {
   return {
@@ -60,7 +72,9 @@ function initialState(): TelemetryState {
     active: 0,
     sdkErrors: 0,
     toolErrors: 0,
+    protocolErrors: 0,
     errorCodes: new Map(),
+    protocolErrorCodes: new Map(),
     totalDurationMs: 0,
     maxDurationMs: 0,
     methods: new Map(),
@@ -136,37 +150,6 @@ function emit(level: "info" | "error", payload: Record<string, unknown>): void {
   else console.info(line);
 }
 
-async function requestIdentity(request: Request): Promise<{
-  method: string;
-  tool: string | null;
-}> {
-  if (
-    request.method !== "POST" ||
-    !(request.headers.get("content-type") ?? "").includes("application/json")
-  ) {
-    return { method: request.method, tool: null };
-  }
-  try {
-    const body = (await request.clone().json()) as unknown;
-    if (!body || typeof body !== "object" || Array.isArray(body)) {
-      return { method: "POST", tool: null };
-    }
-    const record = body as Record<string, unknown>;
-    const method = safeDimension(record.method, "POST");
-    const params =
-      record.params && typeof record.params === "object" && !Array.isArray(record.params)
-        ? (record.params as Record<string, unknown>)
-        : null;
-    const tool =
-      method === "tools/call" && params
-        ? safeDimension(params.name, "unknown_tool")
-        : null;
-    return { method, tool };
-  } catch {
-    return { method: "POST", tool: null };
-  }
-}
-
 export async function observeMcpRequest(
   request: Request,
   handler: McpHandler,
@@ -175,14 +158,15 @@ export async function observeMcpRequest(
     request.headers.get("x-request-id") ?? crypto.randomUUID(),
     crypto.randomUUID(),
   );
-  const identity = await requestIdentity(request);
   const startedAt = Date.now();
   const telemetry = state();
   telemetry.requests += 1;
   telemetry.active += 1;
   const requestContext = {
-    tool: identity.tool,
+    method: safeDimension(request.method, "unknown_method"),
+    tool: null,
     toolErrorRecorded: false,
+    protocolErrorRecorded: false,
   };
 
   let failed = false;
@@ -192,7 +176,7 @@ export async function observeMcpRequest(
       handler,
       request,
     );
-    failed = !response.ok;
+    failed = !response.ok || requestContext.protocolErrorRecorded;
     const headers = new Headers(response.headers);
     headers.set("x-request-id", requestId);
     return new Response(response.body, {
@@ -205,8 +189,8 @@ export async function observeMcpRequest(
     emit("error", {
       event: "mcp_request_exception",
       requestId,
-      method: identity.method,
-      tool: identity.tool,
+      method: requestContext.method,
+      tool: requestContext.tool,
       errorType: errorType(error),
     });
     throw error;
@@ -217,11 +201,11 @@ export async function observeMcpRequest(
     if (failed) telemetry.errors += 1;
     telemetry.totalDurationMs += durationMs;
     telemetry.maxDurationMs = Math.max(telemetry.maxDurationMs, durationMs);
-    updateDimension(telemetry.methods, identity.method, durationMs, failed);
-    if (identity.tool) {
+    updateDimension(telemetry.methods, requestContext.method, durationMs, failed);
+    if (requestContext.tool) {
       updateDimension(
         telemetry.tools,
-        identity.tool,
+        requestContext.tool,
         durationMs,
         failed && !requestContext.toolErrorRecorded,
       );
@@ -229,8 +213,8 @@ export async function observeMcpRequest(
     emit(failed ? "error" : "info", {
       event: "mcp_request_completed",
       requestId,
-      method: identity.method,
-      tool: identity.tool,
+      method: requestContext.method,
+      tool: requestContext.tool,
       durationMs,
       status: failed ? "error" : "success",
     });
@@ -238,6 +222,31 @@ export async function observeMcpRequest(
 }
 
 export function recordMcpSdkEvent(event: McpEventLike): void {
+  if (event.type === "REQUEST_RECEIVED") {
+    const requestContext = requestTelemetryStorage.getStore();
+    if (!requestContext) return;
+    requestContext.method = safeDimension(event.method, requestContext.method);
+    if (
+      requestContext.method === "tools/call" &&
+      event.parameters &&
+      typeof event.parameters === "object" &&
+      !Array.isArray(event.parameters)
+    ) {
+      const params = (event.parameters as Record<string, unknown>).params;
+      const rawName =
+        params && typeof params === "object" && !Array.isArray(params)
+          ? (params as Record<string, unknown>).name
+          : undefined;
+      const candidate = safeDimension(rawName, "unknown_tool");
+      requestContext.tool = publicToolNames.has(candidate)
+        ? candidate
+        : "unknown_tool";
+      if (requestContext.tool === "unknown_tool") {
+        recordMcpProtocolError("UNKNOWN_TOOL");
+      }
+    }
+    return;
+  }
   if (event.type !== "ERROR") return;
   const telemetry = state();
   telemetry.sdkErrors += 1;
@@ -247,6 +256,24 @@ export function recordMcpSdkEvent(event: McpEventLike): void {
     severity: event.severity ?? "error",
     hasContext: Boolean(event.context),
     errorType: errorType(event.error),
+  });
+}
+
+export function recordMcpProtocolError(code: McpProtocolErrorCode): void {
+  const requestContext = requestTelemetryStorage.getStore();
+  if (!requestContext || requestContext.protocolErrorRecorded) return;
+  requestContext.protocolErrorRecorded = true;
+  const telemetry = state();
+  telemetry.protocolErrors += 1;
+  telemetry.protocolErrorCodes.set(
+    code,
+    (telemetry.protocolErrorCodes.get(code) ?? 0) + 1,
+  );
+  emit("error", {
+    event: "mcp_protocol_error",
+    code,
+    method: requestContext.method,
+    tool: requestContext.tool,
   });
 }
 
@@ -304,8 +331,14 @@ export function telemetrySnapshot() {
     active: telemetry.active,
     sdkErrors: telemetry.sdkErrors,
     toolErrors: telemetry.toolErrors,
+    protocolErrors: telemetry.protocolErrors,
     errorCodes: Object.fromEntries(
       [...telemetry.errorCodes.entries()].sort(([left], [right]) =>
+        left.localeCompare(right),
+      ),
+    ),
+    protocolErrorCodes: Object.fromEntries(
+      [...telemetry.protocolErrorCodes.entries()].sort(([left], [right]) =>
         left.localeCompare(right),
       ),
     ),

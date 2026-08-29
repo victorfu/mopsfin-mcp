@@ -20,6 +20,7 @@ import {
   MopsfinError,
 } from "@/lib/mopsfin/errors";
 import { priceClient } from "@/lib/price/client";
+import { validateAndAppendRawOhlcPage } from "@/lib/price/raw-page-contract";
 import type {
   OhlcBar,
   PriceSource,
@@ -163,10 +164,6 @@ function normalizeQuery(
     fail("INVALID_ARGUMENT", "include_event_ledger 必須是 boolean。");
   }
   return { ...query, companyCode };
-}
-
-function sameBar(left: OhlcBar, right: OhlcBar): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function uniquePriceSources(sources: PriceSource[]): PriceSource[] {
@@ -568,24 +565,22 @@ export class StockPriceSeriesClient {
         endDate: query.endDate,
         ...(cursor ? { cursor } : {}),
       });
-      this.validateRawPage(result, query, cursor, coveredThrough);
+      validateAndAppendRawOhlcPage(
+        result,
+        {
+          companyCode: query.companyCode,
+          startDate: query.startDate,
+          endDate: query.endDate,
+          ...(cursor ? { cursor } : {}),
+        },
+        cursor,
+        coveredThrough,
+        barsByDate,
+      );
       dataQualityComplete &&= result.dataQualityComplete;
       result.observedNames.forEach((name) => observedNames.add(name.trim()));
       sources.push(...result.sources);
       warnings.push(...result.warnings);
-      for (const bar of result.bars) {
-        const existing = barsByDate.get(bar.date);
-        if (existing) {
-          fail(
-            "UPSTREAM_BAD_RESPONSE",
-            sameBar(existing, bar)
-              ? "個股 OHLC cursor pages 出現重複日期。"
-              : "個股 OHLC cursor pages 出現衝突日期。",
-            { companyCode: query.companyCode, date: bar.date },
-          );
-        }
-        barsByDate.set(bar.date, bar);
-      }
       coveredThrough = result.coverage.coveredThrough;
       if (result.coverage.coverageComplete) {
         const bars = [...barsByDate.values()].sort((left, right) =>
@@ -631,57 +626,6 @@ export class StockPriceSeriesClient {
         nextCursor: cursor,
       },
     );
-  }
-
-  private validateRawPage(
-    result: StockOhlcResult,
-    query: StockPriceSeriesQuery,
-    cursor: string | undefined,
-    previousCoveredThrough: string | null,
-  ): void {
-    if (
-      result.companyCode !== query.companyCode ||
-      result.query.companyCode !== query.companyCode ||
-      result.query.startDate !== query.startDate ||
-      result.query.endDate !== query.endDate ||
-      (result.query.cursor ?? null) !== (cursor ?? null) ||
-      result.priceBasis !== "raw_unadjusted" ||
-      result.coverage.requestedStart !== query.startDate ||
-      result.coverage.requestedEnd !== query.endDate
-    ) {
-      fail("UPSTREAM_BAD_RESPONSE", "個股 OHLC dependency 回傳 query scope 不一致。", {
-        requestedCompanyCode: query.companyCode,
-        returnedCompanyCode: result.companyCode,
-      });
-    }
-    if (
-      result.coverage.coveredThrough < query.startDate ||
-      result.coverage.coveredThrough > query.endDate ||
-      (previousCoveredThrough !== null &&
-        result.coverage.coveredThrough <= previousCoveredThrough)
-    ) {
-      fail("UPSTREAM_BAD_RESPONSE", "個股 OHLC cursor coverage 未嚴格向前推進。", {
-        previousCoveredThrough,
-        coveredThrough: result.coverage.coveredThrough,
-      });
-    }
-    if (
-      (result.coverage.coverageComplete &&
-        (result.coverage.coveredThrough !== query.endDate ||
-          result.coverage.nextCursor !== null)) ||
-      (!result.coverage.coverageComplete && !result.coverage.nextCursor)
-    ) {
-      fail("UPSTREAM_BAD_RESPONSE", "個股 OHLC coverage／cursor 宣告矛盾。", {
-        coverage: result.coverage,
-      });
-    }
-    if (
-      result.bars.some(
-        (bar) => bar.date < query.startDate || bar.date > query.endDate,
-      )
-    ) {
-      fail("UPSTREAM_BAD_RESPONSE", "個股 OHLC dependency 回傳 requested range 外 bar。");
-    }
   }
 
   private async loadCorporateActions(

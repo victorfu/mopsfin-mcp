@@ -18,7 +18,6 @@ import {
   FRESHNESS_POLICIES,
   annotations,
   evaluateFreshness,
-  failure,
   fingerprint,
   success,
   taipeiDate,
@@ -282,7 +281,6 @@ export const runReverseDcfTool = defineTool(
     annotations,
   },
   async (query) => {
-    try {
       const { data, completedClose } =
         await reverseDcfMcpClient.runReverseDcfWithContext(query);
       const sourceComplete = sourceDependenciesComplete(data);
@@ -316,9 +314,6 @@ export const runReverseDcfTool = defineTool(
           issues: qualityIssues(data),
         },
       );
-    } catch (error) {
-      return failure(error);
-    }
   },
 );
 

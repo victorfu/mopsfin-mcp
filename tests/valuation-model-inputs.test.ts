@@ -374,6 +374,12 @@ describe("ValuationModelInputsClient", () => {
     expect(result.fields.cashAndCashEquivalents.value).toBe(3_134_000);
     expect(result.fields.interestBearingDebt.value).toBe(897_000);
     expect(result.fields.netDebt.value).toBe(-2_237_000);
+    expect(new Set(result.fields.netDebt.inputLineageIds)).toEqual(
+      new Set([
+        ...result.fields.interestBearingDebt.inputLineageIds,
+        ...result.fields.cashAndCashEquivalents.inputLineageIds,
+      ]),
+    );
     expect(result.fields.issuedShares.value).toBe(25_932_071_458);
     expect(result.fields.issuedShares.evidenceClass).toBe("OFFICIAL_MASTER_RAW");
     expect(result.fields.latestOfficialClose.value).toBe(2_000);
@@ -387,6 +393,9 @@ describe("ValuationModelInputsClient", () => {
     expect(result.fields.enterpriseValue.value).toBe(51_864_140_679_000);
     expect(result.fields.enterpriseValue.evidenceClass).toBe(
       "MIXED_OFFICIAL_CALC",
+    );
+    expect(result.fields.enterpriseValue.inputLineageIds).toEqual(
+      expect.arrayContaining(result.fields.netDebt.inputLineageIds),
     );
     expect(result.quality).toEqual({
       calculationComplete: true,

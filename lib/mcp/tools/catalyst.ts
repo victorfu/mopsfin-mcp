@@ -12,7 +12,6 @@ import {
   companyCatalystSnapshotsOutputSchema,
   companyMasterClient,
   evaluateFreshness,
-  failure,
   selectorFreshness,
   success,
   taipeiDate,
@@ -36,7 +35,6 @@ export const getCompanyCatalystEventsTool = defineTool(
       offset,
       limit,
     }) => {
-      try {
         let marketHintWarning: string | null = null;
         let marketHintIssueCode:
           | "CATALYST_MARKET_HINT_PARTIAL"
@@ -227,9 +225,6 @@ export const getCompanyCatalystEventsTool = defineTool(
             issues,
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -244,7 +239,6 @@ export const getCompanyCatalystSnapshotsTool = defineTool(
       annotations,
     },
     async ({ company_codes, snapshot_types, as_of, offset, limit }) => {
-      try {
         let marketHintWarning: string | null = null;
         let marketHintIssueCode:
           | "CATALYST_SNAPSHOT_MARKET_HINT_PARTIAL"
@@ -550,9 +544,6 @@ export const getCompanyCatalystSnapshotsTool = defineTool(
             issues,
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 

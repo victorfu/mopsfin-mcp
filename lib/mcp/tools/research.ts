@@ -12,7 +12,6 @@ import {
   FRESHNESS_POLICIES,
   annotations,
   evaluateFreshness,
-  failure,
   fingerprint,
   success,
   taipeiDate,
@@ -292,7 +291,6 @@ export const screenTaiwanStockCandidatesWithCatalystSnapshotsTool = defineTool(
     annotations,
   },
   async ({ screen, catalyst_snapshots }) => {
-    try {
       const data =
         await candidateCatalystClient.screenTaiwanStockCandidatesWithCatalystSnapshots(
           {
@@ -361,9 +359,6 @@ export const screenTaiwanStockCandidatesWithCatalystSnapshotsTool = defineTool(
           issues: qualityIssues(data),
         },
       );
-    } catch (error) {
-      return failure(error);
-    }
   },
 );
 

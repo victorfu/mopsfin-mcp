@@ -312,4 +312,38 @@ describe("MonthlyRevenueClient", () => {
       String(input).includes("openapi.twse.com.tw"),
     )).toHaveLength(2);
   });
+
+  it("aborts and drains the other market after an archive source fails", async () => {
+    const siblingSignals: AbortSignal[] = [];
+    const fetchMock = vi.fn(
+      async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+        if (String(input).includes("/sii/")) {
+          return new Response("bad request", { status: 400 });
+        }
+        const signal = init?.signal as AbortSignal;
+        siblingSignals.push(signal);
+        return new Promise<Response>((_resolve, reject) => {
+          const onAbort = () => reject(signal.reason);
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort, { once: true });
+        });
+      },
+    );
+    const client = new MonthlyRevenueClient(
+      fetchMock as typeof fetch,
+      now,
+      master(completeMaster),
+      { maxAttempts: 1, cacheTtlMs: 0 },
+    );
+
+    await expect(
+      client.getMonthlyRevenue({
+        market: "all",
+        dataMonth: "2026-07",
+        universePolicy: "compatible",
+      }),
+    ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+    expect(siblingSignals).toHaveLength(1);
+    expect(siblingSignals[0].aborted).toBe(true);
+  });
 });

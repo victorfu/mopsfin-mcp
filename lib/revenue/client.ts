@@ -29,6 +29,7 @@ import {
 } from "@/lib/upstream/cache-provenance";
 import {
   AbsoluteDeadline,
+  allOrAbortOnError,
   assertRowCount,
   BoundedSemaphore,
   BoundedTtlLru,
@@ -886,7 +887,7 @@ async function mapWithConcurrency<T, U>(
   values: T[],
   concurrency: number,
   mapper: (value: T, index: number) => Promise<U>,
-  deadline?: AbsoluteDeadline,
+  deadline: AbsoluteDeadline,
 ): Promise<U[]> {
   const output = new Array<U>(values.length);
   let nextIndex = 0;
@@ -895,20 +896,20 @@ async function mapWithConcurrency<T, U>(
     { length: Math.min(concurrency, values.length) },
     async () => {
       while (!stopped && nextIndex < values.length) {
-        deadline?.throwIfExpired();
+        deadline.throwIfExpired();
         const index = nextIndex;
         nextIndex += 1;
         try {
           output[index] = await mapper(values[index], index);
         } catch (error) {
           stopped = true;
-          deadline?.abort(error);
+          deadline.abort(error);
           throw error;
         }
       }
     },
   );
-  await Promise.all(workers);
+  await allOrAbortOnError(workers, deadline);
   return output;
 }
 
@@ -1171,7 +1172,7 @@ export class MonthlyRevenueClient {
     const companyCodes = normalizeRequestedCodes(query.companyCodes);
     const markets = selectedMarkets(query.market);
 
-    const [loaded, master] = await Promise.all([
+    const [loaded, master] = await allOrAbortOnError([
       isLatest
         ? this.loadLatestSources(markets, deadline)
         : this.loadArchiveSources(markets, explicitMonth as string, deadline),
@@ -1183,7 +1184,7 @@ export class MonthlyRevenueClient {
         }),
         deadline,
       ),
-    ]);
+    ], deadline);
     const sourceResults = loaded.sourceResults;
 
     const dataMonths = [...new Set(sourceResults.map((result) => result.dataMonth))];
@@ -1415,7 +1416,7 @@ export class MonthlyRevenueClient {
     const historicalMonths = latest
       ? months.filter((month) => month !== endMonth)
       : months;
-    const [historical, currentMaster] = await Promise.all([
+    const [historical, currentMaster] = await allOrAbortOnError([
       mapWithConcurrency(
         historicalMonths,
         TREND_CONCURRENCY,
@@ -1423,7 +1424,7 @@ export class MonthlyRevenueClient {
         deadline,
       ),
       masterPromise,
-    ]);
+    ], deadline);
     const currentMasterByCode = new Map(
       currentMaster.companies.map((company) => [company.code, company]),
     );
@@ -1602,10 +1603,11 @@ export class MonthlyRevenueClient {
     dataMonth: string,
     deadline: AbsoluteDeadline,
   ): Promise<LoadedRevenueSources> {
-    const sourceResults = await Promise.all(
+    const sourceResults = await allOrAbortOnError(
       markets.map((market) =>
         this.loadArchiveSource(market, dataMonth, deadline),
       ),
+      deadline,
     );
     return { sourceResults, warnings: [] };
   }
@@ -1614,7 +1616,7 @@ export class MonthlyRevenueClient {
     markets: CompanyMarket[],
     deadline: AbsoluteDeadline,
   ): Promise<LoadedRevenueSources> {
-    const perMarket = await Promise.all(
+    const perMarket = await allOrAbortOnError(
       markets.map(async (market) => {
         const config = OPENAPI_SOURCE_CONFIGS[market];
         const openapi = normalizeMonthlyRevenuePayload(
@@ -1659,6 +1661,7 @@ export class MonthlyRevenueClient {
         }
         return { market, openapiMonth: openapi.dataMonth, candidates, warnings };
       }),
+      deadline,
     );
 
     const commonMonths = [...perMarket[0].candidates.keys()]

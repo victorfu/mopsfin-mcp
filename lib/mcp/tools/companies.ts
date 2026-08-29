@@ -5,7 +5,6 @@ import {
   annotations,
   companyMasterClient,
   evaluateFreshness,
-  failure,
   findCompaniesInputSchema,
   findCompaniesOutputSchema,
   fingerprint,
@@ -29,7 +28,6 @@ export const findCompaniesTool = defineTool(
       annotations,
     },
     async ({ query, limit }) => {
-      try {
         const result = await mopsfinClient.findCompaniesWithSource(query, limit);
         const companies = result.companies;
         const data = {
@@ -51,9 +49,6 @@ export const findCompaniesTool = defineTool(
             }),
           ],
         });
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -68,7 +63,6 @@ export const listCompaniesTool = defineTool(
       annotations,
     },
     async ({ market, include_financial, include_ky, page_size, cursor }) => {
-      try {
         const data = await companyMasterClient.listCompanies({
           market,
           includeFinancial: include_financial,
@@ -149,9 +143,6 @@ export const listCompaniesTool = defineTool(
             ],
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 

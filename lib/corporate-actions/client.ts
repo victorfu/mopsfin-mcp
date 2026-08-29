@@ -12,7 +12,10 @@ import {
   type OfficialJsonLoaderOptions,
   type OfficialSourceConfig,
 } from "@/lib/market-data/client-utils";
-import { AbsoluteDeadline } from "@/lib/upstream/reliability";
+import {
+  AbsoluteDeadline,
+  allOrAbortOnError,
+} from "@/lib/upstream/reliability";
 
 import type {
   CorporateActionAdjustmentReason,
@@ -1573,8 +1576,9 @@ export class CorporateActionClient {
     );
     const deadline = new AbsoluteDeadline(this.deadlineMs);
     try {
-      const contracts = await Promise.all(
+      const contracts = await allOrAbortOnError(
         requests.map((request) => this.loadRangeContract(request, deadline)),
+        deadline,
       );
       const ranges: NormalizedRange[] = contracts.flatMap((contract) =>
         contract.source === null

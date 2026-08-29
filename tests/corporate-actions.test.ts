@@ -349,6 +349,34 @@ describe("CorporateActionClient", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3 + companyCodes.length);
   });
 
+  it("aborts and drains sibling range loads after the first required source fails", async () => {
+    const siblingSignals: AbortSignal[] = [];
+    const fetchMock = vi.fn(
+      async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+        if (String(input).includes("/exRight/TWT49U?")) {
+          return new Response("bad request", { status: 400 });
+        }
+        const signal = init?.signal as AbortSignal;
+        siblingSignals.push(signal);
+        return new Promise<Response>((_resolve, reject) => {
+          const onAbort = () => reject(signal.reason);
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort, { once: true });
+        });
+      },
+    );
+    const client = new CorporateActionClient(fetchMock as typeof fetch, now, {
+      maxAttempts: 1,
+      cacheTtlMs: 0,
+    });
+
+    await expect(
+      client.getHistory("listed", "2025-07-01", "2025-07-10"),
+    ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+    expect(siblingSignals).toHaveLength(2);
+    expect(siblingSignals.every((signal) => signal.aborted)).toBe(true);
+  });
+
   it("normalizes TPEx declared counts, encoded dates and price-index factors", async () => {
     const fetchMock = fixtureFetch();
     const client = new CorporateActionClient(fetchMock as typeof fetch, now, {

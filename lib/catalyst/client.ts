@@ -139,6 +139,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const HISTORY_COMPANY_LIMIT = 20;
 const HISTORY_RANGE_DAY_LIMIT = 366;
 const HISTORY_UPSTREAM_REQUEST_LIMIT = 40;
+const CATALYST_QUERY_CONCURRENCY = 4;
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 100;
 const CURRENT_LOOKBACK_DAYS = 7;
@@ -146,6 +147,35 @@ const SECURITY_BLOCK_PATTERN =
   /(?:access\s*denied|request\s*rejected|captcha|查詢過於頻繁|驗證碼|存取遭拒|禁止存取|系統忙碌|service\s*unavailable)/i;
 const MATERIAL_EMPTY_PATTERN = /資料庫中查無需求資料/;
 const CONFERENCE_EMPTY_PATTERN = /查無資料/;
+
+class QueryTaskScheduler {
+  private active = 0;
+  private readonly queue: Array<() => void> = [];
+
+  constructor(private readonly concurrency: number) {}
+
+  run<T>(task: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push(() => {
+        this.active += 1;
+        void Promise.resolve()
+          .then(task)
+          .then(resolve, reject)
+          .finally(() => {
+            this.active -= 1;
+            this.drain();
+          });
+      });
+      this.drain();
+    });
+  }
+
+  private drain(): void {
+    while (this.active < this.concurrency && this.queue.length > 0) {
+      (this.queue.shift() as () => void)();
+    }
+  }
+}
 
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -1479,6 +1509,7 @@ export class CatalystClient {
     query: CompanyCatalystEventsQuery,
   ): Promise<CompanyCatalystEventsResult> {
     const validated = validateHistoricalQuery(query, this.now());
+    const scheduler = new QueryTaskScheduler(CATALYST_QUERY_CONCURRENCY);
     const familyExecutions = await Promise.all(
       validated.companyCodes.flatMap((companyCode) =>
         validated.eventTypes.map((eventType) =>
@@ -1488,6 +1519,7 @@ export class CatalystClient {
             validated.months,
             query.startDate,
             query.endDate,
+            scheduler,
           ),
         ),
       ),
@@ -1697,6 +1729,7 @@ export class CatalystClient {
     months: CalendarMonthRange[],
     startDate: string,
     endDate: string,
+    scheduler: QueryTaskScheduler,
   ): Promise<FamilyExecution> {
     const requests: HistoricalPlannedRequest[] = [];
     for (const monthRange of months) {
@@ -1727,7 +1760,7 @@ export class CatalystClient {
     const settled = await Promise.all(
       requests.map(async (request) => {
         try {
-          return { unit: await request.run(), failure: null };
+          return { unit: await scheduler.run(request.run), failure: null };
         } catch (error) {
           return {
             unit: null,

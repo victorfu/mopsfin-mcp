@@ -2,7 +2,6 @@ import { defineTool } from "./definition";
 import {
   FRESHNESS_POLICIES,
   annotations,
-  failure,
   fingerprint,
   monthlyRevenueClient,
   monthlyRevenueInputSchema,
@@ -25,7 +24,6 @@ export const getMonthlyRevenueTool = defineTool(
       annotations,
     },
     async ({ market, data_month, company_codes, universe_policy, page_size, cursor }) => {
-      try {
         const resolvedUniversePolicy =
           universe_policy ??
           (data_month === "latest" ? "strict_current_master" : "compatible");
@@ -147,9 +145,6 @@ export const getMonthlyRevenueTool = defineTool(
             ],
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -164,7 +159,6 @@ export const getMonthlyRevenueTrendTool = defineTool(
       annotations,
     },
     async ({ market, company_codes, end_month, lookback_months, universe_policy, page_size, cursor }) => {
-      try {
         const companyCodes = [...company_codes];
         const data = await monthlyRevenueClient.getMonthlyRevenueTrend({
           market,
@@ -276,9 +270,6 @@ export const getMonthlyRevenueTrendTool = defineTool(
             ],
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 

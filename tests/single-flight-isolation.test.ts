@@ -248,4 +248,31 @@ describe("single-flight request cancellation isolation", () => {
     expect(result.body).toBe(materialHistoryEmpty);
     expect(result.cache?.status).toBe("shared");
   });
+
+  it("enforces a follower deadline without cancelling the HTML flight leader", async () => {
+    const upstream = controlledFetch(materialHistoryEmpty, "text/html");
+    const loader = new OfficialHtmlPostLoader(
+      upstream.fetchMock as typeof fetch,
+      now,
+      { deadlineMs: 1_000, maxAttempts: 1 },
+    );
+    const call = () =>
+      loader.post(
+        "fixture",
+        "https://mopsov.twse.com.tw/mops/web/ajax_t05st01",
+        { co_id: "2330", year: "115" },
+      );
+    const leader = runWithRequestDeadline(1_000, call);
+    await vi.waitFor(() => expect(upstream.fetchMock).toHaveBeenCalledTimes(1));
+
+    await expect(runWithRequestDeadline(10, call)).rejects.toMatchObject({
+      code: "UPSTREAM_TIMEOUT",
+      reason: "UPSTREAM_DEADLINE_EXCEEDED",
+    });
+    expect(upstream.signal().aborted).toBe(false);
+
+    upstream.release();
+    await expect(leader).resolves.toMatchObject({ body: materialHistoryEmpty });
+    expect(upstream.fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

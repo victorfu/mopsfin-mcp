@@ -885,7 +885,10 @@ export class ValuationModelInputsClient {
           "TWD",
           debt.value - cash.value,
           "interestBearingDebt - cashAndCashEquivalents",
-          { inputFieldIds: ["interestBearingDebt", "cashAndCashEquivalents"] },
+          {
+            inputFieldIds: ["interestBearingDebt", "cashAndCashEquivalents"],
+            inputLineageIds: inheritedLineageIds(debt, cash),
+          },
         )
       : gapField("netDebt", "TWD", "DERIVED_INPUT_UNAVAILABLE", {
           formula: "interestBearingDebt - cashAndCashEquivalents",

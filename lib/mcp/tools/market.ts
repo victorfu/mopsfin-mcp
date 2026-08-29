@@ -5,7 +5,6 @@ import {
   dailyMarketOhlcOutputSchema,
   dailyMarketValuationInputSchema,
   dailyMarketValuationOutputSchema,
-  failure,
   fingerprint,
   paginateByCompany,
   priceClient,
@@ -31,7 +30,6 @@ export const getStockOhlcTool = defineTool(
       annotations,
     },
     async ({ company_code, start_date, end_date, cursor }) => {
-      try {
         const data = await priceClient.getStockOhlc({
           companyCode: company_code,
           startDate: start_date,
@@ -71,9 +69,6 @@ export const getStockOhlcTool = defineTool(
                 : [],
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -88,7 +83,6 @@ export const getDailyMarketOhlcTool = defineTool(
       annotations,
     },
     async ({ market, date, company_codes, universe_policy, page_size, cursor }) => {
-      try {
         const data = await priceClient.getDailyMarketOhlc({
           market,
           date,
@@ -159,9 +153,6 @@ export const getDailyMarketOhlcTool = defineTool(
             freshnessDetails,
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -176,7 +167,6 @@ export const getStockReactionSignalsTool = defineTool(
       annotations,
     },
     async ({ company_codes, as_of, horizons, page_size, cursor }) => {
-      try {
         const data = await reactionClient.getStockReactionSignals({
           companyCodes: company_codes,
           asOf: as_of,
@@ -424,9 +414,6 @@ export const getStockReactionSignalsTool = defineTool(
             ],
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -441,7 +428,6 @@ export const getDailyMarketValuationTool = defineTool(
       annotations,
     },
     async ({ market, date, company_codes, universe_policy, page_size, cursor }) => {
-      try {
         const data = await valuationClient.getDailyMarketValuation({
           market,
           date,
@@ -527,9 +513,6 @@ export const getDailyMarketValuationTool = defineTool(
             freshnessDetails,
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 

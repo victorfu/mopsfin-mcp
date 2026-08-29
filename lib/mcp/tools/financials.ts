@@ -9,7 +9,6 @@ import {
   companyMetricsBatchClient,
   companyMetricsBatchInputSchema,
   companyMetricsBatchOutputSchema,
-  failure,
   financialInstitutionInputSchema,
   financialInstitutionOutputSchema,
   financialNoteInputSchema,
@@ -37,7 +36,6 @@ export const getCompanyMetricTool = defineTool(
       annotations,
     },
     async (input) => {
-      try {
         const data = await mopsfinClient.getCompanyMetric({
           metricCode: input.metric_code,
           companyCodes: input.company_codes,
@@ -72,9 +70,6 @@ export const getCompanyMetricTool = defineTool(
             }),
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -89,7 +84,6 @@ export const getCompanyMetricsBatchTool = defineTool(
       annotations,
     },
     async (input) => {
-      try {
         const companyCodes = [...input.company_codes];
         const metricCodes = [...input.metric_codes];
         const catalog = await mopsfinClient.getCatalog();
@@ -264,9 +258,6 @@ export const getCompanyMetricsBatchTool = defineTool(
             issues: qualityIssues,
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -281,7 +272,6 @@ export const getFinancialStatementTool = defineTool(
       annotations,
     },
     async (input) => {
-      try {
         const data = await mopsfinClient.getFinancialStatement({
           statement: input.statement,
           companyCodes: input.company_codes,
@@ -306,9 +296,6 @@ export const getFinancialStatementTool = defineTool(
             }),
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -323,7 +310,6 @@ export const getFinancialNoteTool = defineTool(
       annotations,
     },
     async (input) => {
-      try {
         const data = await mopsfinClient.getFinancialNote({
           note: input.note,
           companyCodes: input.company_codes,
@@ -348,9 +334,6 @@ export const getFinancialNoteTool = defineTool(
             }),
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -365,7 +348,6 @@ export const getIndustryDataTool = defineTool(
       annotations,
     },
     async (input) => {
-      try {
         const data = await mopsfinClient.getIndustryData({
           mode: input.mode,
           measure: input.measure,
@@ -408,9 +390,6 @@ export const getIndustryDataTool = defineTool(
             }),
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 
@@ -425,7 +404,6 @@ export const getFinancialInstitutionMetricTool = defineTool(
       annotations,
     },
     async (input) => {
-      try {
         const data = await mopsfinClient.getFinancialInstitutionMetric({
           metricCode: input.metric_code,
           institutionCodes: input.institution_codes,
@@ -457,9 +435,6 @@ export const getFinancialInstitutionMetricTool = defineTool(
             }),
           },
         );
-      } catch (error) {
-        return failure(error);
-      }
     },
 );
 

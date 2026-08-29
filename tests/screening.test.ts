@@ -597,6 +597,12 @@ describe("Taiwan stock screen calculations", () => {
       { ...peerContext, pePercentile: null, pbPercentile: null, yieldPercentile: null },
       "2026-07-31",
     );
+    const valuationNonPositiveRoe = buildReasonableValuationPillar(
+      valuation("1304"),
+      { period: "2025Q4", value: 0 },
+      peerContext,
+      "2026-07-31",
+    );
 
     expect(valuationPass.status).toBe("pass");
     expect(valuationFail.status).toBe("fail");
@@ -607,6 +613,14 @@ describe("Taiwan stock screen calculations", () => {
     expect(valuationUnknown.criteria.find((item) => item.code === "pe_primary")).toMatchObject({
       status: "unknown",
       value: null,
+    });
+    expect(
+      valuationNonPositiveRoe.criteria.find(
+        (item) => item.code === "roe_adjusted_pb_primary",
+      ),
+    ).toMatchObject({
+      status: "unknown",
+      reasonCodes: ["annual_roe_non_positive"],
     });
 
     const verifiedAdjusted = buildMarketUnderreactionPillar(

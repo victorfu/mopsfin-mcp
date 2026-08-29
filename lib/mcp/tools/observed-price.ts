@@ -11,7 +11,6 @@ import {
 import { defineTool } from "./definition";
 import {
   annotations,
-  failure,
   success,
 } from "./shared";
 
@@ -26,7 +25,6 @@ export const analyzeObservedPriceTool = defineTool(
     annotations,
   },
   async ({ company_code, observed_price_twd, observed_at, source_label }) => {
-    try {
       const { data, completedClose } =
         await observedPriceClient.analyzeObservedPriceWithContext({
           companyCode: company_code,
@@ -53,9 +51,6 @@ export const analyzeObservedPriceTool = defineTool(
           issues: observedPriceQualityIssues(data),
         },
       );
-    } catch (error) {
-      return failure(error);
-    }
   },
 );
 

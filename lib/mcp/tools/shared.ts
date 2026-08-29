@@ -10,14 +10,11 @@ import type {
   CompanyMarketSelection,
 } from "@/lib/company-master/types";
 import { MOPSFIN_SOURCE_URL } from "@/lib/mopsfin/constants";
-import { asMopsfinError } from "@/lib/mopsfin/errors";
 import type { Catalog } from "@/lib/mopsfin/types";
-import { recordMcpToolError } from "@/lib/observability/telemetry";
 
 import { fingerprint, paginateByCompany } from "../cursor";
 import {
   buildResultMeta,
-  structuredError,
   type ResultMetaHints,
 } from "../result-contract";
 
@@ -42,6 +39,7 @@ export { valuationClient } from "@/lib/valuation/client";
 export type { FreshnessEvaluation } from "@/lib/freshness/types";
 export type { ResultMetaHints } from "../result-contract";
 export { fingerprint, paginateByCompany } from "../cursor";
+export { failure } from "./result";
 export {
   companyCatalystEventsInputSchema,
   companyCatalystEventsOutputSchema,
@@ -220,25 +218,6 @@ export function success<T extends object>(
   };
   return {
     content: [{ type: "text" as const, text: summary }],
-    structuredContent,
-  };
-}
-
-export function failure(error: unknown) {
-  const normalized = asMopsfinError(error);
-  recordMcpToolError(normalized);
-  const structuredContent = structuredError(normalized);
-  const details = Object.keys(structuredContent.error.details as object).length
-    ? ` ${JSON.stringify(structuredContent.error.details)}`
-    : "";
-  return {
-    isError: true as const,
-    content: [
-      {
-        type: "text" as const,
-        text: `${normalized.code}: ${normalized.message}${details}`,
-      },
-    ],
     structuredContent,
   };
 }

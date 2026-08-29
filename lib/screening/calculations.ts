@@ -682,7 +682,15 @@ export function buildReasonableValuationPillar(
       },
       reasonCodes: pbKnown
         ? undefined
-        : [pb === null ? "pb_not_meaningful" : annualRoe === null ? "annual_roe_unavailable" : "pb_peer_sample_insufficient"],
+        : [
+            pb === null
+              ? "pb_not_meaningful"
+              : annualRoe === null
+                ? "annual_roe_unavailable"
+                : annualRoe.value <= 0
+                  ? "annual_roe_non_positive"
+                  : "pb_peer_sample_insufficient",
+          ],
     }),
     criterion({
       code: "dividend_yield_support",

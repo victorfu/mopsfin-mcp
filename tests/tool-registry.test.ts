@@ -2,7 +2,9 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
+import { defineTool } from "@/lib/mcp/tools/definition";
 import {
   TOOL_REGISTRY,
   registerToolRegistry,
@@ -20,6 +22,7 @@ import {
   type McpToolName,
 } from "@/lib/mcp/tool-manifest";
 import { MOPSFIN_SERVER_INSTRUCTIONS } from "@/lib/mopsfin/guidance";
+import { MopsfinError } from "@/lib/mopsfin/errors";
 import {
   MCP_ENDPOINT,
   RESULT_CONTRACT_VERSION,
@@ -216,6 +219,38 @@ describe("canonical MCP tool registry", () => {
         (definition as typeof definition & { handler: unknown }).handler,
       );
     }
+  });
+
+  it("memoizes JSON Schema conversion by schema identity and input/output role", async () => {
+    const sharedSchema = z.object({ value: z.string() });
+    const definition = defineTool(
+      "find_companies",
+      {
+        inputSchema: sharedSchema,
+        outputSchema: sharedSchema,
+      },
+      async () => {
+        throw new MopsfinError("NO_DATA", "fixture failure");
+      },
+    );
+    const options = { target: "draft-2020-12" as const };
+    const standard = sharedSchema["~standard"];
+
+    const firstInput = standard.jsonSchema.input(options);
+    const secondInput = standard.jsonSchema.input(options);
+    const firstOutput = standard.jsonSchema.output(options);
+    const secondOutput = standard.jsonSchema.output(options);
+
+    expect(secondInput).toBe(firstInput);
+    expect(secondOutput).toBe(firstOutput);
+    expect(firstOutput).not.toBe(firstInput);
+    await expect(definition.handler({ value: "x" }, {} as never)).resolves.toMatchObject({
+      isError: true,
+      structuredContent: {
+        ok: false,
+        error: { code: "NO_DATA" },
+      },
+    });
   });
 
   it("keeps every tools/list schema surface and LLM routing description complete", async () => {

@@ -19,7 +19,6 @@ import {
   FRESHNESS_POLICIES,
   annotations,
   evaluateFreshness,
-  failure,
   fingerprint,
   success,
   taipeiDate,
@@ -281,7 +280,6 @@ export const getValuationModelInputsTool = defineTool(
     annotations,
   },
   async ({ company_code }) => {
-    try {
       const execution =
         await valuationModelInputsClient.getValuationModelInputsWithContext({
           companyCode: company_code,
@@ -332,9 +330,6 @@ export const getValuationModelInputsTool = defineTool(
           issues: qualityIssues(data),
         },
       );
-    } catch (error) {
-      return failure(error);
-    }
   },
 );
 
