@@ -92,6 +92,14 @@ describe("LLM-facing official guidance", () => {
       "crossModelScoreComparable=false",
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("不自動補額");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "screen_taiwan_market_universe_page",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("full_universe_cursor_v1");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "STATELESS_PAGE_VALUES_NOT_PINNED",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("沒有 global rank");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("net_profit");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("latest 只表示查詢意圖");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("freshnessDetails");

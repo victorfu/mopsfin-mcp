@@ -30,7 +30,7 @@ const runtimeSurfacePaths = [
 describe("canonical server identity", () => {
   it("derives runtime identity from package metadata without a second version literal", () => {
     expect(SERVER_VERSION).toBe(packageMetadata.version);
-    expect(SERVER_VERSION).toBe("0.10.1");
+    expect(SERVER_VERSION).toBe("0.11.0");
     expect(SERVER_IDENTITY).toMatchObject({
       name: "mopsfin-taiwan-equities",
       version: packageMetadata.version,
@@ -47,7 +47,7 @@ describe("canonical server identity", () => {
 
   it("derives the public count from the dependency-free ordered tool manifest", () => {
     expect(TOOL_COUNT).toBe(PUBLIC_TOOL_NAMES.length);
-    expect(TOOL_COUNT).toBe(25);
+    expect(TOOL_COUNT).toBe(26);
     expect(new Set(PUBLIC_TOOL_NAMES).size).toBe(TOOL_COUNT);
     expect(PUBLIC_TOOL_NAMES).toEqual(
       expect.arrayContaining([
@@ -58,6 +58,7 @@ describe("canonical server identity", () => {
         "analyze_observed_price",
         "screen_taiwan_financial_candidates",
         "screen_taiwan_market_candidates",
+        "screen_taiwan_market_universe_page",
       ]),
     );
     expect(

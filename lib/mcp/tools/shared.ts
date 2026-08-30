@@ -37,6 +37,7 @@ export { monthlyRevenueClient } from "@/lib/revenue/client";
 export { taiwanStockScreenClient } from "@/lib/screening/client";
 export { taiwanFinancialScreenClient } from "@/lib/financial-screening/client";
 export { taiwanMarketScreenClient } from "@/lib/market-screening/client";
+export { taiwanMarketFullUniverseClient } from "@/lib/full-screening/client";
 export { valuationClient } from "@/lib/valuation/client";
 export type { FreshnessEvaluation } from "@/lib/freshness/types";
 export type { ResultMetaHints } from "../result-contract";
@@ -83,6 +84,8 @@ export {
   screenTaiwanFinancialCandidatesOutputSchema,
   screenTaiwanMarketCandidatesInputSchema,
   screenTaiwanMarketCandidatesOutputSchema,
+  screenTaiwanMarketUniversePageInputSchema,
+  screenTaiwanMarketUniversePageOutputSchema,
   stockReactionSignalsInputSchema,
   stockReactionSignalsOutputSchema,
   stockOhlcInputSchema,

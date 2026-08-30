@@ -8,9 +8,13 @@ const FINANCIAL_SCREEN_INSTRUCTIONS =
 const MARKET_SCREEN_INSTRUCTIONS =
   "全市場候選組合：screen_taiwan_market_candidates 固定 preset=balanced_market_v1，分別執行既有 balanced_non_financial_v2 與 balanced_financial_v1，完整保留 segments.nonFinancial／segments.financial 的原始結果、model identity、bucket 與 within-model rank。non-financial／financial quotas 各自限制輸出；某 segment 候選不足時不自動補額，也不以另一 segment 的較差候選填滿。crossModelScoreComparable=false；合併次序只依 bucket priority、固定 segment priority 與 withinModelRank，絕不讀取或比較兩個模型的 raw overallScore。這只是兩份 bounded triage 的透明組合，不會消除各自 top-10 deep／最多 5 家 reaction 的邊界，也不是完整全市場掃描、point-in-time snapshot、投資建議或資產配置建議。";
 
+const FULL_UNIVERSE_SCREEN_INSTRUCTIONS =
+  "全母體逐頁 execution：screen_taiwan_market_universe_page 固定 preset=full_universe_cursor_v1，以 current listed／OTC company identity 建立 content-bound manifest，按公司代號排序並以 stateless cursor 每頁最多處理 5 家。每頁依 isFinancial 路由既有 taiwan_stock_screen.v2 或 taiwan_financial_screen.v1，candidate_limit 等於該 segment 本頁公司數；每家公司必須恰好落入 candidate、not_reaction_scored 或 excluded。shared dependency failure、reaction prefix 未完成或 page_size<=5 仍出現 notDeepScored 時整頁 FULL_UNIVERSE_PAGE_INCOMPLETE 且不前進 cursor。manifest 改變回 SNAPSHOT_CHANGED／restart_pagination；checksum、query 或 page size 不符回 CURSOR_INVALID。snapshotScope=manifest_company_identity_only，STATELESS_PAGE_VALUES_NOT_PINNED、pageValuesPinned=false、pointInTime=false；尚未讀頁的逐公司值不在 snapshot scope。candidate rank 只屬 page_segment_only，收齊所有頁前沒有 global rank 或 server-side 全市場 shortlist。這消除 top-10/top-5 的總量漏評，但不是 durable materialized vintage、投資建議或完整性由官方 row count 證明的市場母體。";
+
 export const MOPSFIN_SERVER_INSTRUCTIONS = `
 ${FINANCIAL_SCREEN_INSTRUCTIONS}
 ${MARKET_SCREEN_INSTRUCTIONS}
+${FULL_UNIVERSE_SCREEN_INSTRUCTIONS}
 
 這是 Mopsfin 台股 MCP v${SERVER_VERSION}，一個公開、唯讀、無資料庫的台灣公司財務與市場資料 Server，共提供 ${TOOL_COUNT} 個工具。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、公司行動調整價格序列、歷史日估值、歷史月營收、市場價格指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。caller 自行提供的觀察價不是官方來源，必須與官方最近完成交易日收盤及其 provenance 分開解讀。
 

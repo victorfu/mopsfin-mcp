@@ -29,6 +29,7 @@ const verifiedExamplePrompts = [
   "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。",
   "用 balanced_financial_v1 篩選 exact-mapped 金控、銀行與票券研究候選，最多 5 家；逐家列出 subtype、mapping、四柱、獲利／資本／資產品質 through period、同 subtype peer count 與 unknown，不要與非金融 raw score 比較或當成投資建議。",
   "用 balanced_market_v1 分別取最多 4 家非金融與 1 家金融候選；保留兩個 segments 的完整結果與模型內 rank，明示 crossModelScoreComparable=false、segment quota 與未補額數量，不要比較 raw score 或當成投資建議。",
+  "用 full_universe_cursor_v1 從第一頁開始逐頁評估目前全部上市櫃公司，每頁 5 家並沿 next cursor 到結尾；逐頁保存 terminalResults 與 segment evidence，遇 CURSOR_INVALID／SNAPSHOT_CHANGED 從第一頁重啟，明示 pageValuesPinned=false、pointInTime=false 與沒有 global rank。",
   "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，並只替實際最多 5 名 candidates 附 current catalyst snapshots；保留 affectsScreenScore=false，不要當成第五柱、分析師 consensus 或投資建議。",
   "查台積電與聯發科 2026-07-01 至 2026-08-24 的官方重大訊息與法說會；分開 publishedAt、factDate、scheduledAt、effectiveAt，並標示 failures 與 verified empty，不要當成 consensus 或正負面分數。",
   "查台積電與穩懋的 current official catalyst snapshots，分開財測達成、財測重大差異、股東會與股利決議；標示 sourceSnapshotDate、freshness、firstKnownAt、upcomingEligible 與 unsupported，不要當成歷史事件或分析師 consensus。",

@@ -3414,6 +3414,24 @@ describe("MCP protocol integration", () => {
       default: "balanced_market_v1",
       const: "balanced_market_v1",
     });
+    const fullUniverseTool = listed.tools.find(
+      (tool) => tool.name === "screen_taiwan_market_universe_page",
+    );
+    expect(fullUniverseTool?.description).toContain("full_universe_cursor_v1");
+    expect(fullUniverseTool?.description).toContain(
+      "STATELESS_PAGE_VALUES_NOT_PINNED",
+    );
+    expect(fullUniverseTool?.description).toContain("SNAPSHOT_CHANGED");
+    expect(fullUniverseTool?.description).toContain("不是投資建議");
+    expect(fullUniverseTool?.inputSchema.properties?.page_size).toMatchObject({
+      default: 5,
+      minimum: 1,
+      maximum: 5,
+    });
+    expect(fullUniverseTool?.inputSchema.properties?.preset).toMatchObject({
+      default: "full_universe_cursor_v1",
+      const: "full_universe_cursor_v1",
+    });
     const researchTool = listed.tools.find(
       (tool) =>
         tool.name ===
@@ -3609,6 +3627,13 @@ describe("MCP protocol integration", () => {
           market: "listed",
           non_financial_limit: 1,
           financial_limit: 1,
+        },
+      ],
+      [
+        "screen_taiwan_market_universe_page",
+        {
+          market: "all",
+          page_size: 2,
         },
       ],
     ] as const;
@@ -4753,6 +4778,49 @@ describe("MCP protocol integration", () => {
         });
         expect(structured.segments.nonFinancial).toBeDefined();
         expect(structured.segments.financial).toBeDefined();
+      }
+      if (name === "screen_taiwan_market_universe_page") {
+        const structured = result.structuredContent as {
+          meta: { page: { mode: string; unit: string; next: unknown } };
+          executionDefinition: {
+            snapshotScope: string;
+            pageValuesPinned: boolean;
+            pointInTime: boolean;
+            globalRankAvailable: boolean;
+          };
+          manifest: { companyCount: number; snapshotId: string };
+          page: { companyCodes: string[]; hasMore: boolean };
+          coverage: { pageTerminalReconciliationComplete: boolean };
+          terminalResults: Array<{ companyCode: string; rankScope: string }>;
+        };
+        expect(structured.meta.page).toMatchObject({
+          mode: "cursor",
+          unit: "company",
+          next: null,
+        });
+        expect(structured.executionDefinition).toMatchObject({
+          snapshotScope: "manifest_company_identity_only",
+          pageValuesPinned: false,
+          pointInTime: false,
+          globalRankAvailable: false,
+        });
+        expect(structured.manifest).toMatchObject({
+          companyCount: 2,
+          snapshotId: expect.stringMatching(/^market-universe-/),
+        });
+        expect(structured.page).toMatchObject({
+          companyCodes: ["2330", "3105"],
+          hasMore: false,
+        });
+        expect(structured.coverage.pageTerminalReconciliationComplete).toBe(
+          true,
+        );
+        expect(structured.terminalResults).toHaveLength(2);
+        expect(
+          structured.terminalResults.every(
+            (terminal) => terminal.rankScope === "page_segment_only",
+          ),
+        ).toBe(true);
       }
     }
 
