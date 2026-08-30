@@ -356,7 +356,7 @@ function classifyAverageSeries(
     includeIndustryAverage: boolean;
     includeCompanyAverage: boolean;
   },
-): Exclude<TrendSeriesType, "company"> {
+): Exclude<TrendSeriesType, "company" | "institution"> {
   const canonical = canonicalIdentity(label);
   if (/產業.*平均|同業.*平均|業別.*平均|業平均/.test(canonical)) {
     return "industry_average";
@@ -383,6 +383,78 @@ function classifyAverageSeries(
     }
   }
   return "other";
+}
+
+function identifyInstitutionSeries(
+  trend: NormalizedTrend,
+  institutions: FinancialInstitutionDefinition[],
+  options: {
+    includeIndustryAverage: boolean;
+    includeInstitutionAverage: boolean;
+  },
+): NormalizedTrend {
+  const identities: CompanySuggestion[] = institutions.map((institution) => ({
+    code: institution.code,
+    name: institution.name,
+    displayName: `${institution.code} ${institution.name}`,
+  }));
+  const aliases = companyIdentityAliases(trend, identities);
+  const institutionByCode = new Map(
+    institutions.map((institution) => [institution.code, institution]),
+  );
+  const claimedInstitutions = new Set<string>();
+  const series = trend.series.map((item): TrendSeries => {
+    const base = { label: item.label, points: item.points };
+    const nonInstitutionType = classifyAverageSeries(
+      item.label,
+      trend.extraNames,
+      {
+        includeIndustryAverage: options.includeIndustryAverage,
+        includeCompanyAverage: options.includeInstitutionAverage,
+      },
+    );
+    if (nonInstitutionType !== "other") {
+      return { ...base, seriesType: nonInstitutionType };
+    }
+    if (
+      options.includeIndustryAverage &&
+      /銀行業|票券業|金控業|金融控股/.test(canonicalIdentity(item.label))
+    ) {
+      return { ...base, seriesType: "industry_average" };
+    }
+    const canonicalLabel = canonicalIdentity(item.label);
+    const candidates = identities.filter(
+      (identity) =>
+        aliases.get(identity.code)?.has(canonicalLabel) ||
+        containsCompanyCode(item.label, identity.code),
+    );
+    if (candidates.length > 1) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        `Mopsfin series「${item.label}」同時符合多家金融機構，無法安全綁定 identity。`,
+        { reason: "FINANCIAL_INSTITUTION_SERIES_AMBIGUOUS" },
+      );
+    }
+    const identity = candidates[0];
+    if (!identity) return { ...base, seriesType: "other" };
+    if (claimedInstitutions.has(identity.code)) {
+      throw new MopsfinError(
+        "UPSTREAM_BAD_RESPONSE",
+        `Mopsfin 對金融機構 ${identity.code} 回傳多個 institution series，無法安全選擇。`,
+        { reason: "FINANCIAL_INSTITUTION_SERIES_DUPLICATE" },
+      );
+    }
+    claimedInstitutions.add(identity.code);
+    const institution = institutionByCode.get(identity.code) as FinancialInstitutionDefinition;
+    return {
+      ...base,
+      seriesType: "institution",
+      institutionCode: institution.code,
+      institutionName: institution.name,
+      institutionSector: institution.sector,
+    };
+  });
+  return { ...trend, series };
 }
 
 function identifyCompanySeries(
@@ -517,6 +589,83 @@ function companyCoverage(
     noValidDataCompanyCodes,
     commonThroughPeriod,
     companies: details,
+  };
+}
+
+function institutionCoverage(
+  trend: NormalizedTrend,
+  institutions: FinancialInstitutionDefinition[],
+) {
+  const institutionSeries = new Map(
+    trend.series.flatMap((series) =>
+      series.seriesType === "institution"
+        ? [[series.institutionCode, series] as const]
+        : [],
+    ),
+  );
+  const details = institutions.map((institution) => {
+    const series = institutionSeries.get(institution.code);
+    const pointsByPeriod = new Map<string, TrendSeries["points"][number]>();
+    for (const point of series?.points ?? []) {
+      if (pointsByPeriod.has(point.period)) {
+        throw new MopsfinError(
+          "UPSTREAM_BAD_RESPONSE",
+          `Mopsfin 對金融機構 ${institution.code} 的 ${point.period} 回傳重複資料點。`,
+          { reason: "FINANCIAL_INSTITUTION_PERIOD_DUPLICATE" },
+        );
+      }
+      pointsByPeriod.set(point.period, point);
+    }
+    const reportedPeriods = trend.periods.filter(
+      (period) => pointsByPeriod.get(period)?.valueStatus === "reported",
+    );
+    const missingPeriods = trend.periods.filter(
+      (period) => pointsByPeriod.get(period)?.valueStatus !== "reported",
+    );
+    return {
+      institutionCode: institution.code,
+      seriesReturned: series !== undefined,
+      nonNullPoints: reportedPeriods.length,
+      missingPoints: missingPeriods.length,
+      invalidPoints: [...pointsByPeriod.values()].filter(
+        (point) => point.valueStatus === "invalid_upstream",
+      ).length,
+      firstReportedPeriod: reportedPeriods[0] ?? null,
+      latestReportedPeriod: reportedPeriods.at(-1) ?? null,
+      missingPeriods,
+    };
+  });
+  const returnedInstitutionCodes = institutions
+    .filter((institution) => institutionSeries.has(institution.code))
+    .map((institution) => institution.code);
+  const missingInstitutionCodes = institutions
+    .filter((institution) => !institutionSeries.has(institution.code))
+    .map((institution) => institution.code);
+  const noValidDataInstitutionCodes = details
+    .filter((detail) => detail.nonNullPoints === 0)
+    .map((detail) => detail.institutionCode);
+  const commonThroughPeriod = [...trend.periods]
+    .reverse()
+    .find((period) =>
+      institutions.every((institution) =>
+        institutionSeries
+          .get(institution.code)
+          ?.points.some(
+            (point) =>
+              point.period === period && point.valueStatus === "reported",
+          ) === true
+      )
+    ) ?? null;
+  return {
+    selectionComplete:
+      missingInstitutionCodes.length === 0 &&
+      noValidDataInstitutionCodes.length === 0,
+    requestedInstitutionCodes: institutions.map((institution) => institution.code),
+    returnedInstitutionCodes,
+    missingInstitutionCodes,
+    noValidDataInstitutionCodes,
+    commonThroughPeriod,
+    institutions: details,
   };
 }
 
@@ -896,6 +1045,7 @@ export class MopsfinClient {
         "institution_codes 必須包含 1 至 10 個金融機構代號。",
       );
     }
+    validateUniqueCompanyCodes(options.institutionCodes);
     const catalog = await this.getCatalog();
     const metric = catalog.metrics.find(
       (item) =>
@@ -919,8 +1069,42 @@ export class MopsfinClient {
       bcodeAvg: options.includeIndustryAverage,
       companyAvg: options.includeInstitutionAverage,
     });
-    const trend = sliceTrend(normalizeTrendJson(parseJson(response.body)), options.range);
-    this.assertTrendHasData(trend);
+    const identifiedTrend = identifyInstitutionSeries(
+      normalizeTrendJson(parseJson(response.body)),
+      institutions,
+      {
+        includeIndustryAverage: options.includeIndustryAverage,
+        includeInstitutionAverage: options.includeInstitutionAverage,
+      },
+    );
+    const trend = sliceTrend(identifiedTrend, {
+      ...options.range,
+      recentSeriesTypes: ["institution"],
+      recentReportedOnly: true,
+    });
+    const coverage = institutionCoverage(trend, institutions);
+    if (coverage.noValidDataInstitutionCodes.length === institutions.length) {
+      throw new MopsfinError(
+        "NO_DATA",
+        "Mopsfin 未回傳任何受查金融機構的有效指標資料。",
+        { reason: "FINANCIAL_INSTITUTION_NO_VALID_DATA" },
+      );
+    }
+
+    const selectionWarnings: string[] = [];
+    if (coverage.missingInstitutionCodes.length > 0) {
+      selectionWarnings.push(
+        `Mopsfin 未回傳金融機構 series：${coverage.missingInstitutionCodes.join("、")}；selectionComplete=false。`,
+      );
+    }
+    const returnedWithoutData = coverage.noValidDataInstitutionCodes.filter(
+      (code) => !coverage.missingInstitutionCodes.includes(code),
+    );
+    if (returnedWithoutData.length > 0) {
+      selectionWarnings.push(
+        `下列金融機構在本次期別範圍沒有有效數值：${returnedWithoutData.join("、")}；selectionComplete=false。`,
+      );
+    }
 
     return {
       ...this.source(route, response.retrievedAt, response.cache),
@@ -936,8 +1120,10 @@ export class MopsfinClient {
       unit: trend.unit || metric.unit,
       periods: trend.periods,
       series: trend.series,
+      coverage,
       warnings: mergeWarnings(
         this.trendWarnings(trend),
+        selectionWarnings,
         financialInstitutionWarnings(
           metric.family === "adequacy" ? "adequacy" : "fin",
           options.includeIndustryAverage,

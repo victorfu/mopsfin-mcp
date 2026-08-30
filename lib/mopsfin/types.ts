@@ -55,6 +55,7 @@ export interface TrendPoint {
 
 export type TrendSeriesType =
   | "company"
+  | "institution"
   | "industry_average"
   | "selection_average"
   | "other";
@@ -72,16 +73,28 @@ export type TrendSeries =
       displayName: string;
     })
   | (TrendSeriesBase & {
-      seriesType: Exclude<TrendSeriesType, "company">;
+      seriesType: "institution";
+      institutionCode: string;
+      institutionName: string;
+      institutionSector: FinancialInstitutionDefinition["sector"];
+    })
+  | (TrendSeriesBase & {
+      seriesType: Exclude<TrendSeriesType, "company" | "institution">;
       companyCode?: never;
       companyName?: never;
       displayName?: never;
+      institutionCode?: never;
+      institutionName?: never;
+      institutionSector?: never;
     })
   | (TrendSeriesBase & {
       seriesType?: undefined;
       companyCode?: never;
       companyName?: never;
       displayName?: never;
+      institutionCode?: never;
+      institutionName?: never;
+      institutionSector?: never;
     });
 
 export interface NormalizedTrend {

@@ -2913,23 +2913,49 @@ describe("MCP protocol integration", () => {
       series: [
         {
           label: "臺銀",
+          seriesType: "institution",
+          institutionCode: "0040000",
+          institutionName: "臺銀",
+          institutionSector: "bank",
           points: [
             { period: "2026Q1", value: 14.2, valueStatus: "reported" },
           ],
         },
         {
           label: "公司平均數",
+          seriesType: "selection_average",
           points: [
             { period: "2026Q1", value: 14.2, valueStatus: "reported" },
           ],
         },
         {
           label: "銀行業資本適足性",
+          seriesType: "industry_average",
           points: [
             { period: "2026Q1", value: 15.1, valueStatus: "reported" },
           ],
         },
       ],
+      coverage: {
+        selectionComplete: true,
+        requestedInstitutionCodes: ["0040000"],
+        returnedInstitutionCodes: ["0040000"],
+        missingInstitutionCodes: [],
+        noValidDataInstitutionCodes: [],
+        commonThroughPeriod: "2026Q1",
+        institutions: [
+          {
+            institutionCode: "0040000",
+            seriesReturned: true,
+            nonNullPoints: 1,
+            missingPoints: 0,
+            invalidPoints: 0,
+            firstReportedPeriod: "2026Q1",
+            latestReportedPeriod: "2026Q1",
+            missingPeriods: [],
+          },
+        ],
+      },
       warnings: [],
     });
 

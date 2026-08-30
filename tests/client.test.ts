@@ -446,6 +446,17 @@ describe("MopsfinClient", () => {
       "公司平均數",
       "銀行業資本適足性",
     ]);
+    expect(result.series.map((series) => series.seriesType)).toEqual([
+      "institution",
+      "selection_average",
+      "industry_average",
+    ]);
+    expect(result.coverage).toMatchObject({
+      selectionComplete: true,
+      requestedInstitutionCodes: ["0040000"],
+      returnedInstitutionCodes: ["0040000"],
+      noValidDataInstitutionCodes: [],
+    });
     expect(result.warnings.join(" ")).toContain("不是市值加權");
     expect(result.warnings.join(" ")).toContain("已忽略以避免錯置期別");
     expect(
@@ -454,5 +465,36 @@ describe("MopsfinClient", () => {
     ).toEqual([
       { period: "2025Q4", value: 15.1, valueStatus: "reported" },
     ]);
+  });
+
+  it("does not accept average-only financial evidence as institution data", async () => {
+    const fetchMock = vi.fn(async (url: URL | RequestInfo) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === "/") return response(catalogHtml);
+      if (parsed.pathname === "/compare/adequacy") {
+        return response(JSON.stringify({
+          ylabel: "%",
+          xaxisList: ["2025Q4"],
+          graphData: [
+            { label: "銀行業資本適足性", data: [[0, 15.1]] },
+          ],
+        }), "application/json");
+      }
+      throw new Error(`unexpected ${parsed.pathname}`);
+    });
+    const client = new MopsfinClient(
+      new MopsfinHttpClient(fetchMock as typeof fetch, { retryDelayMs: 0 }),
+    );
+
+    await expect(client.getFinancialInstitutionMetric({
+      metricCode: "BankCAR",
+      institutionCodes: ["0040000"],
+      includeIndustryAverage: true,
+      includeInstitutionAverage: false,
+      range: { history: "recent_12" },
+    })).rejects.toMatchObject({
+      code: "NO_DATA",
+      reason: "FINANCIAL_INSTITUTION_NO_VALID_DATA",
+    });
   });
 });

@@ -415,9 +415,25 @@ export const getFinancialInstitutionMetricTool = defineTool(
             endPeriod: input.end_period,
           },
         });
+        const publicData = {
+          sourceName: data.sourceName,
+          sourceUrl: data.sourceUrl,
+          retrievedAt: data.retrievedAt,
+          ...(data.cache ? { cache: data.cache } : {}),
+          upstreamRoute: data.upstreamRoute,
+          freshnessNote: data.freshnessNote,
+          query: data.query,
+          unit: data.unit,
+          periods: data.periods,
+          series: data.series.map((series) => ({
+            label: series.label,
+            points: series.points,
+          })),
+          warnings: data.warnings,
+        };
         return success(
           `${data.query.metricName}：${data.series.length} 組 series、${data.periods.length} 個期別。`,
-          data,
+          publicData,
           {
             selector: "range",
             resolved: resolvedQuarterRange(data.periods),
