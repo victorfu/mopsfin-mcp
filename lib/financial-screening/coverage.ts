@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { MasterCompany } from "@/lib/company-master/types";
 import type {
   Catalog,
@@ -9,6 +11,7 @@ import type {
   FinancialInstitutionMapping,
   SupportedFinancialSector,
 } from "./types";
+import { financialCatalogSnapshotId } from "./metric-roles";
 
 const SUPPORTED_SECTORS = new Set<SupportedFinancialSector>([
   "holding",
@@ -165,11 +168,43 @@ export function buildFinancialInstitutionCoverageReport(
     ]),
   ) as Record<SupportedFinancialSector, number>;
   const mapped = count("mapped");
+  const classifiedCount =
+    mapped +
+    count("institution_not_found") +
+    count("duplicate_institution_code") +
+    count("unsupported_institution_sector") +
+    count("identity_mismatch");
+  const mappedInstitutionCodes = mappings.flatMap((mapping) =>
+    mapping.status === "mapped" && mapping.institutionCode
+      ? [mapping.institutionCode]
+      : []
+  );
+  const masterFinancialCodes = new Set(
+    financialCompanies.map((company) => company.code),
+  );
+  const catalogOnlyInstitutions = catalog.financialInstitutions
+    .filter((institution) => !masterFinancialCodes.has(institution.code))
+    .map(({ code, name, sector }) => ({ code, name, sector }))
+    .sort((left, right) =>
+      left.code.localeCompare(right.code) || left.name.localeCompare(right.name)
+    );
+  const catalogSnapshotId = financialCatalogSnapshotId(catalog);
+  const snapshotId = `financial-mapping-${createHash("sha256")
+    .update(JSON.stringify({
+      mappingContractVersion: "financial_institution_mapping.v1",
+      catalogSnapshotId,
+      mappings,
+      catalogOnlyInstitutions,
+    }))
+    .digest("hex")}`;
   const coverageComplete = mapped === mappings.length;
 
   return {
+    mappingContractVersion: "financial_institution_mapping.v1",
     scope: "current_listed_otc_financial_companies",
     catalogDiscoveredAt: catalog.discoveredAt,
+    catalogSnapshotId,
+    snapshotId,
     coverageComplete,
     counts: {
       financialCompanies: mappings.length,
@@ -178,9 +213,18 @@ export function buildFinancialInstitutionCoverageReport(
       duplicateInstitutionCode: count("duplicate_institution_code"),
       unsupportedInstitutionSector: count("unsupported_institution_sector"),
       identityMismatch: count("identity_mismatch"),
+      catalogInstitutions: catalog.financialInstitutions.length,
+      catalogOnlyInstitutions: catalogOnlyInstitutions.length,
       bySupportedSector,
     },
     mappings,
+    catalogOnlyInstitutions,
+    reconciliation: {
+      everyFinancialCompanyClassified: classifiedCount === mappings.length,
+      oneToOneMappingVerified:
+        new Set(mappedInstitutionCodes).size === mappedInstitutionCodes.length,
+      countsReconcile: classifiedCount === mappings.length,
+    },
     warnings: coverageComplete
       ? []
       : [

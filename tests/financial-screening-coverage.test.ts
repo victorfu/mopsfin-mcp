@@ -101,6 +101,8 @@ describe("buildFinancialInstitutionCoverageReport", () => {
       duplicateInstitutionCode: 1,
       unsupportedInstitutionSector: 1,
       identityMismatch: 1,
+      catalogInstitutions: 4,
+      catalogOnlyInstitutions: 0,
       bySupportedSector: { holding: 0, bank: 0, bills: 0 },
     });
     expect(report.mappings.map(({ companyCode, status }) => [companyCode, status])).toEqual([
@@ -125,5 +127,46 @@ describe("buildFinancialInstitutionCoverageReport", () => {
       sector: "bills",
       identityMatch: "company_name",
     });
+  });
+
+  it("builds a deterministic mapping snapshot and lists catalog-only institutions", () => {
+    const companies = [company("2881", "富邦金")];
+    const firstCatalog = catalog([
+      { code: "0040000", name: "臺銀", sector: "bank" },
+      { code: "2881", name: "富邦金", sector: "holding" },
+    ]);
+    const reorderedCatalog = {
+      ...firstCatalog,
+      discoveredAt: "2026-08-31T00:00:00.000Z",
+      financialInstitutions: [...firstCatalog.financialInstitutions].reverse(),
+    };
+
+    const first = buildFinancialInstitutionCoverageReport(companies, firstCatalog);
+    const second = buildFinancialInstitutionCoverageReport(
+      [...companies].reverse(),
+      reorderedCatalog,
+    );
+
+    expect(first).toMatchObject({
+      mappingContractVersion: "financial_institution_mapping.v1",
+      catalogSnapshotId: expect.stringMatching(
+        /^mopsfin-financial-catalog-[a-f0-9]{64}$/,
+      ),
+      snapshotId: expect.stringMatching(/^financial-mapping-[a-f0-9]{64}$/),
+      counts: {
+        catalogInstitutions: 2,
+        catalogOnlyInstitutions: 1,
+      },
+      catalogOnlyInstitutions: [
+        { code: "0040000", name: "臺銀", sector: "bank" },
+      ],
+      reconciliation: {
+        everyFinancialCompanyClassified: true,
+        oneToOneMappingVerified: true,
+        countsReconcile: true,
+      },
+    });
+    expect(second.catalogSnapshotId).toBe(first.catalogSnapshotId);
+    expect(second.snapshotId).toBe(first.snapshotId);
   });
 });

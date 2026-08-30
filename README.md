@@ -345,6 +345,12 @@ Live contract tests 預設從一般測試跳過，只有明確設定時才會查
 npm run test:live:catalog-screen
 ```
 
+只執行金融股 current master ↔ institution exact mapping、subtype routing 與 institution series identity／coverage canary；不鎖即時數值、候選或排名：
+
+```bash
+npm run test:live:financial-screen
+```
+
 只執行 TWSE／TPEx 年度開休市日曆、exact benchmark session，以及單一 `2330` authoritative expectedAsOf → exact single-stock close routing canary：
 
 ```bash

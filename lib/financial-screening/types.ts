@@ -39,8 +39,11 @@ export interface FinancialInstitutionMapping {
 }
 
 export interface FinancialInstitutionCoverageReport {
+  mappingContractVersion: "financial_institution_mapping.v1";
   scope: "current_listed_otc_financial_companies";
   catalogDiscoveredAt: string;
+  catalogSnapshotId: string;
+  snapshotId: string;
   coverageComplete: boolean;
   counts: {
     financialCompanies: number;
@@ -49,9 +52,21 @@ export interface FinancialInstitutionCoverageReport {
     duplicateInstitutionCode: number;
     unsupportedInstitutionSector: number;
     identityMismatch: number;
+    catalogInstitutions: number;
+    catalogOnlyInstitutions: number;
     bySupportedSector: Record<SupportedFinancialSector, number>;
   };
   mappings: FinancialInstitutionMapping[];
+  catalogOnlyInstitutions: Array<{
+    code: string;
+    name: string;
+    sector: SupportedFinancialSector | "unknown";
+  }>;
+  reconciliation: {
+    everyFinancialCompanyClassified: boolean;
+    oneToOneMappingVerified: boolean;
+    countsReconcile: boolean;
+  };
   warnings: string[];
 }
 

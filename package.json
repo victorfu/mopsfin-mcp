@@ -16,6 +16,7 @@
     "test:client:functional": "node scripts/test-client-functional.mjs",
     "test:live": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live",
     "test:live:catalog-screen": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live/catalog-screen.live.test.ts",
+    "test:live:financial-screen": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live/financial-screen.live.test.ts",
     "test:live:completed-session": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live/completed-session.live.test.ts",
     "test:live:corporate-actions": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live/corporate-actions.live.test.ts",
     "test:live:catalysts": "RUN_LIVE_MOPSFIN_TESTS=1 vitest run tests/live/catalysts.live.test.ts tests/live/catalyst-snapshots.live.test.ts",

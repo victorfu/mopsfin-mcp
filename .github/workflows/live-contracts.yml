@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - catalog-screen
+          - financial-screen
           - completed-session
           - corporate-actions
           - catalysts
@@ -40,6 +41,9 @@ jobs:
       - name: Run the screening semantic catalog contract
         if: github.event_name == 'schedule' || inputs.suite == 'catalog-screen'
         run: npm run test:live:catalog-screen
+      - name: Run the financial mapping and institution coverage contract
+        if: github.event_name == 'schedule' || inputs.suite == 'financial-screen'
+        run: npm run test:live:financial-screen
       - name: Run the authoritative completed-session contract
         if: github.event_name == 'schedule' || inputs.suite == 'completed-session'
         run: npm run test:live:completed-session

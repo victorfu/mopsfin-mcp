@@ -427,12 +427,23 @@ const financialInstitutionMappingSchema = z
 
 const financialMappingCoverageSchema = z
   .object({
+    mappingContractVersion: z
+      .literal("financial_institution_mapping.v1")
+      .describe("deterministic exact-code mapping contract 版本"),
     scope: z
       .literal("current_listed_otc_financial_companies")
       .describe("coverage report 固定盤點目前上市櫃金融公司"),
     catalogDiscoveredAt: z
       .string()
       .describe("此 mapping report 使用的 Mopsfin catalog 解析時間"),
+    catalogSnapshotId: z
+      .string()
+      .regex(/^mopsfin-financial-catalog-[a-f0-9]{64}$/)
+      .describe("排除抓取時間、由 catalog 內容計算的 deterministic identity"),
+    snapshotId: z
+      .string()
+      .regex(/^financial-mapping-[a-f0-9]{64}$/)
+      .describe("由 mapping contract、catalog identity、mappings 與 catalog-only institutions 計算的 deterministic identity"),
     coverageComplete: z
       .boolean()
       .describe("所有 scope 公司是否都安全 mapping 到受支援金融子業別"),
@@ -444,6 +455,8 @@ const financialMappingCoverageSchema = z
         duplicateInstitutionCode: z.number().int().describe("catalog 同代號不唯一的公司數"),
         unsupportedInstitutionSector: z.number().int().describe("catalog 子業別不受模型支援的公司數"),
         identityMismatch: z.number().int().describe("機構名稱與公司 identity 不一致的公司數"),
+        catalogInstitutions: z.number().int().describe("Mopsfin catalog 金融機構總數"),
+        catalogOnlyInstitutions: z.number().int().describe("未對應到 current listed/OTC 金融股票的 catalog-only 機構數"),
         bySupportedSector: z
           .object({
             holding: z.number().int().describe("安全 mapping 的金控公司數"),
@@ -460,6 +473,34 @@ const financialMappingCoverageSchema = z
         financialInstitutionMappingSchema.describe("scope 內單一金融公司的 mapping audit"),
       )
       .describe("scope 內每家公司逐筆且不可消失的 mapping 結果"),
+    catalogOnlyInstitutions: z
+      .array(
+        z
+          .object({
+            code: z.string().describe("catalog-only 金融機構代號"),
+            name: z.string().describe("catalog-only 金融機構名稱"),
+            sector: z
+              .enum(["holding", "bank", "bills", "unknown"])
+              .describe("catalog-only 金融機構子業別"),
+          })
+          .strict()
+          .describe("一個未對應 current listed/OTC 股票的 catalog 金融機構"),
+      )
+      .describe("七碼未上市機構或其他不在 current stock master 的 catalog entries"),
+    reconciliation: z
+      .object({
+        everyFinancialCompanyClassified: z
+          .boolean()
+          .describe("每家 scope 金融公司是否恰好產生一筆 terminal mapping status"),
+        oneToOneMappingVerified: z
+          .boolean()
+          .describe("所有 mapped institution codes 是否保持一對一唯一"),
+        countsReconcile: z
+          .boolean()
+          .describe("所有 mapping status counts 是否精確加總回 scope 公司數"),
+      })
+      .strict()
+      .describe("mapping row、identity 與 counts 的 deterministic 對帳結果"),
     warnings: z
       .array(z.string().describe("單一 mapping coverage 限制或不完整警示"))
       .describe("mapping coverage 不完整時不可忽略的警示"),
