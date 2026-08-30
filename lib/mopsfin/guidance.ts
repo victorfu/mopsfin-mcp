@@ -5,8 +5,12 @@ import { SERVER_VERSION } from "@/lib/server/identity";
 const FINANCIAL_SCREEN_INSTRUCTIONS =
   "金融候選路由：screen_taiwan_financial_candidates 固定 preset=balanced_financial_v1、screenDefinition.id=taiwan_financial_screen.v1，只評估目前上市櫃產業代號 17 中能以四碼股票代號與 Mopsfin financial institution catalog 唯一 exact-code 對應、名稱 identity 一致且 subtype 為 holding／bank／bills 的公司。無對應、重複代號、identity mismatch、unknown subtype、保險與證券等未支援類型都必須明示，不可 fuzzy mapping 或默默消失。品質柱按 subtype 使用年度 ROE、TTM 稅後淨利、相應資本適足率，銀行另用逾放比與備抵覆蓋率；公司值只與同 metric、同一期 Mopsfin 業別平均比較，這是 transparent research rule，不是法定監理門檻。資本適足只依 expected Q2／Q4 與 exact YoY，Q1／Q3 缺值不得補 0。估值以同 subtype P/B percentile 與 ROE-adjusted P/B 為 primary，至少 3 個 peers，不退回產業 17、同市場或非金融 peer；PE／殖利率只 supporting。reaction 沿用 price-index-compatible corporate-action-aware evidence。工具仍是 top-10 deep／最多 5 家 reaction 的 bounded triage；金融 overallScore 只在 balanced_financial_v1 內可比，cross-model 不得與 balanced_non_financial_v2 raw score 直接排序。NO_DATA、只有產業平均、缺 institution series 或 dependency failure 都是 unknown/null，不是 0 或 fail；結果不是投資建議、法定資本判定、完整金融母體深篩或 point-in-time 回測。";
 
+const MARKET_SCREEN_INSTRUCTIONS =
+  "全市場候選組合：screen_taiwan_market_candidates 固定 preset=balanced_market_v1，分別執行既有 balanced_non_financial_v2 與 balanced_financial_v1，完整保留 segments.nonFinancial／segments.financial 的原始結果、model identity、bucket 與 within-model rank。non-financial／financial quotas 各自限制輸出；某 segment 候選不足時不自動補額，也不以另一 segment 的較差候選填滿。crossModelScoreComparable=false；合併次序只依 bucket priority、固定 segment priority 與 withinModelRank，絕不讀取或比較兩個模型的 raw overallScore。這只是兩份 bounded triage 的透明組合，不會消除各自 top-10 deep／最多 5 家 reaction 的邊界，也不是完整全市場掃描、point-in-time snapshot、投資建議或資產配置建議。";
+
 export const MOPSFIN_SERVER_INSTRUCTIONS = `
 ${FINANCIAL_SCREEN_INSTRUCTIONS}
+${MARKET_SCREEN_INSTRUCTIONS}
 
 這是 Mopsfin 台股 MCP v${SERVER_VERSION}，一個公開、唯讀、無資料庫的台灣公司財務與市場資料 Server，共提供 ${TOOL_COUNT} 個工具。公司財務、報表、附註、產業與金融機構資料在查詢時直接取自「公開資訊觀測站－財務比較 E 點通（Mopsfin）」；上市櫃公司母體、OHLC 價量、公司行動調整價格序列、歷史日估值、歷史月營收、市場價格指數、公司行動實際結果、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。caller 自行提供的觀察價不是官方來源，必須與官方最近完成交易日收盤及其 provenance 分開解讀。
 

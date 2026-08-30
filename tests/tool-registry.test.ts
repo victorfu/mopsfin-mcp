@@ -183,13 +183,19 @@ const TOOL_DESCRIPTION_REQUIREMENTS = {
     "cross-model",
     "不是投資建議",
   ],
+  screen_taiwan_market_candidates: [
+    "balanced_market_v1",
+    "crossModelScoreComparable=false",
+    "不自動補額",
+    "不是投資建議",
+  ],
 } as const satisfies Record<McpToolName, readonly string[]>;
 
 describe("canonical MCP tool registry", () => {
   it("matches the ordered dependency-free public manifest one-to-one", () => {
     const names = TOOL_REGISTRY.map((definition) => definition.name);
 
-    expect(TOOL_COUNT).toBe(24);
+    expect(TOOL_COUNT).toBe(25);
     expect(names).toEqual(PUBLIC_TOOL_NAMES);
     expect(new Set(names).size).toBe(TOOL_COUNT);
   });

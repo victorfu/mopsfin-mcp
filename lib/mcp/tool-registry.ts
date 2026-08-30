@@ -12,6 +12,7 @@ import type { ToolDefinition } from "./tools/definition";
 import { financialScreeningTools } from "./tools/financial-screening";
 import { financialsTools } from "./tools/financials";
 import { marketTools } from "./tools/market";
+import { marketScreeningTools } from "./tools/market-screening";
 import { observedPriceTools } from "./tools/observed-price";
 import { priceSeriesTools } from "./tools/price-series";
 import { revenueTools } from "./tools/revenue";
@@ -34,6 +35,7 @@ const definitions = [
   ...catalogTools,
   ...financialsTools,
   ...financialScreeningTools,
+  ...marketScreeningTools,
 ] as const;
 
 function buildCanonicalRegistry(): readonly ToolDefinition[] {

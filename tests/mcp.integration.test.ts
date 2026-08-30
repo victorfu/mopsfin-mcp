@@ -3395,6 +3395,25 @@ describe("MCP protocol integration", () => {
       default: "balanced_financial_v1",
       const: "balanced_financial_v1",
     });
+    const marketScreenTool = listed.tools.find(
+      (tool) => tool.name === "screen_taiwan_market_candidates",
+    );
+    expect(marketScreenTool?.description).toContain("balanced_market_v1");
+    expect(marketScreenTool?.description).toContain(
+      "crossModelScoreComparable=false",
+    );
+    expect(marketScreenTool?.description).toContain("不自動補額");
+    expect(marketScreenTool?.description).toContain("不是投資建議");
+    expect(
+      marketScreenTool?.inputSchema.properties?.non_financial_limit,
+    ).toMatchObject({ default: 4, minimum: 1, maximum: 5 });
+    expect(
+      marketScreenTool?.inputSchema.properties?.financial_limit,
+    ).toMatchObject({ default: 1, minimum: 1, maximum: 5 });
+    expect(marketScreenTool?.inputSchema.properties?.preset).toMatchObject({
+      default: "balanced_market_v1",
+      const: "balanced_market_v1",
+    });
     const researchTool = listed.tools.find(
       (tool) =>
         tool.name ===
@@ -3582,6 +3601,14 @@ describe("MCP protocol integration", () => {
           market: "listed",
           company_codes: ["2330"],
           candidate_limit: 1,
+        },
+      ],
+      [
+        "screen_taiwan_market_candidates",
+        {
+          market: "listed",
+          non_financial_limit: 1,
+          financial_limit: 1,
         },
       ],
     ] as const;
@@ -4693,6 +4720,39 @@ describe("MCP protocol integration", () => {
             reasonCodes: ["non_financial_company_not_supported"],
           }),
         );
+      }
+      if (name === "screen_taiwan_market_candidates") {
+        const structured = result.structuredContent as {
+          screenDefinition: {
+            id: string;
+            crossModelScoreComparable: boolean;
+            mergePolicy: {
+              compareRawOverallScoreAcrossModels: boolean;
+              refillUnusedQuotaAcrossSegments: boolean;
+            };
+          };
+          composition: {
+            requested: { nonFinancial: number; financial: number };
+            returned: { nonFinancial: number; financial: number };
+            unfilled: { financial: number };
+          };
+          segments: { nonFinancial: object; financial: object };
+        };
+        expect(structured.screenDefinition).toMatchObject({
+          id: "taiwan_market_screen.v1",
+          crossModelScoreComparable: false,
+          mergePolicy: {
+            compareRawOverallScoreAcrossModels: false,
+            refillUnusedQuotaAcrossSegments: false,
+          },
+        });
+        expect(structured.composition).toMatchObject({
+          requested: { nonFinancial: 1, financial: 1 },
+          returned: { financial: 0 },
+          unfilled: { financial: 1 },
+        });
+        expect(structured.segments.nonFinancial).toBeDefined();
+        expect(structured.segments.financial).toBeDefined();
       }
     }
 

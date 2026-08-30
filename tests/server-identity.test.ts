@@ -47,7 +47,7 @@ describe("canonical server identity", () => {
 
   it("derives the public count from the dependency-free ordered tool manifest", () => {
     expect(TOOL_COUNT).toBe(PUBLIC_TOOL_NAMES.length);
-    expect(TOOL_COUNT).toBe(24);
+    expect(TOOL_COUNT).toBe(25);
     expect(new Set(PUBLIC_TOOL_NAMES).size).toBe(TOOL_COUNT);
     expect(PUBLIC_TOOL_NAMES).toEqual(
       expect.arrayContaining([
@@ -57,6 +57,7 @@ describe("canonical server identity", () => {
         "run_reverse_dcf",
         "analyze_observed_price",
         "screen_taiwan_financial_candidates",
+        "screen_taiwan_market_candidates",
       ]),
     );
     expect(

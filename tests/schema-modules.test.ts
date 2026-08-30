@@ -6,6 +6,7 @@ import * as common from "@/lib/mcp/schema/common";
 import * as company from "@/lib/mcp/schema/company";
 import * as financials from "@/lib/mcp/schema/financials";
 import * as financialScreening from "@/lib/mcp/schema/financial-screening";
+import * as marketScreening from "@/lib/mcp/schema/market-screening";
 import * as observedPrice from "@/lib/mcp/schema/observed-price";
 import * as price from "@/lib/mcp/schema/price";
 import * as priceSeries from "@/lib/mcp/schema/price-series";
@@ -90,6 +91,12 @@ const publicSchemaOwners = {
     financialScreening.screenTaiwanFinancialCandidatesDataSchema,
   screenTaiwanFinancialCandidatesOutputSchema:
     financialScreening.screenTaiwanFinancialCandidatesOutputSchema,
+  screenTaiwanMarketCandidatesInputSchema:
+    marketScreening.screenTaiwanMarketCandidatesInputSchema,
+  screenTaiwanMarketCandidatesDataSchema:
+    marketScreening.screenTaiwanMarketCandidatesDataSchema,
+  screenTaiwanMarketCandidatesOutputSchema:
+    marketScreening.screenTaiwanMarketCandidatesOutputSchema,
   screenTaiwanStockCandidatesWithCatalystSnapshotsInputSchema:
     research.screenTaiwanStockCandidatesWithCatalystSnapshotsInputSchema,
   screenTaiwanStockCandidatesWithCatalystSnapshotsOutputSchema:

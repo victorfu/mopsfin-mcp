@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.10.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 24 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、年度開休市日曆、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。另可將 caller 自行觀察的價格與官方最近完成交易日收盤價分開標示後比較；caller 值不會被冒充成官方或即時行情。
+目前版本 `0.10.1`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 25 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、年度開休市日曆、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。另可將 caller 自行觀察的價格與官方最近完成交易日收盤價分開標示後比較；caller 值不會被冒充成官方或即時行情。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -52,6 +52,7 @@ Next.js /api/mcp on Vercel
 | `screen_taiwan_stock_candidates` | 以四柱固定規則分流最多 5 個 latest 非金融台股研究候選 |
 | `screen_taiwan_stock_candidates_with_catalyst_snapshots` | 執行相同四柱篩選後，只替實際最多 5 名 candidates 附上不影響分數的 current catalyst snapshots |
 | `screen_taiwan_financial_candidates` | 以金融專用四柱分流 exact-mapped 金控、銀行與票券研究候選；分數只在金融模型內可比 |
+| `screen_taiwan_market_candidates` | 以明示 segment quota 合併非金融與金融候選；保留模型內 rank 且不比較 raw score |
 | `list_companies` | 取得目前上市／上櫃公司母體；以 heuristic coverage gate 偵測明顯截斷，可排除金融業與 KY 公司 |
 | `list_catalog` | 即時列出指標、endpoint family、產業、金融機構及期間 |
 | `get_company_metric` | 一般公司財務趨勢、比率、YOY 與現金流指標 |
@@ -63,7 +64,7 @@ Next.js /api/mcp on Vercel
 
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。成功結果固定包含 `ok=true` 與 `meta`；`meta.asOf`、`meta.quality`、`meta.page` 分別揭露實際資料時間、來源／母體／selection／值品質與續頁狀態。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
-LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 24 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 25 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
 
 需要目前上市櫃代號母體或全市場掃描候選代號時使用 `list_companies`；只知道特定公司名稱或代號時使用 `find_companies`，不要以 `find_companies` 枚舉全市場。不知道資料指標或期間時使用 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
@@ -103,6 +104,12 @@ deep batch 會逐公司解析 identity，並在 24-unit 預算內嘗試隔離 me
 金融品質柱使用年度 ROE、TTM 稅後淨利與 subtype 專用資本適足證據；銀行另使用放款逾放比及備抵呆帳覆蓋率。門檻是同 metric、同一期公司值相對 Mopsfin 業別平均及 exact YoY 不惡化的透明 research rule，不宣稱法定監理門檻。資本適足按預期 Q2／Q4 對齊，Q1／Q3 不會把未申報改寫成 0；獲利、資本與資產品質分開保留 through period。`NO_DATA`、缺 institution series、只有產業平均、invalid value 或 dependency failure 都維持 `unknown/null`。
 
 估值柱以同一金融 subtype 的 P/B percentile 與 ROE-adjusted P/B 為 primary，至少需要 3 個有效 peers；不足時為 `unknown`，不退回產業代號 17、同市場或非金融公司。PE 與殖利率只作 supporting，不能補償 P/B primary fail／unknown。第四柱沿用 official corporate-action-aware price-index-compatible reaction。粗篩後仍只對前 10 家做 deep、最多 5 家做 reaction，因此本工具不是完整全金融母體深篩。金融 `overallScore` 固定只在 `balanced_financial_v1` 內比較，`cross-model` raw score 不可與非金融模型直接排序；結果不是投資建議、法定資本判定、point-in-time 回測或錯價證明。
+
+### `screen_taiwan_market_candidates` 全市場雙模型候選組合
+
+`balanced_market_v1` 會在同一次 orchestration 中分別執行原封不動的 `balanced_non_financial_v2` 與 `balanced_financial_v1`，並完整保留 `segments.nonFinancial`、`segments.financial` 的來源、funnel、warnings、candidates 與模型內 rank。Caller 明示或使用預設的 non-financial／financial segment quota；每段只取自己模型實際形成的 candidates，任一段不足時都**不自動補額**，不會用另一段的低品質或額外候選填滿。
+
+合併 short list 固定 `crossModelScoreComparable=false`。排序只依 bucket priority、固定 segment priority 與 `withinModelRank`，不讀取、正規化或比較兩個模型的 raw `overallScore`；因此同一輸入中把 raw score 改大或改小，不能改變跨模型相對次序。這只是兩份 bounded research triage 的透明組合，不會消除各自 top-10 deep／最多 5 家 reaction 的漏評邊界，也不是完整全市場掃描、point-in-time 快照、投資建議或配置建議。
 
 ### `get_company_catalyst_events` 官方事件
 
@@ -295,7 +302,7 @@ ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` �
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
 4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
-5. 建立後確認 ChatGPT 能辨識 24 個工具。
+5. 建立後確認 ChatGPT 能辨識 25 個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
 Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流程見 [OpenAI 官方連接說明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。
@@ -318,6 +325,7 @@ Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流
 - 「比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始與 price-index-compatible 報酬、公司行動證據及量能訊號。」
 - 「用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。」
 - 「用 balanced_financial_v1 篩選 exact-mapped 金控、銀行與票券研究候選，最多 5 家；逐家列出 subtype、mapping、四柱、獲利／資本／資產品質 through period、同 subtype peer count 與 unknown，不要與非金融 raw score 比較或當成投資建議。」
+- 「用 balanced_market_v1 分別取最多 4 家非金融與 1 家金融候選；保留兩個 segments 的完整結果與模型內 rank，明示 crossModelScoreComparable=false、segment quota 與未補額數量，不要比較 raw score 或當成投資建議。」
 - 「用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，並只替實際最多 5 名 candidates 附 current catalyst snapshots；保留 affectsScreenScore=false，不要當成第五柱、分析師 consensus 或投資建議。」
 - 「查台積電與聯發科 2026-07-01 至 2026-08-24 的官方重大訊息與法說會；分開 publishedAt、factDate、scheduledAt、effectiveAt，並標示 failures 與 verified empty，不要當成 consensus 或正負面分數。」
 - 「查台積電與穩懋的 current official catalyst snapshots，分開財測達成、財測重大差異、股東會與股利決議；標示 sourceSnapshotDate、freshness、firstKnownAt、upcomingEligible 與 unsupported，不要當成歷史事件或分析師 consensus。」
