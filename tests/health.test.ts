@@ -11,7 +11,7 @@ describe("health route", () => {
     const response = GET();
     const body = (await response.json()) as Record<string, unknown>;
 
-    expect(TOOL_COUNT).toBe(23);
+    expect(TOOL_COUNT).toBe(24);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(body).toMatchObject({

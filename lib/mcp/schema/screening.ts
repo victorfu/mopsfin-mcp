@@ -105,9 +105,10 @@ const screenCriterionSchema = z
       .array(z.string())
       .describe("fail、unknown 或其他限制的穩定原因代號"),
   })
-  .strict();
+  .strict()
+  .describe("單一篩選 criterion 的透明規則、證據、權重與判定");
 
-const screenPillarSchema = z
+export const screenPillarSchema = z
   .object({
     key: screenPillarKeySchema.describe("四柱的穩定機器鍵"),
     label: z.string().describe("四柱的人類可讀名稱"),
@@ -128,7 +129,8 @@ const screenPillarSchema = z
       .array(z.string())
       .describe("使本柱不完整或 unknown 的證據缺口"),
   })
-  .strict();
+  .strict()
+  .describe("單一四柱的 hard-gate 狀態、輔助分數與逐條 criterion 證據");
 
 const screenCompactCompanySchema = z
   .object({

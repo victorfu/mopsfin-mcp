@@ -802,6 +802,23 @@ const catalog: Catalog = {
       category: "一般公司指標",
       family: "data",
     },
+    ...[
+      ["Fin01", "放款業務逾放比率", "fin"],
+      ["Fin02", "放款備抵呆帳覆蓋率", "fin"],
+      ["Fin03", "信用卡逾期帳款比率", "fin"],
+      ["Fin04", "信用卡備抵呆帳覆蓋率", "fin"],
+      ["Fin05", "應收帳款承購逾期比率", "fin"],
+      ["Fin06", "應收帳款承購覆蓋率", "fin"],
+      ["HoldingCAR", "金控業集團資本適足率", "adequacy"],
+      ["BankCAR", "銀行業資本適足率", "adequacy"],
+      ["BillsCAR", "票券業資本適足率", "adequacy"],
+    ].map(([code, name, family]) => ({
+      code: code as string,
+      name: name as string,
+      unit: "%",
+      category: family === "fin" ? "金融業資產品質" : "資本適足性",
+      family: family as "fin" | "adequacy",
+    })),
   ],
   industries: [{ code: "24", name: "半導體業" }],
   financialInstitutions: [
@@ -1785,9 +1802,9 @@ const companyMetricsBatch = {
   warnings: [],
 } satisfies CompanyMetricsBatchResult;
 
-const screenMetricDefinitions = catalog.metrics.map(
-  ({ code, name, unit, category }) => ({ code, name, unit, category }),
-);
+const screenMetricDefinitions = catalog.metrics
+  .filter((metric) => metric.family === "data")
+  .map(({ code, name, unit, category }) => ({ code, name, unit, category }));
 const screenMetricValues: Record<string, number> = {
   ROE: 20.5,
   NetProfit: 100,
@@ -3361,6 +3378,23 @@ describe("MCP protocol integration", () => {
       default: "balanced_non_financial_v2",
       const: "balanced_non_financial_v2",
     });
+    const financialScreenTool = listed.tools.find(
+      (tool) => tool.name === "screen_taiwan_financial_candidates",
+    );
+    expect(financialScreenTool?.description).toContain("balanced_financial_v1");
+    expect(financialScreenTool?.description).toContain("exact-code");
+    expect(financialScreenTool?.description).toContain("cross-model");
+    expect(financialScreenTool?.description).toContain("不是投資建議");
+    expect(financialScreenTool?.inputSchema.properties?.market).toMatchObject({
+      default: "all",
+    });
+    expect(
+      financialScreenTool?.inputSchema.properties?.candidate_limit,
+    ).toMatchObject({ default: 5, minimum: 1, maximum: 5 });
+    expect(financialScreenTool?.inputSchema.properties?.preset).toMatchObject({
+      default: "balanced_financial_v1",
+      const: "balanced_financial_v1",
+    });
     const researchTool = listed.tools.find(
       (tool) =>
         tool.name ===
@@ -3540,6 +3574,14 @@ describe("MCP protocol integration", () => {
           institution_codes: ["0040000"],
           include_industry_average: true,
           include_institution_average: true,
+        },
+      ],
+      [
+        "screen_taiwan_financial_candidates",
+        {
+          market: "listed",
+          company_codes: ["2330"],
+          candidate_limit: 1,
         },
       ],
     ] as const;
@@ -4622,6 +4664,35 @@ describe("MCP protocol integration", () => {
           "公司平均數",
           "銀行業資本適足性",
         ]);
+      }
+      if (name === "screen_taiwan_financial_candidates") {
+        const structured = result.structuredContent as {
+          screenDefinition: {
+            id: string;
+            preset: string;
+            crossModelScoreComparable: boolean;
+          };
+          funnel: {
+            excludedNonFinancial: number;
+            returned: number;
+          };
+          excluded: Array<{ companyCode: string; reasonCodes: string[] }>;
+        };
+        expect(structured.screenDefinition).toMatchObject({
+          id: "taiwan_financial_screen.v1",
+          preset: "balanced_financial_v1",
+          crossModelScoreComparable: false,
+        });
+        expect(structured.funnel).toMatchObject({
+          excludedNonFinancial: 1,
+          returned: 0,
+        });
+        expect(structured.excluded).toContainEqual(
+          expect.objectContaining({
+            companyCode: "2330",
+            reasonCodes: ["non_financial_company_not_supported"],
+          }),
+        );
       }
     }
 

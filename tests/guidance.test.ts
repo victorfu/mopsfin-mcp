@@ -76,6 +76,14 @@ describe("LLM-facing official guidance", () => {
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("filingCoverage");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("INCOMPLETE_COVERAGE");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("CATALOG_CONTRACT_MISMATCH");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "screen_taiwan_financial_candidates",
+    );
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("balanced_financial_v1");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("唯一 exact-code 對應");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "cross-model 不得與 balanced_non_financial_v2 raw score 直接排序",
+    );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("net_profit");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("latest 只表示查詢意圖");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("freshnessDetails");

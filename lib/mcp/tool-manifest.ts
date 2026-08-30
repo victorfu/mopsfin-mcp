@@ -34,6 +34,7 @@ export const PUBLIC_TOOL_NAMES = [
   "get_financial_note",
   "get_industry_data",
   "get_financial_institution_metric",
+  "screen_taiwan_financial_candidates",
 ] as const;
 
 export type McpToolName = (typeof PUBLIC_TOOL_NAMES)[number];
@@ -115,8 +116,8 @@ export function publicToolContractPayload(
  * title, description, inputSchema, outputSchema, and annotations.
  */
 export const PUBLIC_TOOL_CONTRACT_SHA256 =
-  "65fe5ea544e2ed2867ab081b4a90f4c71262790e0f3b678bfc3da90912282f46" as const;
+  "7e35b63dc422a502eff9e3140aa95db1b0ddd63a3b3072cef2981a1540188d21" as const;
 
 /** Exact UTF-8 SHA-256 of the MCP initialize instructions string. */
 export const PUBLIC_SERVER_INSTRUCTIONS_SHA256 =
-  "076fef4a4001e112ad29496a3c4da98b2aac7a7c40b35fa2768ee25089d85f91" as const;
+  "b0202556569b6d9b2b064cd64c2900a8911d3f4370062e90c680d3984bbdd9c1" as const;
