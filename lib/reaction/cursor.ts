@@ -5,12 +5,12 @@ import { MopsfinError } from "@/lib/mopsfin/errors";
 
 import type { ReactionHorizon } from "./types";
 
-const CURSOR_PREFIX = "reaction2.";
+const CURSOR_PREFIX = "reaction3.";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
 export interface ReactionCursorPayload {
-  version: 2;
+  version: 3;
   queryHash: string;
   nextIndex: number;
   masterSnapshotId: string;
@@ -18,6 +18,7 @@ export interface ReactionCursorPayload {
   rangeStart: string;
   rangeEnd: string;
   resolvedByMarket: Array<{ market: CompanyMarket; date: string }>;
+  completedSessionFingerprint: string | null;
   benchmarkFingerprint: string;
   corporateActionFingerprint: string;
 }
@@ -70,7 +71,7 @@ export function benchmarkFingerprint(
 export function encodeReactionCursor(payload: ReactionCursorPayload): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const checksum = createHash("sha256")
-    .update(`mopsfin-reaction-cursor-v2:${body}`)
+    .update(`mopsfin-reaction-cursor-v3:${body}`)
     .digest("base64url")
     .slice(0, 16);
   return `${CURSOR_PREFIX}${body}.${checksum}`;
@@ -84,7 +85,7 @@ export function decodeReactionCursor(cursor: string): ReactionCursorPayload {
     const encoded = cursor.slice(CURSOR_PREFIX.length);
     const [body, checksum, ...extra] = encoded.split(".");
     const expected = createHash("sha256")
-      .update(`mopsfin-reaction-cursor-v2:${body}`)
+      .update(`mopsfin-reaction-cursor-v3:${body}`)
       .digest("base64url")
       .slice(0, 16);
     if (!body || !checksum || extra.length > 0 || checksum !== expected) {
@@ -95,7 +96,7 @@ export function decodeReactionCursor(cursor: string): ReactionCursorPayload {
     ) as Partial<ReactionCursorPayload>;
     const resolved = parsed.resolvedByMarket;
     if (
-      parsed.version !== 2 ||
+      parsed.version !== 3 ||
       typeof parsed.queryHash !== "string" ||
       !SHA256_HEX.test(parsed.queryHash) ||
       !Number.isSafeInteger(parsed.nextIndex) ||
@@ -120,6 +121,9 @@ export function decodeReactionCursor(cursor: string): ReactionCursorPayload {
           !ISO_DATE.test(item.date),
       ) ||
       new Set(resolved.map((item) => item.market)).size !== resolved.length ||
+      (parsed.completedSessionFingerprint !== null &&
+        (typeof parsed.completedSessionFingerprint !== "string" ||
+          !SHA256_HEX.test(parsed.completedSessionFingerprint))) ||
       typeof parsed.benchmarkFingerprint !== "string" ||
       !SHA256_HEX.test(parsed.benchmarkFingerprint) ||
       typeof parsed.corporateActionFingerprint !== "string" ||

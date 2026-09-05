@@ -6,6 +6,7 @@ import {
   dailyMarketValuationInputSchema,
   dailyMarketValuationOutputSchema,
   fingerprint,
+  officialCompletedSessionFreshnessFromEvidence,
   paginateByCompany,
   priceClient,
   reactionClient,
@@ -161,7 +162,7 @@ export const getStockReactionSignalsTool = defineTool(
     {
       title: "比較台股與市場 benchmark 的 reaction signals",
       description:
-        "比較 1–50 家目前上市櫃公司與 TAIEX／櫃買 price index 在 5／20／60／120 個 exact benchmark sessions 的 reaction signals。stockReturnPercent 保留 raw_unadjusted close-to-close 稽核值；excessReturnPercentagePoints 只使用 TWSE／TPEx official actual-result 公司行動資料可重算的 factor，移除股數變動造成的機械價格斷點。現金股利價格效果刻意保留，因此 returnBasis=price_index_compatible_corporate_action_adjusted 不是 adjusted close、股息再投資或 total return（也不是 total shareholder return）。公司行動 coverage、factor、prior close 或 marker reconciliation 任一不足，相關 return／path／share-volume signal 回 null、not_comparable 或 unknown 語意，絕不猜測、補 0 或退回 raw 差值。個別公司 OHLC 的 MopsfinError 會隔離成 stockDataStatus=unavailable 與結構化 stockDataFailure，所有該公司 stock-derived signals 為 stock_data_unavailable；官方正常查無資料則另以 no_data／no_stock_data 表示，兩者不混用，其他公司繼續。轉板、歷史市場不符與多個 observed names 仍不可比。每頁最多 10 家且受 48 個官方市場月份 units 限制；公司行動 range/detail requests 另列於 workBudget。v2 cursor 與 snapshotId 綁定 query、目前 master、benchmark 及公司行動 fingerprint，尚未查詢公司的個股 OHLC 仍非 point-in-time snapshot。這些是研究代理，不是錯價證明或投資建議；回答前須檢查 returnBasis、stockDataStatus、stockDataFailure、comparability、corporateActionHistoryComplete、status、meta.quality 與 meta.page。",
+        "比較 1–50 家目前上市櫃公司與 TAIEX／櫃買 price index 在 5／20／60／120 個 exact benchmark sessions 的 reaction signals。as_of=latest 先由各公司市場的 authoritative completed-session resolver 固定 exact session，再以同日 benchmark 與個股 OHLC 計算；個股 exact bar 缺少時不退回前一日。stockReturnPercent 保留 raw_unadjusted close-to-close 稽核值；excessReturnPercentagePoints 只使用 TWSE／TPEx official actual-result 公司行動資料可重算的 factor，移除股數變動造成的機械價格斷點。現金股利價格效果刻意保留，因此 returnBasis=price_index_compatible_corporate_action_adjusted 不是 adjusted close、股息再投資或 total return（也不是 total shareholder return）。公司行動 coverage、factor、prior close 或 marker reconciliation 任一不足，相關 return／path／share-volume signal 回 null、not_comparable 或 unknown 語意，絕不猜測、補 0 或退回 raw 差值。個別公司 OHLC 的 MopsfinError 會隔離成 stockDataStatus=unavailable 與結構化 stockDataFailure，所有該公司 stock-derived signals 為 stock_data_unavailable；官方正常查無資料則另以 no_data／no_stock_data 表示，兩者不混用，其他公司繼續。轉板、歷史市場不符與多個 observed names 仍不可比。每頁最多 10 家且受 48 個官方市場月份 units 限制；公司行動 range/detail requests 另列於 workBudget。v3 cursor 與 snapshotId 綁定 query、目前 master、completed-session evidence、benchmark 及公司行動 fingerprint，尚未查詢公司的個股 OHLC 仍非 point-in-time snapshot。這些是研究代理，不是錯價證明或投資建議；回答前須檢查 returnBasis、stockDataStatus、stockDataFailure、comparability、corporateActionHistoryComplete、status、meta.quality 與 meta.page。",
       inputSchema: stockReactionSignalsInputSchema,
       outputSchema: stockReactionSignalsOutputSchema,
       annotations,
@@ -220,11 +221,7 @@ export const getStockReactionSignalsTool = defineTool(
           as_of === "latest"
             ? [
                 ...(resolvedMarkets.length > 0
-                  ? await resolveOfficialCompletedSessionFreshness({
-                      market:
-                        resolvedMarkets.length === 2
-                          ? "all"
-                          : resolvedMarkets[0]!,
+                  ? officialCompletedSessionFreshnessFromEvidence({
                       observations: resolvedMarkets.map((resolvedMarket) => ({
                         market: resolvedMarket,
                         observedAsOf: (() => {
@@ -243,6 +240,8 @@ export const getStockReactionSignalsTool = defineTool(
                           (source) => source.market === resolvedMarket,
                         ),
                       })),
+                      evidenceByMarket:
+                        data.asOf.completedSessionEvidence,
                     })
                   : selectorFreshness({
                       selector: "latest",
@@ -382,7 +381,7 @@ export const getStockReactionSignalsTool = defineTool(
                 code: "STATELESS_PAGE_VALUES_NOT_PINNED",
                 severity: "info",
                 scope: "page",
-                message: "無狀態 v2 cursor 固定 query、目前 master、benchmark、full-market 公司行動 range contracts/summaries 與整個 requested-company TWSE 權息 detail evidence；各頁個股 OHLC 仍於該頁即時取得，不保證跨頁 point-in-time 一致。",
+                message: "無狀態 v3 cursor 固定 query、目前 master、completed-session evidence、benchmark、full-market 公司行動 range contracts/summaries 與整個 requested-company TWSE 權息 detail evidence；各頁個股 OHLC 仍於該頁即時取得，不保證跨頁 point-in-time 一致。",
                 refs: {
                   companyCodes: data.companies.map((company) => company.companyCode),
                   fields: ["companies", "stockSources", "corporateActionSources"],

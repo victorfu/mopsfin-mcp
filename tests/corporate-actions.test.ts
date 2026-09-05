@@ -169,6 +169,81 @@ describe("CorporateActionClient", () => {
     ).toHaveLength(1);
   });
 
+  it("interprets TWSE summary values by event kind before numeric validation", async () => {
+    const listed = structuredClone(twseFixture);
+    const rows = listed.exRight.data as unknown[][];
+    (rows.find((row) => row[1] === "2303") as unknown[])[5] = "-5.000000";
+    (rows.find((row) => row[1] === "2317") as unknown[])[5] = "-12.000000";
+    const client = new CorporateActionClient(
+      fixtureFetch(listed) as typeof fetch,
+      now,
+      { maxAttempts: 1 },
+    );
+
+    const result = await client.getHistory(
+      "listed",
+      "2025-07-01",
+      "2025-07-10",
+      { companyCodes: ["2303", "2317", "2330"] },
+    );
+
+    expect(eventByCode(result.events, "2330")).toMatchObject({
+      kind: "cash_dividend",
+      cashDividendPerShareTwd: 10,
+      priceIndexAdjustmentFactor: 1,
+    });
+    expect(eventByCode(result.events, "2303")).toMatchObject({
+      kind: "stock_rights",
+      cashDividendPerShareTwd: 0,
+      priceIndexAdjustmentFactor: 0.9,
+    });
+    expect(eventByCode(result.events, "2317")).toMatchObject({
+      kind: "rights_and_dividend",
+      cashDividendPerShareTwd: 3,
+      adjustmentStatus: "available",
+    });
+  });
+
+  it("isolates invalid numeric fields outside the requested company scope", async () => {
+    const listed = structuredClone(twseFixture);
+    const exRightRows = listed.exRight.data as unknown[][];
+    (exRightRows.find((row) => row[1] === "2303") as unknown[])[3] = "invalid";
+    (exRightRows.find((row) => row[1] === "2317") as unknown[])[4] = "invalid";
+    (listed.capitalReduction.data as unknown[][])[0][3] = "invalid";
+    (listed.parValueChange.data as unknown[][])[0][4] = "invalid";
+    const client = new CorporateActionClient(
+      fixtureFetch(listed) as typeof fetch,
+      now,
+      { maxAttempts: 1 },
+    );
+
+    const isolated = await client.getHistory(
+      "listed",
+      "2025-07-01",
+      "2025-07-10",
+      { companyCodes: ["2330"] },
+    );
+
+    expect(isolated.events).toEqual([
+      expect.objectContaining({
+        companyCode: "2330",
+        kind: "cash_dividend",
+        adjustmentStatus: "available",
+      }),
+    ]);
+    expect(isolated.sources.map((source) => source.companyEventCount)).toEqual([
+      3,
+      1,
+      1,
+    ]);
+
+    await expect(
+      client.getHistory("listed", "2025-07-01", "2025-07-10", {
+        companyCodes: ["2303"],
+      }),
+    ).rejects.toMatchObject({ code: "UPSTREAM_BAD_RESPONSE" });
+  });
+
   it("fingerprints selected TWSE combined-event detail evidence without retrievedAt", async () => {
     const baseline = await new CorporateActionClient(
       fixtureFetch() as typeof fetch,

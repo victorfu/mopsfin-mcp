@@ -9,6 +9,7 @@ import type {
   MopsfinErrorAction,
   MopsfinErrorCode,
 } from "@/lib/mopsfin/errors";
+import type { CompletedSessionResolverEvidence } from "@/lib/freshness/types";
 
 export type ReactionHorizon = 5 | 20 | 60 | 120;
 
@@ -219,6 +220,7 @@ export interface StockReactionSignalsResult {
   asOf: {
     requested: "latest" | string;
     resolvedByMarket: Array<{ market: CompanyMarket; date: string }>;
+    completedSessionEvidence: CompletedSessionResolverEvidence[];
   };
   coverage: {
     selectionComplete: true;

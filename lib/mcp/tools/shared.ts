@@ -4,7 +4,11 @@ import {
   completedSessionResolver,
 } from "@/lib/freshness/completed-session-resolver";
 import { FRESHNESS_POLICIES } from "@/lib/freshness/policies";
-import type { FreshnessEvaluation, FreshnessPolicy } from "@/lib/freshness/types";
+import type {
+  CompletedSessionResolverEvidence,
+  FreshnessEvaluation,
+  FreshnessPolicy,
+} from "@/lib/freshness/types";
 import type {
   CompanyMarket,
   CompanyMarketSelection,
@@ -132,6 +136,43 @@ export interface CompletedSessionFreshnessObservation {
   market: CompanyMarket;
   observedAsOf: string | null;
   sources: Array<{ sourceUrl: string | null }>;
+}
+
+export function officialCompletedSessionFreshnessFromEvidence(options: {
+  observations: CompletedSessionFreshnessObservation[];
+  evidenceByMarket: CompletedSessionResolverEvidence[];
+}): FreshnessEvaluation[] {
+  return options.observations.map((observation) => {
+    const evidence = options.evidenceByMarket.find(
+      (candidate) =>
+        candidate.markets.length === 1 &&
+        candidate.markets[0] === observation.market,
+    );
+    if (!evidence) {
+      throw new TypeError(
+        `缺少 ${observation.market} 的 completed-session resolver evidence。`,
+      );
+    }
+    const resolution = evidence.marketResolutions.find(
+      (item) => item.market === observation.market,
+    );
+    return evaluateFreshness({
+      policy: FRESHNESS_POLICIES.completedOfficialSession,
+      observedAsOf: observation.observedAsOf,
+      expectedAsOf:
+        evidence.status === "resolved"
+          ? completedSessionExpectedAsOfForMarket(
+              evidence,
+              observation.market,
+            )
+          : null,
+      sourceUrls: [
+        ...sourceUrls(observation.sources),
+        ...(resolution?.sources.map((item) => item.sourceUrl) ?? []),
+      ],
+      resolverEvidence: evidence,
+    });
+  });
 }
 
 /**

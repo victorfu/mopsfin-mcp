@@ -13,6 +13,7 @@ import type {
   CorporateActionHistory,
 } from "@/lib/corporate-actions/types";
 import { buildPriceIndexCompatibleSeries } from "@/lib/corporate-actions/adjustment-engine";
+import type { CompletedSessionResolverEvidence } from "@/lib/freshness/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import type { OhlcBar, StockOhlcResult } from "@/lib/price/types";
 import {
@@ -26,6 +27,7 @@ import {
   encodeReactionCursor,
 } from "@/lib/reaction/cursor";
 import type { BenchmarkHistory } from "@/lib/reaction/types";
+import { completedSessionEvidenceFixture } from "@/tests/fixtures/completed-session";
 
 const twseFixture = JSON.parse(
   readFileSync(
@@ -154,6 +156,31 @@ function fakeBenchmark() {
           })),
         sources: [],
       }),
+    ),
+  };
+}
+
+function fakeCompletedSessions(options: {
+  expectedByMarket?: Partial<Record<CompanyMarket, string>>;
+  status?: "resolved" | "unresolved";
+} = {}) {
+  return {
+    resolve: vi.fn(
+      async ({ market, evaluatedAt }: {
+        market: CompanyMarket;
+        evaluatedAt?: Date | string;
+      }): Promise<CompletedSessionResolverEvidence> => {
+        const evidence = completedSessionEvidenceFixture({
+          market,
+          status: options.status ?? "resolved",
+          expectedAsOf: options.expectedByMarket?.[market] ?? "2026-06-30",
+        });
+        evidence.evaluatedAt =
+          evaluatedAt instanceof Date
+            ? evaluatedAt.toISOString()
+            : new Date(evaluatedAt as string).toISOString();
+        return evidence;
+      },
     ),
   };
 }
@@ -435,6 +462,123 @@ describe("official price-index benchmark adapters", () => {
 });
 
 describe("ReactionClient getStockReactionSignals", () => {
+  it("routes latest through per-market authoritative completed-session evidence", async () => {
+    const companies = [
+      company("2330", "台積電", "listed"),
+      company("3105", "穩懋", "otc"),
+    ];
+    const completedSessions = fakeCompletedSessions({
+      expectedByMarket: {
+        listed: "2026-06-30",
+        otc: "2026-06-29",
+      },
+    });
+    const price = fakePrice(companies);
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      price,
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+        completedSessionResolver: completedSessions,
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330", "3105"],
+      asOf: "latest",
+      horizons: [5],
+    });
+
+    expect(result.asOf.resolvedByMarket).toEqual([
+      { market: "listed", date: "2026-06-30" },
+      { market: "otc", date: "2026-06-29" },
+    ]);
+    expect(result.asOf.completedSessionEvidence).toHaveLength(2);
+    expect(
+      result.asOf.completedSessionEvidence.map((item) => item.markets),
+    ).toEqual([["listed"], ["otc"]]);
+    expect(completedSessions.resolve).toHaveBeenCalledTimes(2);
+    expect(completedSessions.resolve).toHaveBeenNthCalledWith(1, {
+      market: "listed",
+      evaluatedAt: "2026-07-01T01:00:00.000Z",
+    });
+    expect(completedSessions.resolve).toHaveBeenNthCalledWith(2, {
+      market: "otc",
+      evaluatedAt: "2026-07-01T01:00:00.000Z",
+    });
+    expect(price.getStockOhlc.mock.calls.map(([query]) => query.endDate)).toEqual([
+      "2026-06-30",
+      "2026-06-29",
+    ]);
+  });
+
+  it("keeps latest pinned to the resolver date when the exact stock bar is missing", async () => {
+    const companies = [company("2330", "台積電")];
+    const completedSessions = fakeCompletedSessions();
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies, { omitDates: new Set(["2026-06-30"]) }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+        completedSessionResolver: completedSessions,
+      },
+    );
+
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"],
+      asOf: "latest",
+      horizons: [5],
+    });
+
+    expect(result.companies[0]).toMatchObject({
+      resolvedAsOf: "2026-06-30",
+      dataQualityComplete: false,
+    });
+    expect(result.companies[0].returns[0]).toMatchObject({
+      endDate: "2026-06-30",
+      status: "missing_stock_end_close",
+      stockReturnPercent: null,
+    });
+  });
+
+  it("fails closed when latest completed-session evidence is unresolved", async () => {
+    const companies = [company("2330", "台積電")];
+    const benchmark = fakeBenchmark();
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies),
+      {
+        benchmarkClient: benchmark,
+        corporateActionClient: fakeCorporateActions(),
+        completedSessionResolver: fakeCompletedSessions({
+          status: "unresolved",
+        }),
+      },
+    );
+
+    await expect(
+      client.getStockReactionSignals({
+        companyCodes: ["2330"],
+        asOf: "latest",
+        horizons: [5],
+      }),
+    ).rejects.toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      reason: "COMPLETED_SESSION_UNRESOLVED",
+      retryable: true,
+      action: "retry",
+    });
+    expect(benchmark.getHistory).not.toHaveBeenCalled();
+  });
+
   it("computes exact N-session raw and price-index-compatible reaction signals", async () => {
     const companies = [company("2330", "台積電")];
     const benchmark = fakeBenchmark();
@@ -1398,6 +1542,48 @@ describe("ReactionClient getStockReactionSignals", () => {
       horizons: [...query.horizons],
     });
     actionOptions.fingerprint = "b".repeat(64);
+
+    await expect(
+      client.getStockReactionSignals({
+        ...query,
+        horizons: [...query.horizons],
+        cursor: first.pagination.nextCursor as string,
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_ARGUMENT",
+      reason: "SNAPSHOT_CHANGED",
+      category: "pagination",
+      action: "restart_pagination",
+    });
+  });
+
+  it("rejects a latest cursor after completed-session evidence changes", async () => {
+    const companies = [company("2330", "台積電"), company("1101", "台泥")];
+    const completedOptions = {
+      expectedByMarket: { listed: "2026-06-30" },
+    };
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch,
+      now,
+      master(companies),
+      fakePrice(companies),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions(),
+        completedSessionResolver: fakeCompletedSessions(completedOptions),
+      },
+    );
+    const query = {
+      companyCodes: ["2330", "1101"],
+      asOf: "latest" as const,
+      horizons: [5] as const,
+      pageSize: 1,
+    };
+    const first = await client.getStockReactionSignals({
+      ...query,
+      horizons: [...query.horizons],
+    });
+    completedOptions.expectedByMarket.listed = "2026-06-29";
 
     await expect(
       client.getStockReactionSignals({

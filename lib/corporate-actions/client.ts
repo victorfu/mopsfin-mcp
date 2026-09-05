@@ -37,6 +37,7 @@ interface RangeRequest {
   supportedFrom: string;
   queryStart: string;
   queryEnd: string;
+  selectedCompanyCodes: ReadonlySet<string> | null;
   config: OfficialSourceConfig;
 }
 
@@ -757,21 +758,28 @@ function normalizeTwseRange(
       request.market,
     );
     if (!identity) return;
-    const priorCloseTwd = parsePositivePrice(
-      rawRow[priorIndex],
-      headers[priorIndex],
-    );
-    const referencePriceTwd = parsePositivePrice(
-      rawRow[referenceIndex],
-      headers[referenceIndex],
-    );
-
     if (request.family === "ex_right_dividend") {
       const normalizedType = normalizeExRightKind(rawRow[typeIndex as number], request.market);
-      const summaryValue = parseNonNegativeNumber(
-        rawRow[cashIndex as number],
-        headers[cashIndex as number],
-      );
+      const selected =
+        request.selectedCompanyCodes === null ||
+        request.selectedCompanyCodes.has(identity.companyCode);
+      const priorCloseTwd = selected
+        ? parsePositivePrice(rawRow[priorIndex], headers[priorIndex])
+        : null;
+      const referencePriceTwd = selected
+        ? parsePositivePrice(rawRow[referenceIndex], headers[referenceIndex])
+        : null;
+      const cashDividendPerShareTwd =
+        normalizedType.kind === "cash_dividend"
+          ? selected
+            ? parseNonNegativeNumber(
+                rawRow[cashIndex as number],
+                headers[cashIndex as number],
+              )
+            : null
+          : normalizedType.kind === "stock_rights"
+            ? 0
+            : null;
       events.push(
         buildEvent({
           ...identity,
@@ -780,12 +788,7 @@ function normalizeTwseRange(
           kind: normalizedType.kind,
           priorCloseTwd,
           referencePriceTwd,
-          cashDividendPerShareTwd:
-            normalizedType.kind === "cash_dividend"
-              ? summaryValue
-              : normalizedType.kind === "stock_rights"
-                ? 0
-                : null,
+          cashDividendPerShareTwd,
           sourceFamily: request.family,
           sourceUrl: request.config.sourceUrl,
           rawType: normalizedType.rawType,
@@ -803,6 +806,15 @@ function normalizeTwseRange(
       typeIndex === null
         ? "變更股票面額"
         : normalizeRequiredText(rawRow[typeIndex], headers[typeIndex], request.market);
+    const selected =
+      request.selectedCompanyCodes === null ||
+      request.selectedCompanyCodes.has(identity.companyCode);
+    const priorCloseTwd = selected
+      ? parsePositivePrice(rawRow[priorIndex], headers[priorIndex])
+      : null;
+    const referencePriceTwd = selected
+      ? parsePositivePrice(rawRow[referenceIndex], headers[referenceIndex])
+      : null;
     events.push(
       buildEvent({
         ...identity,
@@ -942,21 +954,23 @@ function normalizeTpexRange(
       request.market,
     );
     if (!identity) return;
-    const priorCloseTwd = parsePositivePrice(
-      rawRow[priorIndex],
-      headers[priorIndex],
-    );
-    const referencePriceTwd = parsePositivePrice(
-      rawRow[referenceIndex],
-      headers[referenceIndex],
-    );
-
     if (request.family === "ex_right_dividend") {
       const normalizedType = normalizeExRightKind(rawRow[typeIndex as number], request.market);
-      const cashDividend = parseNonNegativeNumber(
-        rawRow[cashIndex as number],
-        headers[cashIndex as number],
-      );
+      const selected =
+        request.selectedCompanyCodes === null ||
+        request.selectedCompanyCodes.has(identity.companyCode);
+      const priorCloseTwd = selected
+        ? parsePositivePrice(rawRow[priorIndex], headers[priorIndex])
+        : null;
+      const referencePriceTwd = selected
+        ? parsePositivePrice(rawRow[referenceIndex], headers[referenceIndex])
+        : null;
+      const cashDividend = selected
+        ? parseNonNegativeNumber(
+            rawRow[cashIndex as number],
+            headers[cashIndex as number],
+          )
+        : null;
       events.push(
         buildEvent({
           ...identity,
@@ -983,6 +997,15 @@ function normalizeTpexRange(
       typeIndex === null
         ? "變更股票面額"
         : normalizeRequiredText(rawRow[typeIndex], headers[typeIndex], request.market);
+    const selected =
+      request.selectedCompanyCodes === null ||
+      request.selectedCompanyCodes.has(identity.companyCode);
+    const priorCloseTwd = selected
+      ? parsePositivePrice(rawRow[priorIndex], headers[priorIndex])
+      : null;
+    const referencePriceTwd = selected
+      ? parsePositivePrice(rawRow[referenceIndex], headers[referenceIndex])
+      : null;
     events.push(
       buildEvent({
         ...identity,
@@ -1083,6 +1106,7 @@ function contractRangeRequest(
     supportedFrom,
     queryStart: startDate,
     queryEnd: endDate,
+    selectedCompanyCodes: null,
     config: sourceConfig(market, family, startDate, endDate),
   };
 }
@@ -1194,9 +1218,12 @@ function requestsAndCoverage(
   market: CompanyMarket,
   startDate: string,
   endDate: string,
+  companyCodes: string[] | null,
 ): { requests: RangeRequest[]; coverage: CorporateActionCoverage } {
   const requests: RangeRequest[] = [];
   const gaps: CorporateActionCoverageGap[] = [];
+  const selectedCompanyCodes =
+    companyCodes === null ? null : new Set(companyCodes);
   for (const family of FAMILY_ORDER) {
     const supportedFrom = SUPPORTED_FROM[market][family];
     if (startDate < supportedFrom) {
@@ -1218,6 +1245,7 @@ function requestsAndCoverage(
       supportedFrom,
       queryStart,
       queryEnd: endDate,
+      selectedCompanyCodes,
       config: sourceConfig(market, family, queryStart, endDate),
     });
   }
@@ -1573,6 +1601,7 @@ export class CorporateActionClient {
       market,
       startDate,
       endDate,
+      filteredCompanyCodes,
     );
     const deadline = new AbsoluteDeadline(this.deadlineMs);
     try {

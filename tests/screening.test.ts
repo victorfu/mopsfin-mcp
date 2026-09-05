@@ -37,6 +37,7 @@ import type {
   DailyMarketValuationResult,
   ValuationRow,
 } from "@/lib/valuation/types";
+import { completedSessionEvidenceFixture } from "@/tests/fixtures/completed-session";
 
 const PERIODS = [
   "2025Q2",
@@ -1053,7 +1054,18 @@ function reactionResult(
     priceBasis: "raw_unadjusted" as const,
     returnBasis: "price_index_compatible_corporate_action_adjusted" as const,
     benchmarkBasis: "price_index" as const,
-    asOf: { requested: "latest" as const, resolvedByMarket: [{ market: "listed" as const, date: "2026-07-31" }] },
+    asOf: {
+      requested: "latest" as const,
+      resolvedByMarket: [
+        { market: "listed" as const, date: "2026-07-31" },
+      ],
+      completedSessionEvidence: [
+        completedSessionEvidenceFixture({
+          market: "listed",
+          expectedAsOf: "2026-07-31",
+        }),
+      ],
+    },
     coverage: {
       selectionComplete: true as const,
       benchmarkHistoryComplete: true as const,

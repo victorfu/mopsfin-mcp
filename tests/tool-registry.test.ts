@@ -92,7 +92,9 @@ const TOOL_DESCRIPTION_REQUIREMENTS = {
   ],
   get_stock_reaction_signals: [
     "exact benchmark sessions",
+    "authoritative completed-session resolver",
     "stockDataFailure",
+    "v3 cursor",
     "不是錯價證明",
   ],
   get_company_catalyst_events: [
@@ -299,6 +301,14 @@ describe("canonical MCP tool registry", () => {
       ]);
       expect(gaps).toEqual([]);
 
+      const reaction = tools.find((tool) => tool.name === "get_stock_reaction_signals")!;
+      const reactionInput = reaction.inputSchema as JsonSchemaNode;
+      expect(reactionInput.properties?.as_of?.description).toContain("authoritative completed-session resolver");
+      expect(reactionInput.properties?.cursor?.description).toContain("v3 reaction cursor");
+      expect(reactionInput.properties?.cursor?.description).toContain("completed-session evidence");
+      expect(JSON.stringify(reaction)).not.toMatch(/v2 reaction cursor|v2 cursor|最近共同可形成視窗/);
+      expect(MOPSFIN_SERVER_INSTRUCTIONS).not.toContain("reaction cursor v2");
+
       for (const tool of tools) {
         const required =
           TOOL_DESCRIPTION_REQUIREMENTS[tool.name as McpToolName];
@@ -336,10 +346,10 @@ describe("canonical MCP tool registry", () => {
       await client.connect(clientTransport);
       const { tools } = await client.listTools();
 
-      expect(sha256(canonicalJson(publicToolContractPayload(tools)))).toBe(
+      expect.soft(sha256(canonicalJson(publicToolContractPayload(tools)))).toBe(
         PUBLIC_TOOL_CONTRACT_SHA256,
       );
-      expect(sha256(client.getInstructions() ?? "")).toBe(
+      expect.soft(sha256(client.getInstructions() ?? "")).toBe(
         PUBLIC_SERVER_INSTRUCTIONS_SHA256,
       );
     } finally {

@@ -72,6 +72,9 @@ describe("LLM-facing official guidance", () => {
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("成交量正規化為股");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("strict_current_master");
+    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
+      "reaction cursor v3",
+    );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("valueStatus");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("filingCoverage");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("INCOMPLETE_COVERAGE");

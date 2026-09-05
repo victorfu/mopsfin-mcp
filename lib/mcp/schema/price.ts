@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   calendarDateSchema,
   calendarMonthSchema,
+  completedSessionResolverEvidenceSchema,
   optionalCompanyPageShape,
   sourceCacheObservationSchema,
   successResultShape,
@@ -104,7 +105,7 @@ export const stockReactionSignalsInputSchema = z
     as_of: z
       .union([z.literal("latest"), calendarDateSchema])
       .default("latest")
-      .describe("latest=各市場最近共同可形成視窗的 benchmark 交易日；YYYY-MM-DD 不得晚於台北今日"),
+      .describe("latest=以同一個請求起始時間，由各市場 authoritative completed-session resolver 分別固定最近已完成交易日，市場間可不同日；缺少 exact bar 不退回前一日；YYYY-MM-DD 須為指定市場 exact benchmark 交易日且不得晚於台北今日"),
     horizons: z
       .array(
         z
@@ -126,7 +127,7 @@ export const stockReactionSignalsInputSchema = z
       .string()
       .max(1000)
       .optional()
-      .describe("上一頁回傳的 v2 reaction cursor；綁定 query、目前 master、benchmark、公司行動 range contracts/summaries 與整個 requested-company TWSE 權息 detail evidence"),
+      .describe("上一頁回傳的 v3 reaction cursor；綁定 query、目前 master、completed-session evidence、benchmark、公司行動 range contracts/summaries 與整個 requested-company TWSE 權息 detail evidence；舊版 cursor 或快照變更時須從第一頁重啟"),
   })
   .strict()
   .superRefine((value, context) => {
@@ -481,7 +482,7 @@ const corporateActionEventSchema = z
       .describe("由 TWSE／TPEx actual-result 正規化的公司行動種類"),
     priorCloseTwd: z.number().nullable().describe("官方 actual-result 前收盤價 TWD；來源缺值時為 null"),
     referencePriceTwd: z.number().nullable().describe("官方 actual-result 參考價 TWD；來源缺值時為 null"),
-    cashDividendPerShareTwd: z.number().nullable().describe("官方每股現金股利 TWD；非現金事件或來源缺值時為 null"),
+    cashDividendPerShareTwd: z.number().nullable().describe("官方每股現金股利 TWD；TWSE 純除權固定為 0，權息合併由公司事件明細取得；來源缺值或不適用時為 null"),
     priceIndexAdjustmentFactor: z
       .number()
       .positive()
@@ -563,6 +564,12 @@ export const stockReactionSignalsOutputSchema = z
               .strict(),
           )
           .describe("依 requested 公司市場分別解析的 benchmark as-of；latest 可能不同日"),
+        completedSessionEvidence: z
+          .array(completedSessionResolverEvidenceSchema)
+          .max(2)
+          .describe(
+            "as_of=latest 時，依市場各自用於 routing 的 authoritative completed-session resolver evidence；明確日期查詢固定為空陣列",
+          ),
       })
       .strict()
       .describe("requested 與實際 benchmark as-of 的明確映射"),
@@ -580,7 +587,7 @@ export const stockReactionSignalsOutputSchema = z
       .object({
         snapshotId: z
           .string()
-          .describe("跨頁固定的 query/current-master/benchmark/corporate-action scope 指紋；不包含尚未查詢公司的個股 OHLC 值"),
+          .describe("跨頁固定的 query/current-master/completed-session-evidence/benchmark/corporate-action scope 指紋；不包含尚未查詢公司的個股 OHLC 值"),
         requestedCompanyCount: z.number().int().describe("完整 requested 公司數"),
         requestedPageSize: z.number().int().describe("query 綁定的 requested page size"),
         pageStartIndex: z.number().int().describe("本頁第一家公司在 caller 順序中的零起算位置"),
@@ -753,5 +760,35 @@ export const stockReactionSignalsOutputSchema = z
     corporateActionSources: z.array(corporateActionSourceSchema).describe("本頁載入並納入 source cutoffs 的 TWSE／TPEx official actual-result 來源；cursor fingerprint 同時綁定 full-market range contracts/summaries（含無法形成 source 的 unverified-empty contract evidence）、排序後 selected-company scope 與 selected TWSE combined-event detail 的成功／失敗正規化證據，retrievedAt 不參與 fingerprint"),
     ...warningShape,
   })
-  .strict();
-
+  .strict()
+  .superRefine((value, context) => {
+    const expectedMarkets = value.asOf.resolvedByMarket.map(
+      (item) => item.market,
+    );
+    const evidence = value.asOf.completedSessionEvidence;
+    if (value.asOf.requested === "latest") {
+      if (
+        evidence.length !== expectedMarkets.length ||
+        evidence.some(
+          (item, index) =>
+            item.status !== "resolved" ||
+            item.markets.length !== 1 ||
+            item.markets[0] !== expectedMarkets[index] ||
+            item.expectedAsOf !== value.asOf.resolvedByMarket[index]?.date,
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["asOf", "completedSessionEvidence"],
+          message:
+            "latest reaction 必須為每個 resolved market 提供同序且日期一致的 authoritative completed-session evidence。",
+        });
+      }
+    } else if (evidence.length !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["asOf", "completedSessionEvidence"],
+        message: "明確 as_of 不得附加 completed-session resolver evidence。",
+      });
+    }
+  });

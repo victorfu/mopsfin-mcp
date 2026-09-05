@@ -19,6 +19,12 @@ import type {
   CorporateActionHistory,
   CorporateActionSource,
 } from "@/lib/corporate-actions/types";
+import { completedSessionSnapshotFingerprint } from "@/lib/freshness/completed-session-snapshot";
+import {
+  completedSessionExpectedAsOfForMarket,
+  completedSessionResolver,
+} from "@/lib/freshness/completed-session-resolver";
+import type { CompletedSessionResolverEvidence } from "@/lib/freshness/types";
 import type { OfficialMarketClientOptions } from "@/lib/market-data/types";
 import { MopsfinError } from "@/lib/mopsfin/errors";
 import { priceClient } from "@/lib/price/client";
@@ -87,11 +93,19 @@ interface CorporateActionLike {
   ): Promise<CorporateActionHistory>;
 }
 
+interface CompletedSessionResolverLike {
+  resolve(input: {
+    market: CompanyMarket;
+    evaluatedAt?: Date | string;
+  }): Promise<CompletedSessionResolverEvidence>;
+}
+
 interface ReactionClientOptions extends OfficialMarketClientOptions {
   concurrency?: number;
   benchmarkConcurrency?: number;
   benchmarkClient?: BenchmarkLike;
   corporateActionClient?: CorporateActionLike;
+  completedSessionResolver?: CompletedSessionResolverLike;
 }
 
 interface NormalizedQuery {
@@ -164,6 +178,32 @@ function snapshotChanged(
     retryable: false,
     action: "restart_pagination",
   });
+}
+
+function completedSessionFailure(
+  evidence: CompletedSessionResolverEvidence,
+  market: CompanyMarket,
+  reason: "COMPLETED_SESSION_UNRESOLVED" | "COMPLETED_SESSION_EVIDENCE_MISMATCH",
+): never {
+  throw new MopsfinError(
+    "UPSTREAM_BAD_RESPONSE",
+    reason === "COMPLETED_SESSION_UNRESOLVED"
+      ? "authoritative completed-session resolver 無法解析 reaction latest 日期。"
+      : "authoritative completed-session resolver evidence identity 不一致。",
+    {
+      reason,
+      category: "upstream",
+      retryable: reason === "COMPLETED_SESSION_UNRESOLVED",
+      action: reason === "COMPLETED_SESSION_UNRESOLVED" ? "retry" : "none",
+      details: {
+        market,
+        resolverStatus: evidence.status,
+        resolverReasonCode: evidence.reasonCode,
+        resolverMarkets: evidence.markets,
+        resolverExpectedAsOf: evidence.expectedAsOf,
+      },
+    },
+  );
 }
 
 function workBudgetExceeded(
@@ -355,30 +395,51 @@ function benchmarkMap(histories: BenchmarkHistory[]): Map<CompanyMarket, Benchma
   return new Map(histories.map((history) => [history.market, history]));
 }
 
-function resolveBenchmarkAsOf(
+function exactBenchmarkAsOf(
   history: BenchmarkHistory,
-  requested: "latest" | string,
-  rangeEnd: string,
+  requested: string,
 ): string {
-  if (requested !== "latest") {
-    if (!history.bars.some((bar) => bar.date === requested)) {
-      fail("NO_DATA", "as_of 不是指定市場的官方交易日。", {
-        market: history.market,
-        asOf: requested,
-      });
-    }
-    return requested;
-  }
-  const resolved = history.bars
-    .filter((bar) => bar.date <= rangeEnd)
-    .at(-1)?.date;
-  if (!resolved) {
-    fail("NO_DATA", "latest 範圍內查無 benchmark 官方交易日。", {
+  if (!history.bars.some((bar) => bar.date === requested)) {
+    fail("NO_DATA", "as_of 不是指定市場的官方交易日。", {
       market: history.market,
-      through: rangeEnd,
+      asOf: requested,
     });
   }
-  return resolved;
+  return requested;
+}
+
+function completedSessionDate(
+  evidence: CompletedSessionResolverEvidence,
+  market: CompanyMarket,
+  evaluatedAt: string,
+): string {
+  const resolution = evidence.marketResolutions.filter(
+    (item) => item.market === market,
+  );
+  const expectedAsOf = completedSessionExpectedAsOfForMarket(evidence, market);
+  if (evidence.status === "unresolved") {
+    completedSessionFailure(evidence, market, "COMPLETED_SESSION_UNRESOLVED");
+  }
+  if (
+    evidence.resolverId !== "taiwan-equity.completed-session.v1" ||
+    evidence.evaluatedAt !== evaluatedAt ||
+    evidence.timezone !== "Asia/Taipei" ||
+    evidence.markets.length !== 1 ||
+    evidence.markets[0] !== market ||
+    evidence.marketResolutions.length !== 1 ||
+    resolution.length !== 1 ||
+    resolution[0]?.status !== "resolved" ||
+    evidence.expectedAsOf === null ||
+    evidence.expectedAsOf !== expectedAsOf ||
+    expectedAsOf === null
+  ) {
+    completedSessionFailure(
+      evidence,
+      market,
+      "COMPLETED_SESSION_EVIDENCE_MISMATCH",
+    );
+  }
+  return expectedAsOf;
 }
 
 function exactResolvedMap(
@@ -976,6 +1037,7 @@ function companySignals(
 export class ReactionClient {
   private readonly benchmarkClient: BenchmarkLike;
   private readonly corporateActions: CorporateActionLike;
+  private readonly completedSessions: CompletedSessionResolverLike;
   private readonly concurrency: number;
 
   constructor(
@@ -987,6 +1049,8 @@ export class ReactionClient {
   ) {
     this.concurrency = Math.max(1, Math.min(options.concurrency ?? 2, 2));
     this.corporateActions = options.corporateActionClient ?? corporateActionClient;
+    this.completedSessions =
+      options.completedSessionResolver ?? completedSessionResolver;
     this.benchmarkClient =
       options.benchmarkClient ??
       new BenchmarkClient(fetchImpl, now, {
@@ -1004,7 +1068,8 @@ export class ReactionClient {
   async getStockReactionSignals(
     query: StockReactionSignalsQuery,
   ): Promise<StockReactionSignalsResult> {
-    const today = taipeiToday(this.now());
+    const evaluatedAt = new Date(this.now().getTime()).toISOString();
+    const today = taipeiToday(new Date(evaluatedAt));
     const normalized = normalizeQuery(query, today);
     const master = await this.companyMaster.listCompanies({
       market: "all",
@@ -1056,12 +1121,46 @@ export class ReactionClient {
       });
     }
 
+    const completedSessionEvidence =
+      normalized.asOf === "latest"
+        ? await Promise.all(
+            markets.map((market) =>
+              this.completedSessions.resolve({ market, evaluatedAt }),
+            ),
+          )
+        : [];
+    const latestDateByMarket = new Map(
+      completedSessionEvidence.map((evidence) => {
+        const market = evidence.markets[0] as CompanyMarket;
+        return [
+          market,
+          completedSessionDate(evidence, market, evaluatedAt),
+        ] as const;
+      }),
+    );
+    const completedSessionFingerprint =
+      normalized.asOf === "latest"
+        ? completedSessionSnapshotFingerprint(completedSessionEvidence)
+        : null;
+    if (
+      decodedCursor &&
+      decodedCursor.completedSessionFingerprint !== completedSessionFingerprint
+    ) {
+      snapshotChanged(
+        "cursor 釘住的 authoritative completed-session evidence 已變更，請重新開始查詢。",
+      );
+    }
+
     const largestRequiredSessionSpan = Math.max(
       normalized.horizons.at(-1) as ReactionHorizon,
       59,
     );
-    const rangeEnd = decodedCursor?.rangeEnd ??
-      (normalized.asOf === "latest" ? today : normalized.asOf);
+    const latestRangeEnd = [...latestDateByMarket.values()].sort().at(-1);
+    const rangeEnd =
+      decodedCursor?.rangeEnd ??
+      (normalized.asOf === "latest"
+        ? (latestRangeEnd as string)
+        : normalized.asOf);
     if (
       decodedCursor &&
       (rangeEnd > today ||
@@ -1099,7 +1198,12 @@ export class ReactionClient {
       const history = historyByMarket.get(market) as BenchmarkHistory;
       return {
         market,
-        date: resolveBenchmarkAsOf(history, normalized.asOf, rangeEnd),
+        date: exactBenchmarkAsOf(
+          history,
+          normalized.asOf === "latest"
+            ? (latestDateByMarket.get(market) as string)
+            : normalized.asOf,
+        ),
       };
     });
     if (
@@ -1239,13 +1343,14 @@ export class ReactionClient {
     const nextIndex = startIndex + plannedCompanies.length;
     const hasMore = nextIndex < requestedCompanies.length;
     const cursorPayload: Omit<ReactionCursorPayload, "nextIndex"> = {
-      version: 2,
+      version: 3,
       queryHash,
       masterSnapshotId: master.snapshotId,
       masterFingerprint,
       rangeStart,
       rangeEnd,
       resolvedByMarket,
+      completedSessionFingerprint,
       benchmarkFingerprint: fingerprint,
       corporateActionFingerprint,
     };
@@ -1287,6 +1392,7 @@ export class ReactionClient {
       asOf: {
         requested: normalized.asOf,
         resolvedByMarket,
+        completedSessionEvidence,
       },
       coverage: {
         selectionComplete: true,

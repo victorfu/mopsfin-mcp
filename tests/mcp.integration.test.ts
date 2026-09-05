@@ -2080,6 +2080,12 @@ const stockReactionSignals = {
   asOf: {
     requested: "latest" as const,
     resolvedByMarket: [{ market: "listed" as const, date: "2026-08-24" }],
+    completedSessionEvidence: [
+      completedSessionEvidenceFixture({
+        market: "listed",
+        expectedAsOf: "2026-08-24",
+      }),
+    ],
   },
   coverage: {
     selectionComplete: true as const,
@@ -4506,7 +4512,7 @@ describe("MCP protocol integration", () => {
           universe: "unverified",
           selection: "complete",
           values: "partial",
-          freshness: "unknown",
+          freshness: "stale",
         });
         expect(structured.meta.quality.issues).toContainEqual(
           expect.objectContaining({ code: "MASTER_ROWSET_HEURISTIC" }),
