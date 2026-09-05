@@ -117,7 +117,9 @@ describe("README example prompts", () => {
     expect(readme).toContain("price_index_compatible_corporate_action_adjusted");
     expect(readme).toContain("不是 adjusted close");
     expect(readme).toContain("現金股利造成的價格效果會保留");
-    expect(readme).toContain("reaction cursor v2");
+    expect(readme).toContain("reaction cursor v3");
+    expect(readme).not.toContain("reaction cursor v2");
+    expect(readme).toContain("completed-session evidence");
     expect(readme).toContain("整個 requested company scope 的 TWSE 權息 detail fingerprint");
     expect(readme).toContain("affected volume signal");
     expect(readme).toContain("https://www.twse.com.tw/zh/announcement/ex-right/twt49u.html");
