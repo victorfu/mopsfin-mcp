@@ -47,25 +47,16 @@ describe("canonical server identity", () => {
 
   it("derives the public count from the dependency-free ordered tool manifest", () => {
     expect(TOOL_COUNT).toBe(PUBLIC_TOOL_NAMES.length);
-    expect(TOOL_COUNT).toBe(26);
+    expect(TOOL_COUNT).toBe(21);
     expect(new Set(PUBLIC_TOOL_NAMES).size).toBe(TOOL_COUNT);
     expect(PUBLIC_TOOL_NAMES).toEqual(
       expect.arrayContaining([
-        "screen_taiwan_stock_candidates_with_catalyst_snapshots",
         "get_stock_price_series",
         "get_valuation_model_inputs",
         "run_reverse_dcf",
         "analyze_observed_price",
-        "screen_taiwan_financial_candidates",
-        "screen_taiwan_market_candidates",
-        "screen_taiwan_market_universe_page",
       ]),
     );
-    expect(
-      PUBLIC_TOOL_NAMES.indexOf(
-        "screen_taiwan_stock_candidates_with_catalyst_snapshots",
-      ),
-    ).toBe(PUBLIC_TOOL_NAMES.indexOf("screen_taiwan_stock_candidates") + 1);
     expect(PUBLIC_TOOL_NAMES.indexOf("get_stock_price_series")).toBe(
       PUBLIC_TOOL_NAMES.indexOf("get_stock_ohlc") + 1,
     );

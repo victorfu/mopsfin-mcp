@@ -21,10 +21,6 @@ const toolSummaries = {
   get_company_catalyst_events: "查詢官方重大訊息與法說會事件",
   get_company_catalyst_snapshots:
     "查詢財測達成／差異、股東會與股利決議的 current official snapshot evidence",
-  screen_taiwan_stock_candidates:
-    "以四柱 latest 資料分流最多 5 個非金融研究候選",
-  screen_taiwan_stock_candidates_with_catalyst_snapshots:
-    "四柱篩選後只替實際最多 5 名 candidates 附 current snapshots，不改分數",
   get_daily_market_valuation: "查詢官方 latest 或指定日估值與參考財報欄位",
   get_valuation_model_inputs:
     "整理可追溯 TTM、FCFF proxy、net debt、market cap 與 EV 模型輸入",
@@ -40,12 +36,6 @@ const toolSummaries = {
   get_financial_note: "取得財報附註與重要明細",
   get_industry_data: "查詢產業統計與產業趨勢",
   get_financial_institution_metric: "查詢金融業資產品質與資本適足性",
-  screen_taiwan_financial_candidates:
-    "以金融專用四柱分流 mapped 金控、銀行與票券研究候選",
-  screen_taiwan_market_candidates:
-    "以固定 segment quota 合併非金融與金融模型內候選，不比較 raw score",
-  screen_taiwan_market_universe_page:
-    "沿 current-master manifest cursor 逐頁完整路由公司，不提供全域 rank",
 } satisfies Record<McpToolName, string>;
 
 const tools = PUBLIC_TOOL_NAMES.map(
@@ -71,7 +61,7 @@ export default function Home() {
         <h1>把台股財報<br />接進你的 AI</h1>
         <p className="lede">
           直接在 ChatGPT、Claude 或其他支援 MCP 的 AI 中，取得 TWSE／TPEx
-          上市櫃公司母體、官方原始日線、caller 觀察價與官方完成收盤比較、可稽核的公司行動調整價格序列、歷史估值、可追溯估值模型輸入、月營收趨勢、市場反應代理、重大訊息與法說會、current official catalyst snapshots，並分別用非金融與金融專用透明四柱規則產生待深入研究的台股候選；需要時只替實際入選的最多 5 家 candidates 附上不影響分數的快照證據，再查詢 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
+          上市櫃公司母體、官方原始日線、caller 觀察價與官方完成收盤比較、可稽核的公司行動調整價格序列、歷史估值、可追溯估值模型輸入、月營收趨勢、市場反應代理、重大訊息與法說會、current official catalyst snapshots，以及 Mopsfin 提供的公司財報、批次指標、附註、產業與金融機構資料。
         </p>
 
         <div className="endpointCard">
@@ -233,15 +223,10 @@ export default function Home() {
             <p><code>get_stock_price_series</code> 另提供單一公司、含頭含尾且最多 36 個日曆月份的完整序列。<code>raw_unadjusted</code> 不查公司行動；<code>price_index_compatible_corporate_action_adjusted</code> 以最後一根實際 raw bar 向後錨定，使用 TWSE／TPEx official actual-result factor，只移除股數變動的機械價格斷點。現金股利效果保留且 cash-only factor=1，因此不是 adjusted close、股息再投資或 total return；成交量永遠是 raw shares。coverage、factor、prior close、同日事件、identity 或 marker 證據不足時，受影響 adjusted OHLC 為 null，不會回退 raw。<code>include_event_ledger</code> 可輸出逐事件稽核證據，但 raw basis 不會因此查公司行動。單次呼叫最多收齊 3 個既有 OHLC cursor pages，並以 <code>workBudget</code> 揭露實際工作量。</p>
             <p><code>get_daily_market_valuation</code> 可查單一歷史交易日，<code>get_monthly_revenue</code> 與 trend 可查 2013-01 起月份；空白或 N/A 保留為 null 並附資料狀態，不會改寫成 0。歷史月營收是目前修訂後 archive，不是 point-in-time vintage。</p>
             <p><code>get_valuation_model_inputs</code> 為單一非金融公司整理 TTM、historical FCFF proxy、net debt、目前 issued shares、最近完成官方 close、market cap 與 enterprise value。close 與 observed-price 共用同一 authoritative routing：resolver <code>expectedAsOf</code> 必須等於 exact 單股 bar 的 <code>selectedBarDate</code>，而 <code>dataMonth</code> 只表示官方月資料文件。任何 resolver、日期、identity、交易狀態或正數 close 證據不一致都回 <code>data_gap/null</code>，不以全市場 latest 或前一日 fallback。每欄保留 evidenceClass、formula、lineage 與 routing work budget；歷史財報不是 point-in-time filing vintage，issued shares 也不是 fully diluted shares。金融公司為 not_applicable；工具不執行 DCF，也不提供隱藏 WACC、terminal growth、評級或目標價。</p>
-            <p><code>run_reverse_dcf</code> 沿用上述 normalized facts，以及由 resolver <code>expectedAsOf</code> 與 exact single-stock OHLC 共同鎖定的官方最近完成交易日收盤，反解 revenue CAGR、FCFF CAGR 或 terminal operating margin；一次只解一項。forecast years、WACC、terminal growth、solve range、forward assumptions 與所有額外 EV bridge values 都必須明示，0 也不是隱藏預設。每個 sensitivity cell 會重新求解，缺資料、未 bracket 或 residual 未達 tolerance 時 fail closed。輸出分開官方／Mopsfin facts、caller assumptions 與 model outputs；這是 market-implied condition，不是 intrinsic value、共識、目標價、評級或投資建議，也不改變既有 screen preset。</p>
+            <p><code>run_reverse_dcf</code> 沿用上述 normalized facts，以及由 resolver <code>expectedAsOf</code> 與 exact single-stock OHLC 共同鎖定的官方最近完成交易日收盤，反解 revenue CAGR、FCFF CAGR 或 terminal operating margin；一次只解一項。forecast years、WACC、terminal growth、solve range、forward assumptions 與所有額外 EV bridge values 都必須明示，0 也不是隱藏預設。每個 sensitivity cell 會重新求解，缺資料、未 bracket 或 residual 未達 tolerance 時 fail closed。輸出分開官方／Mopsfin facts、caller assumptions 與 model outputs；這是 market-implied condition，不是 intrinsic value、共識、目標價、評級或投資建議。</p>
             <p><code>get_stock_reaction_signals</code> 保留原始未還原權值報酬，另以 TWSE／TPEx 除權息、減資與面額變更實際結果建立 price-index-compatible 報酬。現金股利的價格效果會保留以配合 price index；它不是 adjusted close 或 total return。coverage、調整因子、前收盤或 marker 證據不足時回 unknown，跨股數變動的 volume 不直接比較。</p>
-            <p><code>screen_taiwan_stock_candidates</code> 固定使用 <code>balanced_non_financial_v2</code>／<code>taiwan_stock_screen.v2</code>，是 latest-only、有工作量上限的非金融研究分流：以月營收領先粗篩，再對有限名單評估 <code>companyQuality</code>、<code>fundamentalImprovement</code>、<code>reasonableValuation</code> 與 <code>marketUnderreactionProxy</code>，最多回傳 5 個候選。七項財務需求先由穩定 semantic roles 對即時 catalog 解析；缺少、重複或語意衝突會以 <code>CATALOG_CONTRACT_MISMATCH</code> fail closed，當次 role→code/name/family 證據則保留在 <code>screenDefinition.evidencePolicies</code>。market pillar 只接受可比的公司行動調整證據。deep stage 會在 24-unit 預算內隔離 company-level identity／metric errors；受影響代號以 <code>dependencyStatus</code> 與 <code>notReactionScored</code> 標示 unknown，不會被誤判為 fail 或 0 分。其餘 deepSelected 公司繼續，但不從 deepSelected 之外自動遞補。不同資料來源的 as-of 可能不同；結果不是完整全市場深篩、point-in-time 回測、錯價證明或投資建議。</p>
-            <p><code>screen_taiwan_stock_candidates_with_catalyst_snapshots</code> 先執行相同四柱 screen，再對 <code>screen.candidates</code> 中所有實際 candidates 查 current official catalyst snapshots，最多 5 家；不論 bucket 是 research_candidate、watchlist、insufficient_data 或 deprioritized 都會查。只有 notDeepScored、notReactionScored、excluded，以及進入 deepSelected 但未形成 candidate 的公司會排除。快照不是歷史事件，也不是分析師 consensus；<code>affectsScreenScore=false</code>，因此不是第五柱、加分項或投資建議。原本的 <code>screen_taiwan_stock_candidates</code>、<code>get_company_catalyst_snapshots</code> 與 <code>get_company_catalyst_events</code> standalone tools 都保留。</p>
-            <p><code>screen_taiwan_financial_candidates</code> 固定使用 <code>balanced_financial_v1</code>，只評估能以四碼股票代號 exact-code 唯一對應到 Mopsfin 金融機構目錄的 holding／bank／bills。金融品質依 subtype 使用 ROE、TTM 稅後淨利、相應資本適足率，以及銀行適用的逾放比／備抵覆蓋率；估值以同 subtype P/B 與 ROE-adjusted P/B 為 primary，PE／殖利率只作 supporting。Q1／Q3 不把半年度資本適足缺值改成 0，unmapped、identity mismatch 與 unsupported subtype 都明示排除。金融分數只在本模型內可比，不能與 <code>balanced_non_financial_v2</code> raw score 直接排序；本工具同樣是 top-10 deep／最多 5 家 reaction 的 bounded research triage。</p>
-            <p><code>screen_taiwan_market_candidates</code> 固定使用 <code>balanced_market_v1</code>，在同一次呼叫中分別執行既有非金融與金融 screen，再以明示的 non-financial／financial quota 組合短名單。每段保留完整原始結果、model id、bucket 與模型內 rank；<code>crossModelScoreComparable=false</code>，合併排序只看 bucket priority、固定 segment priority 與 within-model rank，不比較 raw score。任一 segment 沒有足額候選時不自動補額，也不以另一模型的較差候選填滿；兩個底層 screen 仍各自受 top-10 deep／最多 5 家 reaction 限制。</p>
-            <p><code>screen_taiwan_market_universe_page</code> 固定使用 <code>full_universe_cursor_v1</code>，先建立 current company identity manifest，再每頁最多 5 家依金融分類路由到既有兩模型。每家公司必須恰好落入 candidate、notReactionScored 或 excluded；shared dependency／reaction prefix 未完成時整頁失敗且 cursor 不前進。cursor 只 pin manifest identity，<code>STATELESS_PAGE_VALUES_NOT_PINNED</code>、<code>pageValuesPinned=false</code>、<code>pointInTime=false</code>；跨頁逐公司值可能更新，page rank 也不是 global rank。</p>
-            <p><code>get_company_catalyst_events</code> 依 selected company 與日期範圍即時查 MOPS 歷史重大訊息、法說會日曆，並用 TWSE／TPEx 每日重大訊息補強近期資料。<code>publishedAt</code>、<code>factDate</code>、<code>scheduledAt</code> 與 <code>effectiveAt</code> 分開；官方無事件、查詢失敗與 parser/security block 也分開。它不提供分析師 consensus、預估修正、情緒分數或投資建議，且不會改變四柱 screening 分數。</p>
-            <p><code>get_company_catalyst_snapshots</code> 只讀取當次官方 snapshot evidence：<code>forecast_achievement</code>、<code>forecast_material_variance</code>、<code>shareholder_meeting</code> 與 <code>dividend_decision</code>，不是歷史事件查詢。應檢查 <code>sourceSnapshotDate</code>、<code>freshness</code>、<code>pointInTimeHistoryAvailable</code>、<code>firstKnownAt</code> 與 <code>upcomingEligible</code>；公司財測不是分析師 consensus，stale／unsupported 不是 current no-data。TPEx 沒有可用的 current dividend source，不會以舊的 <code>mopsfin_t187ap39_O</code> 冒充當期股利決議。此工具與現有 events 工具都不納入四柱 screening 評分。</p>
+            <p><code>get_company_catalyst_events</code> 依 selected company 與日期範圍即時查 MOPS 歷史重大訊息、法說會日曆，並用 TWSE／TPEx 每日重大訊息補強近期資料。<code>publishedAt</code>、<code>factDate</code>、<code>scheduledAt</code> 與 <code>effectiveAt</code> 分開；官方無事件、查詢失敗與 parser/security block 也分開。它不提供分析師 consensus、預估修正、情緒分數或投資建議。</p>
+            <p><code>get_company_catalyst_snapshots</code> 只讀取當次官方 snapshot evidence：<code>forecast_achievement</code>、<code>forecast_material_variance</code>、<code>shareholder_meeting</code> 與 <code>dividend_decision</code>，不是歷史事件查詢。應檢查 <code>sourceSnapshotDate</code>、<code>freshness</code>、<code>pointInTimeHistoryAvailable</code>、<code>firstKnownAt</code> 與 <code>upcomingEligible</code>；公司財測不是分析師 consensus，stale／unsupported 不是 current no-data。TPEx 沒有可用的 current dividend source，不會以舊的 <code>mopsfin_t187ap39_O</code> 冒充當期股利決議。</p>
             <p>成功結果固定提供 <code>meta.asOf</code>、<code>meta.quality</code> 與 <code>meta.page</code>。<code>data cutoff</code>、<code>retrievedAt</code>、<code>servedAt</code> 與 cache age 分開保留；<code>freshnessDetails</code> 會列出逐來源 policy、observed/expected as-of 與 lag，無法驗證時是 <code>FRESHNESS_UNVERIFIED</code>，不會因查詢參數是 latest 就自動宣稱 fresh。reaction cursor v2 會把公司行動 range contracts/summaries 與 requested-company 權息 detail fingerprint 納入來源 snapshot，但不儲存在伺服器。若來源在續頁間改變，須依錯誤 <code>action=restart_pagination</code> 從第一頁重啟。</p>
             <p>資料 freshness 依來源分開判讀：Mopsfin 財務資料依官方說明每日更新、可能較申報落後約一日；這不代表所有 TWSE／TPEx 資料固定落後一天。一般 latest OHLC／估值維持各自既有 selector 與 reconciliation 語意；宣稱 completed close 的單股工具則先以公司市場的官方年度開休市日曆、當月 exact benchmark session 及台北時間 13:33 guard 解析 <code>expectedAsOf</code>，再強制 exact 單股 bar 日期相等。來源不可用、契約漂移、日期或 identity 不符時 fail closed，不猜測或 fallback。月營收依資料年月與出表日，事件與 current snapshots 則依各自發布、事件或 snapshot 日期判讀。</p>
             <p>每個請求都有整體 deadline，暫時性上游錯誤會在期限內依 <code>Retry-After</code> 或 backoff 有限重試；response、cache、併發與等待 queue 均設上限。行程內 telemetry 只彙總 method、tool name、延遲、狀態與錯誤碼，不記錄 tool arguments 或 request body，也不持久化。服務狀態頁是 shallow health，不呼叫上游；<code>liveness=ok</code> 與 <code>applicationReadiness=ready</code> 只表示應用程式可回應，<code>upstreamContracts.status=not_checked</code> 明示該次請求未驗證官方資料契約。官方資料契約另以每週一次的低頻 live checks 驗證。</p>

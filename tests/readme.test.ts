@@ -26,11 +26,6 @@ const verifiedExamplePrompts = [
   "查台積電截至 2026-07 的最近 12 個月營收趨勢，列出 3／6 月 YoY 與加速度。",
   "查台積電、聯發科與穩懋的 ROE、毛利率及營業利益率最近 8 季資料，按公司整理。",
   "比較台積電與 TAIEX 截至 2026-08-24 的 5、20、60、120 交易日原始與 price-index-compatible 報酬、公司行動證據及量能訊號。",
-  "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，最多 5 家；逐家列出四柱 status、分數、as-of、缺值與下一步查核，不要當成投資建議。",
-  "用 balanced_financial_v1 篩選 exact-mapped 金控、銀行與票券研究候選，最多 5 家；逐家列出 subtype、mapping、四柱、獲利／資本／資產品質 through period、同 subtype peer count 與 unknown，不要與非金融 raw score 比較或當成投資建議。",
-  "用 balanced_market_v1 分別取最多 4 家非金融與 1 家金融候選；保留兩個 segments 的完整結果與模型內 rank，明示 crossModelScoreComparable=false、segment quota 與未補額數量，不要比較 raw score 或當成投資建議。",
-  "用 full_universe_cursor_v1 從第一頁開始逐頁評估目前全部上市櫃公司，每頁 5 家並沿 next cursor 到結尾；逐頁保存 terminalResults 與 segment evidence，遇 CURSOR_INVALID／SNAPSHOT_CHANGED 從第一頁重啟，明示 pageValuesPinned=false、pointInTime=false 與沒有 global rank。",
-  "用 balanced_non_financial_v2 篩選最新上市櫃非金融研究候選，並只替實際最多 5 名 candidates 附 current catalyst snapshots；保留 affectsScreenScore=false，不要當成第五柱、分析師 consensus 或投資建議。",
   "查台積電與聯發科 2026-07-01 至 2026-08-24 的官方重大訊息與法說會；分開 publishedAt、factDate、scheduledAt、effectiveAt，並標示 failures 與 verified empty，不要當成 consensus 或正負面分數。",
   "查台積電與穩懋的 current official catalyst snapshots，分開財測達成、財測重大差異、股東會與股利決議；標示 sourceSnapshotDate、freshness、firstKnownAt、upcomingEligible 與 unsupported，不要當成歷史事件或分析師 consensus。",
   "列出全部上市公司代號，不要包含上櫃公司。",
@@ -58,26 +53,6 @@ describe("README example prompts", () => {
     expect(readme).toContain(`${TOOL_COUNT} 個工具`);
     expect(readme).toContain("browser-safe server identity");
     expect(readme).toContain("dependency-free tool manifest");
-    expect(readme).toContain(
-      "`screen_taiwan_stock_candidates_with_catalyst_snapshots`",
-    );
-    expect(readme).toContain("只取 screen 實際形成的 `candidates`");
-    expect(readme).toContain(
-      "不論其 bucket 是 `research_candidate`、`watchlist`、`insufficient_data` 或 `deprioritized`",
-    );
-    expect(readme).toContain("數量仍受 `candidate_limit` 限制且最多 5 家");
-    expect(readme).toContain(
-      "不因 bucket 排除其中的 `watchlist`、`insufficient_data` 或 `deprioritized`",
-    );
-    expect(readme).toContain(
-      "只排除 `notDeepScored`、`notReactionScored`、`excluded`",
-    );
-    expect(readme).toContain("進入 `deepSelected` 但未形成 candidate 的公司");
-    expect(readme).toContain("Current snapshots 不是歷史事件資料");
-    expect(readme).toContain("不是分析師 consensus／consensus revision");
-    expect(readme).toContain("`affectsScreenScore=false`");
-    expect(readme).toContain("不是第五柱、不會成為加分項");
-    expect(readme).toContain("standalone tools 全部保留");
     expect(readme).toContain("liveness=ok");
     expect(readme).toContain("applicationReadiness=ready");
     expect(readme).toContain("upstreamContracts.status=not_checked");
@@ -136,20 +111,17 @@ describe("README example prompts", () => {
     expect(readme).toContain("declared row count");
     expect(readme).toContain("coverageVerification.status");
     expect(readme).toContain("MASTER_ROWSET_HEURISTIC");
-    expect(readme).toContain("CATALOG_CONTRACT_MISMATCH");
-    expect(readme).toContain("evidencePolicies.requiredFinancialMetricRoles");
     expect(readme).toContain("absolute deadline");
     expect(readme).toContain("Retry-After");
     expect(readme).toContain("不記錄 tool arguments");
     expect(readme).toContain("每週一次");
     expect(readme).toContain("npm run test:live:corporate-actions");
-    expect(readme).toContain("npm run test:live:catalog-screen");
     expect(readme).toContain("npm run test:live:completed-session");
     expect(readme).toContain("npm run test:live:observed-price");
     expect(readme).toContain("npm run test:live:valuation-model-inputs");
     expect(readme).toContain("完整 live suite");
     expect(readme).toContain(
-      "`suite` 可選 `catalog-screen`、`completed-session`、`corporate-actions`、`catalysts`、`observed-price`、`valuation-model-inputs` 或 `all`",
+      "`suite` 可選 `completed-session`、`corporate-actions`、`catalysts`、`observed-price`、`valuation-model-inputs` 或 `all`",
     );
     expect(readme).toContain("### `get_valuation_model_inputs` 可追溯估值模型資料層");
     expect(readme).toContain("### `run_reverse_dcf` 市場隱含 Reverse DCF");
@@ -197,18 +169,6 @@ describe("README example prompts", () => {
     expect(readme).toContain("`volumeBasis=raw_shares`");
     expect(readme).toContain("絕不回退 raw");
     expect(readme).toContain("`meta.quality.freshness=not_applicable`");
-    expect(readme).toContain("balanced_non_financial_v2");
-    expect(readme).toContain("taiwan_stock_screen.v2");
-    expect(readme).toContain("coarseRanking");
-    expect(readme).toContain("evidencePolicies");
-    expect(readme).toContain("companyQuality");
-    expect(readme).toContain("fundamentalImprovement");
-    expect(readme).toContain("reasonableValuation");
-    expect(readme).toContain("marketUnderreactionProxy");
-    expect(readme).toContain("latest-only");
-    expect(readme).toContain("最多 5 家");
-    expect(readme).toContain("不是 point-in-time／無存活者偏誤回測");
-    expect(readme).toContain("screen 本身目前沒有分析師預期修正、新聞、法人流向、持股或放空");
     expect(readme).toContain("material_information");
     expect(readme).toContain("investor_conference");
     expect(readme).toContain("per_company_event_type_calendar_month");
@@ -250,10 +210,7 @@ describe("README example prompts", () => {
     expect(readme).toContain("https://www.tpex.org.tw/openapi/v1/t187ap41_O");
     expect(readme).toContain("failureIsolationComplete=false");
     expect(readme).toContain("company×metric");
-    expect(readme).toContain("company_metrics_unavailable");
     expect(readme).toContain("availability");
-    expect(readme).toContain("notReactionScored");
-    expect(readme).toContain("自動遞補");
     expect(readme).not.toContain("請勿把 live tests 設為定時 CI");
     expect(readme).not.toContain("v1 都只支援 latest");
     expect(readme).not.toContain("第一版只提供官方最新");

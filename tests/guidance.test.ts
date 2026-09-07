@@ -78,32 +78,9 @@ describe("LLM-facing official guidance", () => {
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("valueStatus");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("filingCoverage");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("INCOMPLETE_COVERAGE");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("CATALOG_CONTRACT_MISMATCH");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "screen_taiwan_financial_candidates",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("balanced_financial_v1");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("唯一 exact-code 對應");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "cross-model 不得與 balanced_non_financial_v2 raw score 直接排序",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "screen_taiwan_market_candidates",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("balanced_market_v1");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "crossModelScoreComparable=false",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("不自動補額");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "screen_taiwan_market_universe_page",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("full_universe_cursor_v1");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
       "STATELESS_PAGE_VALUES_NOT_PINNED",
     );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("沒有 global rank");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("net_profit");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("latest 只表示查詢意圖");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("freshnessDetails");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("FRESHNESS_UNVERIFIED");
@@ -166,9 +143,6 @@ describe("LLM-facing official guidance", () => {
     );
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("isConsensus 固定 false");
     expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "不納入 screen_taiwan_stock_candidates 四柱分數",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
       "不是 pinned point-in-time snapshot",
     );
     expect(MOPSFIN_OFFICIAL_GUIDANCE.valueBasis).toEqual(
@@ -212,40 +186,6 @@ describe("LLM-facing official guidance", () => {
         expect.objectContaining({
           dataType: "當期官方 catalyst snapshot evidence",
         }),
-      ]),
-    );
-  });
-
-  it("routes candidate-only snapshot enrichment without changing screen scoring", () => {
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "screen_taiwan_stock_candidates_with_catalyst_snapshots",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "對 screen.candidates 中所有實際 candidates 查 snapshot",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("最多 5 家");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "不論 bucket 是 research_candidate、watchlist、insufficient_data 或 deprioritized 都會查",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "只有 notDeepScored、notReactionScored、excluded，以及進入 deepSelected 但未形成 candidate 的公司會排除",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "不是歷史事件，也不是分析師 consensus／consensus revision",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain("affectsScreenScore=false");
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "不是第五柱、加分項、目標價或投資建議",
-    );
-    expect(MOPSFIN_SERVER_INSTRUCTIONS).toContain(
-      "standalone tools 全部保留",
-    );
-    expect(MOPSFIN_OFFICIAL_GUIDANCE.interpretationNotes).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(
-          "screen_taiwan_stock_candidates_with_catalyst_snapshots 只對實際最多 5 名 candidates",
-        ),
-        expect.stringContaining("affectsScreenScore=false"),
       ]),
     );
   });

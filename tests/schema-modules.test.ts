@@ -5,16 +5,11 @@ import * as catalysts from "@/lib/mcp/schema/catalysts";
 import * as common from "@/lib/mcp/schema/common";
 import * as company from "@/lib/mcp/schema/company";
 import * as financials from "@/lib/mcp/schema/financials";
-import * as financialScreening from "@/lib/mcp/schema/financial-screening";
-import * as fullScreening from "@/lib/mcp/schema/full-screening";
-import * as marketScreening from "@/lib/mcp/schema/market-screening";
 import * as observedPrice from "@/lib/mcp/schema/observed-price";
 import * as price from "@/lib/mcp/schema/price";
 import * as priceSeries from "@/lib/mcp/schema/price-series";
 import * as revenue from "@/lib/mcp/schema/revenue";
-import * as research from "@/lib/mcp/schema/research";
 import * as reverseDcf from "@/lib/mcp/schema/reverse-dcf";
-import * as screening from "@/lib/mcp/schema/screening";
 import * as valuation from "@/lib/mcp/schema/valuation";
 import * as valuationModel from "@/lib/mcp/schema/valuation-model";
 
@@ -82,49 +77,9 @@ const publicSchemaOwners = {
   industryDataOutputSchema: financials.industryDataOutputSchema,
   financialInstitutionOutputSchema:
     financials.financialInstitutionOutputSchema,
-  screenTaiwanStockCandidatesInputSchema:
-    screening.screenTaiwanStockCandidatesInputSchema,
-  screenTaiwanStockCandidatesOutputSchema:
-    screening.screenTaiwanStockCandidatesOutputSchema,
-  screenTaiwanFinancialCandidatesInputSchema:
-    financialScreening.screenTaiwanFinancialCandidatesInputSchema,
-  screenTaiwanFinancialCandidatesDataSchema:
-    financialScreening.screenTaiwanFinancialCandidatesDataSchema,
-  screenTaiwanFinancialCandidatesOutputSchema:
-    financialScreening.screenTaiwanFinancialCandidatesOutputSchema,
-  screenTaiwanMarketCandidatesInputSchema:
-    marketScreening.screenTaiwanMarketCandidatesInputSchema,
-  screenTaiwanMarketCandidatesDataSchema:
-    marketScreening.screenTaiwanMarketCandidatesDataSchema,
-  screenTaiwanMarketCandidatesOutputSchema:
-    marketScreening.screenTaiwanMarketCandidatesOutputSchema,
-  screenTaiwanMarketUniversePageInputSchema:
-    fullScreening.screenTaiwanMarketUniversePageInputSchema,
-  screenTaiwanMarketUniversePageDataSchema:
-    fullScreening.screenTaiwanMarketUniversePageDataSchema,
-  screenTaiwanMarketUniversePageOutputSchema:
-    fullScreening.screenTaiwanMarketUniversePageOutputSchema,
-  screenTaiwanStockCandidatesWithCatalystSnapshotsInputSchema:
-    research.screenTaiwanStockCandidatesWithCatalystSnapshotsInputSchema,
-  screenTaiwanStockCandidatesWithCatalystSnapshotsOutputSchema:
-    research.screenTaiwanStockCandidatesWithCatalystSnapshotsOutputSchema,
 } as const;
 
 describe("MCP schema modules", () => {
-  it("derives a strict screening data schema without the MCP envelope", () => {
-    expect(
-      Object.hasOwn(screening.screenTaiwanStockCandidatesDataSchema.shape, "ok"),
-    ).toBe(false);
-    expect(
-      Object.hasOwn(
-        screening.screenTaiwanStockCandidatesDataSchema.shape,
-        "meta",
-      ),
-    ).toBe(false);
-    expect(
-      screening.screenTaiwanStockCandidatesDataSchema.safeParse({}).success,
-    ).toBe(false);
-  });
 
   it("keeps the compatibility barrel public export surface exact", () => {
     expect(Object.keys(publicSchemas).sort()).toEqual(

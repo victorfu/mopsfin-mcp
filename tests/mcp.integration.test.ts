@@ -22,7 +22,6 @@ import {
   listCompaniesInputSchema,
   monthlyRevenueInputSchema,
   monthlyRevenueTrendInputSchema,
-  screenTaiwanStockCandidatesInputSchema,
   stockOhlcOutputSchema,
   stockPriceSeriesInputSchema,
   stockPriceSeriesOutputSchema,
@@ -1802,70 +1801,6 @@ const companyMetricsBatch = {
   warnings: [],
 } satisfies CompanyMetricsBatchResult;
 
-const screenMetricDefinitions = catalog.metrics
-  .filter((metric) => metric.family === "data")
-  .map(({ code, name, unit, category }) => ({ code, name, unit, category }));
-const screenMetricValues: Record<string, number> = {
-  ROE: 20.5,
-  NetProfit: 100,
-  OperatingCashflow: 120,
-  DebtRatio: 35,
-  GrossMargin: 55,
-  OperatingMargin: 45,
-  EPS: 10,
-};
-const screenCompanyMetricsBatch = {
-  ...companyMetricsBatch,
-  query: {
-    ...companyMetricsBatch.query,
-    metricCodes: screenMetricDefinitions.map((metric) => metric.code),
-  },
-  snapshotId: "screen-batch-fixture",
-  metricDefinitions: screenMetricDefinitions,
-  companies: companyMetricsBatch.companies.map((company) => ({
-    ...company,
-    metrics: screenMetricDefinitions.map((definition) => ({
-      metricCode: definition.code,
-      metricName: definition.name,
-      unit: definition.unit,
-      availability: "available" as const,
-      periods: ["2026Q1"],
-      points: [
-        {
-          period: "2026Q1",
-          value: screenMetricValues[definition.code] as number,
-          valueStatus: "reported" as const,
-        },
-      ],
-      coverage: {
-        seriesReturned: true,
-        nonNullPoints: 1,
-        missingPoints: 0,
-        invalidPoints: 0,
-        firstReportedPeriod: "2026Q1",
-        latestReportedPeriod: "2026Q1",
-        missingPeriods: [],
-      },
-      failure: null,
-    })),
-  })),
-  coverage: {
-    ...companyMetricsBatch.coverage,
-    metrics: screenMetricDefinitions.map((metric) => ({
-      metricCode: metric.code,
-      returnedCompanyCodes: ["2330"],
-      missingCompanyCodes: [],
-      noValidDataCompanyCodes: [],
-      unavailableCompanyCodes: [],
-    })),
-  },
-  workBudget: {
-    ...companyMetricsBatch.workBudget,
-    comparisonPlanUnits: 7,
-    comparisonExecutedUnits: 7,
-  },
-} satisfies CompanyMetricsBatchResult;
-
 const unavailableMetricFailure = {
   code: "UPSTREAM_TIMEOUT" as const,
   reason: "UPSTREAM_ATTEMPT_TIMEOUT",
@@ -2564,30 +2499,6 @@ describe("MCP protocol integration", () => {
       }).success,
     ).toBe(false);
 
-    expect(screenTaiwanStockCandidatesInputSchema.parse({})).toEqual({
-      market: "all",
-      include_ky: true,
-      candidate_limit: 5,
-      preset: "balanced_non_financial_v2",
-    });
-    expect(
-      screenTaiwanStockCandidatesInputSchema.safeParse({
-        company_codes: codes(100),
-        candidate_limit: 1,
-      }).success,
-    ).toBe(true);
-    expect(
-      screenTaiwanStockCandidatesInputSchema.safeParse({
-        company_codes: codes(101),
-        candidate_limit: 6,
-      }).success,
-    ).toBe(false);
-    expect(
-      screenTaiwanStockCandidatesInputSchema.safeParse({
-        company_codes: ["2330", "2330"],
-      }).success,
-    ).toBe(false);
-
     for (const schema of [
       listCompaniesInputSchema,
       dailyMarketOhlcInputSchema,
@@ -2881,11 +2792,7 @@ describe("MCP protocol integration", () => {
     const companyMetricsBatchSpy = vi.spyOn(
       companyMetricsBatchClient,
       "getCompanyMetricsBatch",
-    ).mockImplementation(async (query) =>
-      query.metricCodes.length === 7
-        ? screenCompanyMetricsBatch
-        : companyMetricsBatch,
-    );
+    ).mockResolvedValue(companyMetricsBatch);
     vi.spyOn(mopsfinClient, "getFinancialStatement").mockResolvedValue(table);
     vi.spyOn(mopsfinClient, "getFinancialNote").mockResolvedValue({
       ...table,
@@ -3022,11 +2929,23 @@ describe("MCP protocol integration", () => {
       "current official catalyst snapshots",
     );
     expect(client.getInstructions()).toContain("point-in-time");
-    expect(client.getInstructions()).toContain("screen_taiwan_stock_candidates");
     expect(client.getInstructions()).toContain("get_company_metrics_batch");
     expect(client.getInstructions()).toContain("filingCoverage");
     const listed = await client.listTools();
     expect(listed.tools).toHaveLength(TOOL_COUNT);
+    for (const name of [
+      "screen_taiwan_market_universe_page",
+      "screen_taiwan_stock_candidates",
+      "screen_taiwan_stock_candidates_with_catalyst_snapshots",
+      "screen_taiwan_financial_candidates",
+      "screen_taiwan_market_candidates",
+    ]) {
+      expect(listed.tools.some((tool) => tool.name === name)).toBe(false);
+      expect(client.getInstructions()).not.toContain(name);
+      await expect(client.callTool({ name, arguments: {} })).rejects.toThrow(
+        `Tool ${name} not found`,
+      );
+    }
     expect(listed.tools.map((tool) => tool.name)).toEqual(PUBLIC_TOOL_NAMES);
     expect(
       listed.tools.every(
@@ -3352,108 +3271,6 @@ describe("MCP protocol integration", () => {
     expect(catalystSnapshotOutput?.properties?.isConsensus?.description).toContain(
       "不是分析師 consensus",
     );
-    const screenTool = listed.tools.find(
-      (tool) => tool.name === "screen_taiwan_stock_candidates",
-    );
-    expect(screenTool?.description).toContain("latest");
-    expect(screenTool?.description).toContain("前 10 家");
-    expect(screenTool?.description).toContain("最多 5 家");
-    expect(screenTool?.description).toContain("hard gates");
-    expect(screenTool?.description).toContain("unknown 也不等於 0");
-    expect(screenTool?.description).toContain("24 comparison units");
-    expect(screenTool?.description).toContain("company_metrics_unavailable");
-    expect(screenTool?.description).toContain("semantic roles");
-    expect(screenTool?.description).toContain("CATALOG_CONTRACT_MISMATCH");
-    expect(screenTool?.description).toContain("generic metric tools");
-    expect(screenTool?.description).toContain("notReactionScored");
-    expect(screenTool?.description).toContain("price-index-compatible");
-    expect(screenTool?.description).toContain("mixed as-of");
-    expect(screenTool?.description).toContain("不是投資建議");
-    expect(screenTool?.inputSchema.properties?.market).toMatchObject({
-      default: "all",
-    });
-    expect(screenTool?.inputSchema.properties?.include_ky).toMatchObject({
-      default: true,
-    });
-    expect(screenTool?.inputSchema.properties?.candidate_limit).toMatchObject({
-      default: 5,
-      minimum: 1,
-      maximum: 5,
-    });
-    expect(screenTool?.inputSchema.properties?.preset).toMatchObject({
-      default: "balanced_non_financial_v2",
-      const: "balanced_non_financial_v2",
-    });
-    const financialScreenTool = listed.tools.find(
-      (tool) => tool.name === "screen_taiwan_financial_candidates",
-    );
-    expect(financialScreenTool?.description).toContain("balanced_financial_v1");
-    expect(financialScreenTool?.description).toContain("exact-code");
-    expect(financialScreenTool?.description).toContain("cross-model");
-    expect(financialScreenTool?.description).toContain("不是投資建議");
-    expect(financialScreenTool?.inputSchema.properties?.market).toMatchObject({
-      default: "all",
-    });
-    expect(
-      financialScreenTool?.inputSchema.properties?.candidate_limit,
-    ).toMatchObject({ default: 5, minimum: 1, maximum: 5 });
-    expect(financialScreenTool?.inputSchema.properties?.preset).toMatchObject({
-      default: "balanced_financial_v1",
-      const: "balanced_financial_v1",
-    });
-    const marketScreenTool = listed.tools.find(
-      (tool) => tool.name === "screen_taiwan_market_candidates",
-    );
-    expect(marketScreenTool?.description).toContain("balanced_market_v1");
-    expect(marketScreenTool?.description).toContain(
-      "crossModelScoreComparable=false",
-    );
-    expect(marketScreenTool?.description).toContain("不自動補額");
-    expect(marketScreenTool?.description).toContain("不是投資建議");
-    expect(
-      marketScreenTool?.inputSchema.properties?.non_financial_limit,
-    ).toMatchObject({ default: 4, minimum: 1, maximum: 5 });
-    expect(
-      marketScreenTool?.inputSchema.properties?.financial_limit,
-    ).toMatchObject({ default: 1, minimum: 1, maximum: 5 });
-    expect(marketScreenTool?.inputSchema.properties?.preset).toMatchObject({
-      default: "balanced_market_v1",
-      const: "balanced_market_v1",
-    });
-    const fullUniverseTool = listed.tools.find(
-      (tool) => tool.name === "screen_taiwan_market_universe_page",
-    );
-    expect(fullUniverseTool?.description).toContain("full_universe_cursor_v1");
-    expect(fullUniverseTool?.description).toContain(
-      "STATELESS_PAGE_VALUES_NOT_PINNED",
-    );
-    expect(fullUniverseTool?.description).toContain("SNAPSHOT_CHANGED");
-    expect(fullUniverseTool?.description).toContain("不是投資建議");
-    expect(fullUniverseTool?.inputSchema.properties?.page_size).toMatchObject({
-      default: 5,
-      minimum: 1,
-      maximum: 5,
-    });
-    expect(fullUniverseTool?.inputSchema.properties?.preset).toMatchObject({
-      default: "full_universe_cursor_v1",
-      const: "full_universe_cursor_v1",
-    });
-    const researchTool = listed.tools.find(
-      (tool) =>
-        tool.name ===
-        "screen_taiwan_stock_candidates_with_catalyst_snapshots",
-    );
-    expect(researchTool?.description).toContain("ordered screen.candidates");
-    expect(researchTool?.description).toContain("affectsScreenScore=false");
-    expect(researchTool?.description).toContain("不是分析師 consensus");
-    expect(researchTool?.description).toContain("not_disclosed_in_snapshot");
-    expect(researchTool?.description).toContain("沒有 candidates 時不呼叫");
-    expect(researchTool?.inputSchema.properties?.screen).toHaveProperty(
-      "description",
-    );
-    expect(
-      researchTool?.inputSchema.properties?.catalyst_snapshots,
-    ).toHaveProperty("description");
     const batchTool = listed.tools.find(
       (tool) => tool.name === "get_company_metrics_batch",
     );
@@ -3554,28 +3371,6 @@ describe("MCP protocol integration", () => {
           company_codes: ["3105"],
         },
       ],
-      [
-        "screen_taiwan_stock_candidates",
-        {
-          market: "listed",
-          company_codes: ["2330"],
-          candidate_limit: 1,
-        },
-      ],
-      [
-        "screen_taiwan_stock_candidates_with_catalyst_snapshots",
-        {
-          screen: {
-            market: "listed",
-            company_codes: ["2330"],
-            candidate_limit: 1,
-          },
-          catalyst_snapshots: {
-            snapshot_types: ["shareholder_meeting"],
-            record_preview_limit: 10,
-          },
-        },
-      ],
       ["get_daily_market_valuation", { market: "all" }],
       ["get_valuation_model_inputs", { company_code: "2330" }],
       ["get_monthly_revenue", { market: "all" }],
@@ -3617,29 +3412,6 @@ describe("MCP protocol integration", () => {
           institution_codes: ["0040000"],
           include_industry_average: true,
           include_institution_average: true,
-        },
-      ],
-      [
-        "screen_taiwan_financial_candidates",
-        {
-          market: "listed",
-          company_codes: ["2330"],
-          candidate_limit: 1,
-        },
-      ],
-      [
-        "screen_taiwan_market_candidates",
-        {
-          market: "listed",
-          non_financial_limit: 1,
-          financial_limit: 1,
-        },
-      ],
-      [
-        "screen_taiwan_market_universe_page",
-        {
-          market: "all",
-          page_size: 2,
         },
       ],
     ] as const;
@@ -4461,137 +4233,6 @@ describe("MCP protocol integration", () => {
           failedSnapshotTypes: ["forecast_material_variance"],
         });
       }
-      if (name === "screen_taiwan_stock_candidates") {
-        const structured = result.structuredContent as {
-          meta: {
-            asOf: {
-              selector: string;
-              resolved: { granularity: string; from: string | null; through: string | null };
-            };
-            quality: {
-              source: string;
-              universe: string;
-              selection: string;
-              values: string;
-              freshness: string;
-              issues: Array<{ code: string }>;
-            };
-            page: { mode: string; unit: string };
-          };
-          screenDefinition: {
-            latestOnly: boolean;
-            financialCompanies: string;
-            scoreCompensationAcrossPillars: boolean;
-            evidencePolicies: {
-              requiredFinancialMetricRoles: string[];
-              financialMetricCodes: string[];
-              resolvedFinancialMetrics: Array<{
-                role: string;
-                metricCode: string;
-                family: string;
-              }>;
-              catalogDiscoveredAt: string;
-              catalogSnapshotId: string;
-            };
-          };
-          workBudget: {
-            deepCompanyLimit: number;
-            reactionCompanyLimit: number;
-          };
-          candidates: unknown[];
-        };
-        expect(structured.meta.asOf).toMatchObject({
-          selector: "latest",
-          resolved: { granularity: "mixed", from: null, through: null },
-        });
-        expect(structured.meta.page).toEqual(
-          expect.objectContaining({ mode: "none", unit: "none" }),
-        );
-        expect(structured.meta.quality).toMatchObject({
-          source: "partial",
-          universe: "unverified",
-          selection: "complete",
-          values: "partial",
-          freshness: "stale",
-        });
-        expect(structured.meta.quality.issues).toContainEqual(
-          expect.objectContaining({ code: "MASTER_ROWSET_HEURISTIC" }),
-        );
-        expect(structured.screenDefinition).toMatchObject({
-          latestOnly: true,
-          financialCompanies: "excluded",
-          scoreCompensationAcrossPillars: false,
-          evidencePolicies: {
-            requiredFinancialMetricRoles: [
-              "roe",
-              "net_profit",
-              "operating_cashflow",
-              "debt_ratio",
-              "gross_margin",
-              "operating_margin",
-              "eps",
-            ],
-            financialMetricCodes: [
-              "ROE",
-              "NetProfit",
-              "OperatingCashflow",
-              "DebtRatio",
-              "GrossMargin",
-              "OperatingMargin",
-              "EPS",
-            ],
-            resolvedFinancialMetrics: expect.arrayContaining([
-              expect.objectContaining({
-                role: "net_profit",
-                metricCode: "NetProfit",
-                family: "data",
-              }),
-            ]),
-            catalogDiscoveredAt: "2026-08-24T00:00:00.000Z",
-            catalogSnapshotId: expect.stringMatching(
-              /^mopsfin-catalog-[a-f0-9]{64}$/,
-            ),
-          },
-        });
-        expect(structured.workBudget).toMatchObject({
-          deepCompanyLimit: 10,
-          reactionCompanyLimit: 5,
-        });
-        expect(structured.candidates.length).toBeLessThanOrEqual(1);
-      }
-      if (
-        name ===
-        "screen_taiwan_stock_candidates_with_catalyst_snapshots"
-      ) {
-        const structured = result.structuredContent as {
-          meta: { quality: { issues: Array<{ code: string }> } };
-          posture: string;
-          screen: { candidates: Array<{ companyCode: string }> };
-          catalystSnapshots: {
-            stageStatus: string;
-            queriedCompanyCodes: string[];
-            workBudget: { snapshotCallCount: 0 | 1 };
-          };
-          compositionIntegrity: {
-            screenResultPreserved: boolean;
-            catalystEvidenceAffectsScreenRanking: boolean;
-          };
-        };
-        expect(structured).toMatchObject({
-          posture: "research_triage_evidence_only",
-          compositionIntegrity: {
-            screenResultPreserved: true,
-            catalystEvidenceAffectsScreenRanking: false,
-          },
-        });
-        expect(
-          structured.meta.quality.issues.map((issue) => issue.code),
-        ).toContain("CATALYST_EVIDENCE_DOES_NOT_AFFECT_SCREEN");
-        expect(structured.screen.candidates.length).toBeLessThanOrEqual(1);
-        expect(structured.catalystSnapshots.workBudget.snapshotCallCount).toBe(
-          structured.screen.candidates.length === 0 ? 0 : 1,
-        );
-      }
       if (name === "get_monthly_revenue_trend") {
         const structured = result.structuredContent as {
           startMonth: string;
@@ -4722,111 +4363,6 @@ describe("MCP protocol integration", () => {
           "公司平均數",
           "銀行業資本適足性",
         ]);
-      }
-      if (name === "screen_taiwan_financial_candidates") {
-        const structured = result.structuredContent as {
-          screenDefinition: {
-            id: string;
-            preset: string;
-            crossModelScoreComparable: boolean;
-          };
-          funnel: {
-            excludedNonFinancial: number;
-            returned: number;
-          };
-          excluded: Array<{ companyCode: string; reasonCodes: string[] }>;
-        };
-        expect(structured.screenDefinition).toMatchObject({
-          id: "taiwan_financial_screen.v1",
-          preset: "balanced_financial_v1",
-          crossModelScoreComparable: false,
-        });
-        expect(structured.funnel).toMatchObject({
-          excludedNonFinancial: 1,
-          returned: 0,
-        });
-        expect(structured.excluded).toContainEqual(
-          expect.objectContaining({
-            companyCode: "2330",
-            reasonCodes: ["non_financial_company_not_supported"],
-          }),
-        );
-      }
-      if (name === "screen_taiwan_market_candidates") {
-        const structured = result.structuredContent as {
-          screenDefinition: {
-            id: string;
-            crossModelScoreComparable: boolean;
-            mergePolicy: {
-              compareRawOverallScoreAcrossModels: boolean;
-              refillUnusedQuotaAcrossSegments: boolean;
-            };
-          };
-          composition: {
-            requested: { nonFinancial: number; financial: number };
-            returned: { nonFinancial: number; financial: number };
-            unfilled: { financial: number };
-          };
-          segments: { nonFinancial: object; financial: object };
-        };
-        expect(structured.screenDefinition).toMatchObject({
-          id: "taiwan_market_screen.v1",
-          crossModelScoreComparable: false,
-          mergePolicy: {
-            compareRawOverallScoreAcrossModels: false,
-            refillUnusedQuotaAcrossSegments: false,
-          },
-        });
-        expect(structured.composition).toMatchObject({
-          requested: { nonFinancial: 1, financial: 1 },
-          returned: { financial: 0 },
-          unfilled: { financial: 1 },
-        });
-        expect(structured.segments.nonFinancial).toBeDefined();
-        expect(structured.segments.financial).toBeDefined();
-      }
-      if (name === "screen_taiwan_market_universe_page") {
-        const structured = result.structuredContent as {
-          meta: { page: { mode: string; unit: string; next: unknown } };
-          executionDefinition: {
-            snapshotScope: string;
-            pageValuesPinned: boolean;
-            pointInTime: boolean;
-            globalRankAvailable: boolean;
-          };
-          manifest: { companyCount: number; snapshotId: string };
-          page: { companyCodes: string[]; hasMore: boolean };
-          coverage: { pageTerminalReconciliationComplete: boolean };
-          terminalResults: Array<{ companyCode: string; rankScope: string }>;
-        };
-        expect(structured.meta.page).toMatchObject({
-          mode: "cursor",
-          unit: "company",
-          next: null,
-        });
-        expect(structured.executionDefinition).toMatchObject({
-          snapshotScope: "manifest_company_identity_only",
-          pageValuesPinned: false,
-          pointInTime: false,
-          globalRankAvailable: false,
-        });
-        expect(structured.manifest).toMatchObject({
-          companyCount: 2,
-          snapshotId: expect.stringMatching(/^market-universe-/),
-        });
-        expect(structured.page).toMatchObject({
-          companyCodes: ["2330", "3105"],
-          hasMore: false,
-        });
-        expect(structured.coverage.pageTerminalReconciliationComplete).toBe(
-          true,
-        );
-        expect(structured.terminalResults).toHaveLength(2);
-        expect(
-          structured.terminalResults.every(
-            (terminal) => terminal.rankScope === "page_segment_only",
-          ),
-        ).toBe(true);
       }
     }
 

@@ -9,17 +9,12 @@ import { catalogTools } from "./tools/catalog";
 import { catalystTools } from "./tools/catalyst";
 import { companiesTools } from "./tools/companies";
 import type { ToolDefinition } from "./tools/definition";
-import { financialScreeningTools } from "./tools/financial-screening";
 import { financialsTools } from "./tools/financials";
-import { fullScreeningTools } from "./tools/full-screening";
 import { marketTools } from "./tools/market";
-import { marketScreeningTools } from "./tools/market-screening";
 import { observedPriceTools } from "./tools/observed-price";
 import { priceSeriesTools } from "./tools/price-series";
 import { revenueTools } from "./tools/revenue";
-import { researchTools } from "./tools/research";
 import { reverseDcfTools } from "./tools/reverse-dcf";
-import { screeningTools } from "./tools/screening";
 import { valuationModelTools } from "./tools/valuation-model";
 
 const definitions = [
@@ -28,16 +23,11 @@ const definitions = [
   ...priceSeriesTools,
   ...observedPriceTools,
   ...catalystTools,
-  ...screeningTools,
-  ...researchTools,
   ...valuationModelTools,
   ...reverseDcfTools,
   ...revenueTools,
   ...catalogTools,
   ...financialsTools,
-  ...financialScreeningTools,
-  ...marketScreeningTools,
-  ...fullScreeningTools,
 ] as const;
 
 function buildCanonicalRegistry(): readonly ToolDefinition[] {

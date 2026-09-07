@@ -690,7 +690,7 @@ export const stockReactionSignalsOutputSchema = z
               .describe("最長 requested horizon 的 price-index-compatible 價格路徑代理"),
             comparability: z
               .object({
-                status: z.enum(["price_index_compatible", "not_comparable", "unavailable"]).describe("公司層 adjustment 可比性；只有 price_index_compatible 可用於 excess return 與 screening，證據不足為 not_comparable／unavailable"),
+                status: z.enum(["price_index_compatible", "not_comparable", "unavailable"]).describe("公司層 adjustment 可比性；只有 price_index_compatible 可用於 excess return，證據不足為 not_comparable／unavailable"),
                 rawPriceBasis: z.literal("raw_unadjusted").describe("保留供稽核的原始個股價格口徑"),
                 returnBasis: z.literal("price_index_compatible_corporate_action_adjusted").describe("以 official actual-result factor 移除股數變動機械斷點的報酬口徑；保留現金股利價格效果且非 total return"),
                 corporateActionAdjustment: z.enum(["applied", "not_required", "incomplete"]).describe("視窗內 adjustment 已套用、官方完整證明不需要，或證據不完整"),

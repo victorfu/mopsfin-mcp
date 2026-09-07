@@ -109,18 +109,6 @@ const TOOL_DESCRIPTION_REQUIREMENTS = {
     "pointInTimeHistoryAvailable",
     "不是分析師 consensus",
   ],
-  screen_taiwan_stock_candidates: [
-    "balanced_non_financial_v2",
-    "hard gates",
-    "CATALOG_CONTRACT_MISMATCH",
-    "不是投資建議",
-  ],
-  screen_taiwan_stock_candidates_with_catalyst_snapshots: [
-    "ordered screen.candidates",
-    "affectsScreenScore=false",
-    "不是第五柱",
-    "沒有 candidates 時不呼叫",
-  ],
   get_daily_market_valuation: [
     "exact-date",
     "strict_current_master",
@@ -179,31 +167,13 @@ const TOOL_DESCRIPTION_REQUIREMENTS = {
     "不是市值加權",
     "NO_DATA",
   ],
-  screen_taiwan_financial_candidates: [
-    "balanced_financial_v1",
-    "exact-code",
-    "cross-model",
-    "不是投資建議",
-  ],
-  screen_taiwan_market_candidates: [
-    "balanced_market_v1",
-    "crossModelScoreComparable=false",
-    "不自動補額",
-    "不是投資建議",
-  ],
-  screen_taiwan_market_universe_page: [
-    "full_universe_cursor_v1",
-    "STATELESS_PAGE_VALUES_NOT_PINNED",
-    "SNAPSHOT_CHANGED",
-    "不是投資建議",
-  ],
 } as const satisfies Record<McpToolName, readonly string[]>;
 
 describe("canonical MCP tool registry", () => {
   it("matches the ordered dependency-free public manifest one-to-one", () => {
     const names = TOOL_REGISTRY.map((definition) => definition.name);
 
-    expect(TOOL_COUNT).toBe(26);
+    expect(TOOL_COUNT).toBe(21);
     expect(names).toEqual(PUBLIC_TOOL_NAMES);
     expect(new Set(names).size).toBe(TOOL_COUNT);
   });

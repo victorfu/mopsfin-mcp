@@ -19,8 +19,6 @@ export const PUBLIC_TOOL_NAMES = [
   "get_stock_reaction_signals",
   "get_company_catalyst_events",
   "get_company_catalyst_snapshots",
-  "screen_taiwan_stock_candidates",
-  "screen_taiwan_stock_candidates_with_catalyst_snapshots",
   "get_daily_market_valuation",
   "get_valuation_model_inputs",
   "run_reverse_dcf",
@@ -34,9 +32,6 @@ export const PUBLIC_TOOL_NAMES = [
   "get_financial_note",
   "get_industry_data",
   "get_financial_institution_metric",
-  "screen_taiwan_financial_candidates",
-  "screen_taiwan_market_candidates",
-  "screen_taiwan_market_universe_page",
 ] as const;
 
 export type McpToolName = (typeof PUBLIC_TOOL_NAMES)[number];
@@ -118,8 +113,8 @@ export function publicToolContractPayload(
  * title, description, inputSchema, outputSchema, and annotations.
  */
 export const PUBLIC_TOOL_CONTRACT_SHA256 =
-  "d5639ba9fb1bdcbe02453c2d88136880c55b9a1380dfba398b955dfa1dd5e3e6" as const;
+  "3a71c182aaca9b36fc12158ea2e90ce39e47b5c64ec54d055f5ddc0687e0cfff" as const;
 
 /** Exact UTF-8 SHA-256 of the MCP initialize instructions string. */
 export const PUBLIC_SERVER_INSTRUCTIONS_SHA256 =
-  "951cadaee6a87aaa146d5c1d590342374812c2da3e4f02de6fbe4bab6fb37873" as const;
+  "41e551599e3a155ff2488b7aa9a98946e369e271cac3984f459231e6c1b8710f" as const;
