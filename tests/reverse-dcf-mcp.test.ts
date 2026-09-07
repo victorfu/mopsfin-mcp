@@ -1,3 +1,7 @@
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { McpServer } from "@modelcontextprotocol/server";
+import { runReverseDcfTool } from "@/lib/mcp/tools/reverse-dcf";
+import { reverseDcfMcpClient } from "@/lib/reverse-dcf/mcp-client";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AuthoritativeCompletedCloseResult } from "@/lib/completed-close/types";
@@ -712,6 +716,46 @@ function missingDescriptionsInCompositions(
 }
 
 describe("ReverseDcfMcpClient", () => {
+  it.each([
+    [revenueQuery(), 8],
+    [fcffQuery(), 6],
+    [marginQuery(), 24],
+  ] as const)("accepts decimal rates through MCP (case %#) without weakening output validation", async (baseQuery, solvedValue) => {
+    const query: ReverseDcfPublicQuery = {
+      ...baseQuery,
+      wacc_percent: 7.2,
+      terminal_growth_percent: 2.3,
+      sensitivity_grids: { wacc_percent: [7.2, 8.1], terminal_growth_percent: [1.1, 2.3] },
+    };
+    expect(reverseDcfInputSchema.safeParse(query).success).toBe(true);
+    const { client } = clientWith(valuationInputs(calibratedClose(query, solvedValue)));
+    const spy = vi.spyOn(reverseDcfMcpClient, "runReverseDcfWithContext")
+      .mockImplementation((input) => client.runReverseDcfWithContext(input));
+    const server = new McpServer({ name: "decimal-rates", version: "1" }, { capabilities: { tools: {} } });
+    runReverseDcfTool.register(server);
+    const mcp = new Client({ name: "decimal-rates-test", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await mcp.connect(clientTransport);
+      const response = await mcp.callTool({ name: "run_reverse_dcf", arguments: { ...query } });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      const result = reverseDcfOutputSchema.parse(response.structuredContent);
+      expect(result.model.solution.converged).toBe(true);
+      expect(result.model.terminal.waccPercent).toBe(query.wacc_percent);
+      expect(result.model.terminal.terminalGrowthPercent).toBe(query.terminal_growth_percent);
+      expect(result.model.sensitivities.map(({ waccPercent, terminalGrowthPercent }) => [waccPercent, terminalGrowthPercent])).toEqual([[7.2, 1.1], [7.2, 2.3], [8.1, 1.1], [8.1, 2.3]]);
+      for (const field of ["waccPercent", "terminalGrowthPercent"] as const) {
+        const tampered = structuredClone(result);
+        tampered.model.terminal[field] += 0.01;
+        expect(reverseDcfOutputSchema.safeParse(tampered).success).toBe(false);
+      }
+    } finally {
+      spy.mockRestore();
+      await Promise.allSettled([mcp.close(), server.close()]);
+    }
+  });
+
   it("uses the same 2026-08-28 exact close 2420 context without resolving or fetching another price", async () => {
     const inputs = valuationInputs(2_420);
     const closeSource = inputs.sources.find(

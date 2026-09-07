@@ -883,12 +883,13 @@ function forecastAt(
 function terminalAt(
   input: ReverseDcfInput,
   forecast: ReverseDcfForecastPeriod[],
-  wacc: number,
-  terminalGrowth: number,
+  rates: RateOverrides,
 ): Omit<
   ReverseDcfTerminalValue,
   "presentValueTerminalPercentOfEnterpriseValue"
 > {
+  const wacc = rates.waccPercent / 100;
+  const terminalGrowth = rates.terminalGrowthPercent / 100;
   const finalPeriod = forecast.at(-1);
   if (!finalPeriod) {
     fail("NUMERICAL_FAILURE", "Forecast must contain at least one period.");
@@ -960,8 +961,8 @@ function terminalAt(
     terminalCashTaxesTwd,
     terminalReinvestmentTwd,
     terminalFcffTwd,
-    waccPercent: wacc * 100,
-    terminalGrowthPercent: terminalGrowth * 100,
+    waccPercent: rates.waccPercent,
+    terminalGrowthPercent: rates.terminalGrowthPercent,
     undiscountedTerminalValueTwd,
     discountPeriodYears: input.forecastYears,
     presentValueFactor: factor,
@@ -983,13 +984,11 @@ function evaluateValidated(
   }
   validateRates(rates.waccPercent, rates.terminalGrowthPercent);
   const wacc = rates.waccPercent / 100;
-  const terminalGrowth = rates.terminalGrowthPercent / 100;
   const forecast = forecastAt(input, solvedDriverPercent, wacc);
   const terminalWithoutShare = terminalAt(
     input,
     forecast,
-    wacc,
-    terminalGrowth,
+    rates,
   );
   const explicitForecastTwd = assertFiniteCalculation(
     forecast.reduce((sum, period) => sum + period.presentValueFcffTwd, 0),
