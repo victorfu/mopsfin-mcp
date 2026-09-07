@@ -528,6 +528,61 @@ describe("CatalystClient selected-company history", () => {
   });
 });
 
+describe("historical catalyst content fingerprints", () => {
+  const query = { companyCodes: ["2330"], startDate: "2025-10-01", endDate: "2025-10-31", limit: 1 };
+
+  function historicalClient(material = materialHistory, conference = conferenceHistory, retrievedAt = now().toISOString()) {
+    return new CatalystClient(currentFetch() as typeof fetch, now, {
+      maxAttempts: 1,
+      htmlLoader: htmlLoader(async (_name, url, fields) => ({
+        body: url.includes("t100sb02_1") ? fields.TYPEK === "sii" ? conference : conferenceEmpty : material,
+        contentType: "text/html",
+        retrievedAt,
+      })),
+    });
+  }
+
+  it.each([
+    ["conference location", "線上法說會", "新地點", "conference"],
+    ["conference IR URL", 'href="https://investor.tsmc.com/chinese/quarterly-results/2025/q3">公司網站', 'href="https://investor.tsmc.com/corrected-ir">公司網站', "conference"],
+    ["conference video URL", 'href="https://investor.tsmc.com/chinese/quarterly-results/2025/q3">影音', 'href="https://investor.tsmc.com/corrected-video">影音', "conference"],
+    ["conference note", "無。", "新增注意事項。", "conference"],
+    ["material title", "公告本公司114年第三季法人說明會資訊", "公告本公司法說會資訊（更新）", "material"],
+  ])("changes the full-result fingerprint for %s without changing stable event IDs", async (_label, from, to, target) => {
+    const original = historicalClient();
+    let material = materialHistory;
+    let conference = conferenceHistory;
+    if (target === "material") material = material.replace(from, to);
+    else conference = conference.replace(from, to);
+    const changed = historicalClient(material, conference);
+    const before = await original.getCompanyCatalystEvents({ ...query, limit: 100 });
+    const after = await changed.getCompanyCatalystEvents({ ...query, limit: 100 });
+    expect(after.events).not.toEqual(before.events);
+    expect(after.events.map((event) => event.eventId)).toEqual(before.events.map((event) => event.eventId));
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+    expect(after.sources.map((source) => source.snapshotIdentity)).not.toEqual(before.sources.map((source) => source.snapshotIdentity));
+    // The material event is on page two; changing it must also invalidate page one's fingerprint.
+    const firstPage = await changed.getCompanyCatalystEvents(query);
+    const secondPage = await changed.getCompanyCatalystEvents({ ...query, offset: 1 });
+    expect(firstPage.fingerprint).toBe(after.fingerprint);
+    expect(secondPage.fingerprint).toBe(after.fingerprint);
+    expect(firstPage.fingerprint).not.toBe(before.fingerprint);
+  });
+
+  it("ignores acquisition time, HTML row order and offset in historical fingerprints", async () => {
+    const row = /<tr class="even">[\s\S]*?<\/tr>/.exec(materialHistory)?.[0];
+    if (!row) throw new Error("missing material fixture row");
+    const other = row.replace("16:08:07", "16:09:07").replace("160807", "160907").replace("value='1'", "value='2'");
+    const firstHtml = materialHistory.replace(row, row + other);
+    const secondHtml = materialHistory.replace(row, other + row);
+    const first = await historicalClient(firstHtml).getCompanyCatalystEvents({ ...query, limit: 100 });
+    const second = await historicalClient(secondHtml, conferenceHistory, "2026-08-28T00:00:00.000Z").getCompanyCatalystEvents({ ...query, offset: 1 });
+    expect(first.counts.totalEvents).toBe(3);
+    expect(second.fingerprint).toBe(first.fingerprint);
+    expect(second.sources.map((source) => source.snapshotIdentity)).toEqual(first.sources.map((source) => source.snapshotIdentity));
+  });
+});
+
 describe("OfficialHtmlPostLoader", () => {
   it("single-flights and caches normalized POST fields for five minutes", async () => {
     let clockMs = Date.parse("2026-08-26T00:00:00.000Z");

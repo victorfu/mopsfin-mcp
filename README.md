@@ -80,6 +80,8 @@ LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions �
 
 `publishedAt`、`factDate`、`scheduledAt` 與 `effectiveAt` 分開保留，官方未提供的日期不會互相代填。`dateConfidence=confirmed` 只表示時間直接來自官方證據，不代表事件為正面、負面或市場尚未反應。事件作為人工查核證據，不產生情緒、impact score、目標價或買賣建議。
 
+事件 ID 保留既有識別規則；來源 snapshot 與結果 fingerprint 另涵蓋全部正規化事件內容，包括標題、地點、連結與備註，並排除資料取得時間及分頁位置。未出現在本頁的事件更正也會改變 fingerprint。此修正會更新既有 fingerprint，進行中的 offset 查詢應從第一頁重新取得。
+
 事件使用 stateless offset 分頁：每頁會重新查詢並組裝官方來源，不是 pinned point-in-time snapshot。續頁必須沿用完全相同的公司、日期與 event types，並在 `fingerprint` 或 `meta.asOf.snapshotId` 改變時由 `offset=0` 重查。
 
 ### `get_company_catalyst_snapshots` 當期官方快照證據

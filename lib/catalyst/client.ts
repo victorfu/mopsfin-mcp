@@ -1138,7 +1138,7 @@ function parseMaterialHistory(
       queryMonth: monthRange.month,
       startDay: monthRange.startDay,
       endDay: monthRange.endDay,
-      records: unique.events.map((event) => event.sourceRecordKey),
+      records: unique.events,
     }),
   };
 }
@@ -1341,7 +1341,7 @@ function parseConferenceHistory(
       companyCode,
       market,
       queryMonth: monthRange.month,
-      records: unique.events.map((event) => event.sourceRecordKey),
+      records: unique.events,
     }),
   };
 }
@@ -1646,7 +1646,8 @@ export class CatalystClient {
         endDate: query.endDate,
         eventTypes: validated.eventTypes,
       },
-      events: allEvents.map((event) => event.eventId),
+      // Stable event IDs identify records; content also binds corrected versions.
+      events: allEvents,
       sources: sources.map((source) => source.snapshotIdentity),
       currentCoverage: current.coverage.map((item) => item.snapshotIdentity),
       failures: failures.map((failure) => failure.failureId),

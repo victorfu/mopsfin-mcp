@@ -584,7 +584,7 @@ export const companyCatalystEventsOutputSchema = z
     sources: z.array(catalystSourceSchema).describe("本次成功且通過 identity 核對的官方事件來源"),
     fingerprint: z
       .string()
-      .describe("完整分頁前事件、來源與 failure coverage 的 deterministic fingerprint；續頁不同表示來源已變動"),
+      .describe("完整分頁前事件內容、來源與 failure coverage 的 deterministic fingerprint；包含標題與 eventDetails，不包含 retrievedAt 或 offset；續頁不同須重新開始"),
     ...warningShape,
   })
   .strict();
