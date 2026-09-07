@@ -528,6 +528,41 @@ describe("CatalystClient selected-company history", () => {
   });
 });
 
+describe("catalyst company failure attribution", () => {
+  it.each([false, true])("keeps shared source failures local to each company (mixed history failure=%s)", async (failHistory) => {
+    const loader = htmlLoader(async (_name, _url, fields) => {
+      if (failHistory && fields.co_id === "2330") {
+        throw new MopsfinError("UPSTREAM_TIMEOUT", "historical fixture failure");
+      }
+      return { body: materialEmpty, contentType: "text/html", retrievedAt: now().toISOString() };
+    });
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).includes("openapi.twse.com.tw")) {
+        throw new TypeError("listed current fixture failure");
+      }
+      return jsonResponse(currentTpex);
+    });
+    const result = await new CatalystClient(fetchMock, now, { maxAttempts: 1, htmlLoader: loader }).getCompanyCatalystEvents({
+      companyCodes: ["2330", "1101", "3105"],
+      companyMarkets: [{ companyCode: "2330", market: "listed" }, { companyCode: "1101", market: "listed" }, { companyCode: "3105", market: "otc" }],
+      eventTypes: ["material_information"], startDate: "2026-08-26", endDate: "2026-08-27",
+    });
+    expect(result.failures).toHaveLength(failHistory ? 3 : 2);
+    const byCompany = new Map(result.companies.map((company) => [company.companyCode, company]));
+    expect(byCompany.get("1101")).toMatchObject({ status: "partial", failures: [expect.objectContaining({ companyCode: "1101" })] });
+    expect(byCompany.get("2330")?.status).toBe(failHistory ? "failed" : "partial");
+    expect(byCompany.get("2330")?.failures).toHaveLength(failHistory ? 2 : 1);
+    expect(byCompany.get("3105")).toMatchObject({ status: "complete", failures: [] });
+    for (const company of result.companies) {
+      expect(company.failures).toEqual(result.failures.filter((failure) => failure.companyCode === company.companyCode));
+    }
+    const shared = result.coverage.currentSnapshots.find((source) => source.market === "listed");
+    expect(shared?.affectedCompanyCodes).toEqual(["1101", "2330"]);
+    expect(shared?.failures).toHaveLength(2);
+    expect(result.counts).toMatchObject({ completeCompanies: 1, partialCompanies: failHistory ? 1 : 2, failedCompanies: failHistory ? 1 : 0 });
+  });
+});
+
 describe("historical catalyst content fingerprints", () => {
   const query = { companyCodes: ["2330"], startDate: "2025-10-01", endDate: "2025-10-31", limit: 1 };
 

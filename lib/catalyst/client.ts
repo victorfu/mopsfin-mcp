@@ -2076,7 +2076,8 @@ export class CatalystClient {
           .flatMap((row) => row.failures),
         ...currentCoverage
           .filter((row) => row.affectedCompanyCodes.includes(companyCode))
-          .flatMap((row) => row.failures),
+          .flatMap((row) => row.failures)
+          .filter((failure) => failure.companyCode === companyCode),
       ].sort((left, right) => left.failureId.localeCompare(right.failureId));
       const status: CatalystCompanyResult["status"] = statuses.every(
         (value) => value === "complete",
