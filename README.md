@@ -206,6 +206,8 @@ WACC 與 terminal growth 接受合法小數百分比；結果保留 caller 原�
 
 月營收趨勢必須指定 1–100 個四碼公司代號、3–24 個月視窗，固定使用 `compatible` 並保留 caller 公司順序。逐月 point 保留該月官方 `name`、`market` 與缺列；rolling 3／6 個月 YoY 是期間當月營收合計相對去年同月營收合計，YoY acceleration 是最新官方 YoY 減三個月前官方 YoY。所有必要值須為 reported 且去年同期合計須大於 0，否則衍生值為 null 並附 status；相鄰有資料月份若觀察到名稱或市場轉換，`comparability=needs_review` 且七個 derived 值全為 null，避免未經核對地串接改名、轉板或代號重用。工具不產生主觀的「基本面改善」分數。
 
+`get_industry_data` 的 `statistics` 模式保留產業分類軸於 `periods` 與 `series[].points[].period`；資料季度取自已核對的 `query.period`，並一致呈現在 `meta.asOf.resolved`、來源截止期與 freshness `observedAsOf`。`trend` 模式的 periods 才是跨期季度時間軸。
+
 ### 財務趨勢與批次指標
 
 一般財務趨勢預設回最近 12 季，可用 `start_period`、`end_period` 或 `history: "all"`。大型 HTML 表格使用 `offset`、`limit` 分頁，預設 100 列、上限 500 列。期別格式為 `YYYYQn`。

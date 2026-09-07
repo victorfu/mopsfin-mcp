@@ -808,9 +808,25 @@ export const industryDataOutputSchema = z
       .strict()
       .describe("實際執行的產業查詢條件"),
     ...trendShape,
+    periods: z.array(z.string()).describe("statistics 為產業分類軸，對應 points[].period；trend 才是 YYYYQn 時間軸，資料截止期請讀 meta.asOf"),
     ...warningShape,
   })
-  .strict();
+  .strict()
+  .superRefine((result, context) => {
+    if (result.query.mode !== "statistics") return;
+    if (result.query.period === undefined) {
+      context.addIssue({ code: "custom", path: ["query", "period"], message: "statistics 必須提供上游已核對的季度" });
+      return;
+    }
+    const resolved = result.meta.asOf.resolved;
+    if (
+      resolved.granularity !== "quarter" ||
+      resolved.from !== result.query.period ||
+      resolved.through !== result.query.period
+    ) {
+      context.addIssue({ code: "custom", path: ["meta", "asOf", "resolved"], message: "statistics 的季度 metadata 必須等於 query.period，不能使用產業分類軸" });
+    }
+  });
 
 export const financialInstitutionOutputSchema = z
   .object({

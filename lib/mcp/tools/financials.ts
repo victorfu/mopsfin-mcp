@@ -342,7 +342,7 @@ export const getIndustryDataTool = defineTool(
     {
       title: "查詢產業統計與趨勢",
       description:
-        "查詢 Mopsfin 產業統計或產業趨勢，measure 可選營業收入或稅後純益。statistics 是指定季度的產業累計金額，使用 period；trend 用來比較一個以上產業的時間序列，使用 history/start_period/end_period，且至少指定一個即時 catalog 的 industry_codes。產業分類與成分可能調整，不能把產業平均當成單一公司的表現；回答時應明確標示統計／趨勢模式、單位、期別及回傳 warnings。",
+        "查詢 Mopsfin 產業統計或產業趨勢，measure 可選營業收入或稅後純益。statistics 是指定季度的產業累計金額，使用 period；其 periods 與 points[].period 是產業分類，meta.asOf 與 freshness 則使用已核對的 query.period 季度；trend 用來比較一個以上產業的時間序列，使用 history/start_period/end_period，且至少指定一個即時 catalog 的 industry_codes。產業分類與成分可能調整，不能把產業平均當成單一公司的表現；回答時應明確標示統計／趨勢模式、單位、期別及回傳 warnings。",
       inputSchema: industryDataInputSchema,
       outputSchema: industryDataOutputSchema,
       annotations,
@@ -359,8 +359,17 @@ export const getIndustryDataTool = defineTool(
             endPeriod: input.end_period,
           },
         });
+        const resolved = input.mode === "statistics"
+          ? {
+              granularity: "quarter" as const,
+              from: data.query.period ?? null,
+              through: data.query.period ?? null,
+            }
+          : resolvedQuarterRange(data.periods);
         return success(
-          `${input.mode}：${data.series.length} 組 series、${data.periods.length} 個期別。`,
+          input.mode === "statistics"
+            ? `${data.query.period} 產業統計：${data.periods.length} 個產業，單位 ${data.unit || "未標示"}。`
+            : `${input.mode}：${data.series.length} 組 series、${data.periods.length} 個期別。`,
           data,
           {
             selector:
@@ -369,7 +378,7 @@ export const getIndustryDataTool = defineTool(
                   ? "latest"
                   : "explicit"
                 : "range",
-            resolved: resolvedQuarterRange(data.periods),
+            resolved,
             values: data.series.some((series) =>
               series.points.some((point) => point.valueStatus === "invalid_upstream"),
             )
@@ -384,7 +393,7 @@ export const getIndustryDataTool = defineTool(
                   : input.start_period || input.end_period
                     ? "range"
                     : "latest",
-              observedAsOf: data.periods.at(-1) ?? null,
+              observedAsOf: resolved.through,
               latestPolicy: FRESHNESS_POLICIES.mopsfinLatestUnverified,
               sources: [data],
             }),

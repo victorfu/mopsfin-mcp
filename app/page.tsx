@@ -34,7 +34,7 @@ const toolSummaries = {
   get_company_metrics_batch: "批次取得多家公司 × 多項基本面指標，各取自己的最近 12 個有效期別",
   get_financial_statement: "取得資產負債、損益與現金流量表",
   get_financial_note: "取得財報附註與重要明細",
-  get_industry_data: "查詢產業統計與產業趨勢",
+  get_industry_data: "查詢指定季度產業統計或跨期產業趨勢",
   get_financial_institution_metric: "查詢金融業資產品質與資本適足性",
 } satisfies Record<McpToolName, string>;
 
