@@ -261,6 +261,7 @@ function mergeMetricResults(
   metric: MetricDefinition,
   outcomes: MetricJobOutcome[],
   companyCodes: string[],
+  explicitRange: boolean,
 ): {
   periods: string[];
   byCompany: Map<string, CompanyMetricsBatchMetric>;
@@ -300,7 +301,13 @@ function mergeMetricResults(
     const outcome = outcomeByCompany.get(companyCode.toLowerCase());
     const unavailable = outcome?.failure ?? null;
     const series = seriesByCode.get(companyCode.toLowerCase());
-    const companyPeriods = periodsByCompany.get(companyCode) ?? periods;
+    const companyPeriods = explicitRange
+      ? periodsByCompany.get(companyCode) ?? periods
+      : (series?.points ?? [])
+          .filter((point) => point.valueStatus === "reported")
+          .map((point) => point.period)
+          .sort()
+          .slice(-12);
     const pointByPeriod = new Map(series?.points.map((point) => [point.period, point]));
     const points = companyPeriods.map(
       (period): TrendPoint =>
@@ -467,7 +474,9 @@ export class CompanyMetricsBatchClient {
             includeIndustryAverage: false,
             includeCompanyAverage: false,
             range: {
-              history: "recent_12",
+              // The upstream response already contains the full series. Keep it
+              // until each company's own reported periods have been selected.
+              history: query.startPeriod ? "recent_12" : "all",
               startPeriod: query.startPeriod,
               endPeriod: query.endPeriod,
             },
@@ -539,6 +548,7 @@ export class CompanyMetricsBatchClient {
         metric,
         outcomesByMetric.get(metric.code) ?? [],
         resolvedCompanyCodes,
+        query.startPeriod !== undefined,
       ),
     );
     const companies = resolvedCompanyCodes.map((companyCode) => {
@@ -723,6 +733,11 @@ export class CompanyMetricsBatchClient {
       workBudget,
       sources,
       warnings: [
+        ...new Set(outcomes.flatMap((outcome) =>
+          (outcome.result?.warnings ?? []).map((warning) =>
+            `${outcome.metricCode} [${outcome.companyCodes.join("、")}]：${warning}`,
+          ),
+        )),
         "批次工具不包含產業平均或所選公司平均；完成 identity 的每家公司都保留全部 requested metrics，unavailable 不會被改寫成 no_data 或 0。",
         `本頁 comparison work units=${workBudget.comparisonExecutedUnits}/24（planned=${comparisonPlanUnits}、isolation=${isolationRetryUnits}）；identity logical lookup 上限=${companyCodes.length}（cache hit 可減少，HTTP retry 另計）。`,
         ...(identityFailures.length > 0

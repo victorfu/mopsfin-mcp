@@ -31,7 +31,7 @@ const toolSummaries = {
   list_companies: "列出目前上市／上櫃公司母體，並揭露 heuristic coverage",
   list_catalog: "查看可用指標、報表、附註與期別",
   get_company_metric: "查詢公司財務趨勢、比率與年增率",
-  get_company_metrics_batch: "批次取得多家公司 × 多項基本面指標",
+  get_company_metrics_batch: "批次取得多家公司 × 多項基本面指標，各取自己的最近 12 個有效期別",
   get_financial_statement: "取得資產負債、損益與現金流量表",
   get_financial_note: "取得財報附註與重要明細",
   get_industry_data: "查詢產業統計與產業趨勢",

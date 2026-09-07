@@ -625,7 +625,7 @@ export const companyMetricsBatchOutputSchema = z
                   .describe(
                     "available=至少一個 reported 值；no_data=查詢成功但沒有 reported 值；unavailable=identity/upstream failure，不能當成 0 或 no_data",
                   ),
-                periods: z.array(periodSchema).describe("此公司指標的正規化期別"),
+                periods: z.array(periodSchema).describe("此公司指標的正規化期別；未指定起訖時只取該公司最近 12 個 reported 有效期別"),
                 points: z.array(pointSchema).describe("逐期數值與 value status"),
                 coverage: batchMetricCoverageSchema.describe("此公司此指標的期別覆蓋"),
                 failure: batchFailureDetailSchema
