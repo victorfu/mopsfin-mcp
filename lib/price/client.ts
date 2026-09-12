@@ -95,6 +95,10 @@ const TWSE_MARKET_SUPPORTED_FROM = "2004-02-11";
 const TPEX_MARKET_SUPPORTED_FROM = "2007-04-23";
 const CURSOR_PREFIX = "ohlc1.";
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const TWSE_DAILY_NO_DATA_STATUSES = new Set([
+  "很抱歉，沒有符合條件的資料!",
+  "很抱歉，沒有符合條件的資料！",
+]);
 
 function fail(
   code: ConstructorParameters<typeof MopsfinError>[0],
@@ -102,6 +106,30 @@ function fail(
   details?: Record<string, unknown>,
 ): never {
   throw new MopsfinError(code, message, { details });
+}
+
+function invalidDailyMarketResponse(
+  market: CompanyMarket,
+  sourceUrl: string,
+  payload: unknown,
+): never {
+  const rawStatus = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).stat
+    : undefined;
+  const upstreamStatus = typeof rawStatus === "string" ? rawStatus.trim() : null;
+  const retryable = upstreamStatus !== null &&
+    /(?:系統|服務)(?:忙碌|維護)|service unavailable|temporarily unavailable/i.test(upstreamStatus);
+  throw new MopsfinError(
+    "UPSTREAM_BAD_RESPONSE",
+    `${market === "listed" ? "TWSE" : "TPEx"} 全市場行情${retryable ? "服務暫時不可用" : "回應格式或狀態異常"}。`,
+    {
+      reason: retryable ? "UPSTREAM_SERVICE_UNAVAILABLE" : "DAILY_MARKET_RESPONSE_INVALID",
+      category: "upstream",
+      retryable,
+      action: retryable ? "retry" : "none",
+      details: { market, sourceUrl, upstreamStatus },
+    },
+  );
 }
 
 function sourceSnapshotMismatch(
@@ -1596,7 +1624,8 @@ export class PriceClient {
     const closeIndex = findField(fields, ["收盤"]);
     const volume = findMeasuredField(fields, [
       { names: ["成交股數"], normalization: SHARE_NORMALIZATION },
-      { names: ["成交張數"], normalization: LOT_NORMALIZATION },
+      // Older TPEx monthly responses label the same 1,000-share unit as 仟股.
+      { names: ["成交張數", "成交仟股"], normalization: LOT_NORMALIZATION },
     ]);
     const turnover = findMeasuredField(fields, [
       { names: ["成交金額", "成交金額(元)"], normalization: TWD_NORMALIZATION },
@@ -1660,39 +1689,51 @@ export class PriceClient {
     market: CompanyMarket,
     date: "latest" | string,
   ): Promise<DailyResult> {
+    let url: URL;
     if (date === "latest") {
-      const url = new URL(
+      url = new URL(
         market === "listed" ? TWSE_LATEST_MARKET_URL : TPEX_LATEST_MARKET_URL,
       );
-      const snapshot = await this.getJson(url, this.currentTtlMs);
-      return market === "listed"
-        ? this.parseTwseLatest(snapshot, url.toString())
-        : this.parseTpexLatest(snapshot, url.toString());
-    }
-    if (market === "listed") {
-      const url = new URL(TWSE_DAILY_MARKET_URL);
+    } else if (market === "listed") {
+      url = new URL(TWSE_DAILY_MARKET_URL);
       url.search = new URLSearchParams({
         date: date.replaceAll("-", ""),
         type: "ALLBUT0999",
         response: "json",
       }).toString();
-      const snapshot = await this.getJson(
-        url,
-        date === taipeiToday(this.now()) ? this.currentTtlMs : this.historicalTtlMs,
-      );
-      return this.parseTwseDaily(snapshot, url.toString(), date);
+    } else {
+      url = new URL(TPEX_DAILY_MARKET_URL);
+      url.search = new URLSearchParams({ date: date.replaceAll("-", "/"), response: "json" }).toString();
     }
-    const url = new URL(TPEX_DAILY_MARKET_URL);
-    url.search = new URLSearchParams({ date: date.replaceAll("-", "/"), response: "json" }).toString();
     const snapshot = await this.getJson(
       url,
-      date === taipeiToday(this.now()) ? this.currentTtlMs : this.historicalTtlMs,
+      date === "latest" || date === taipeiToday(this.now())
+        ? this.currentTtlMs
+        : this.historicalTtlMs,
     );
-    return this.parseTpexDaily(snapshot, url.toString(), date);
+    try {
+      if (date === "latest") {
+        return market === "listed"
+          ? this.parseTwseLatest(snapshot, url.toString())
+          : this.parseTpexLatest(snapshot, url.toString());
+      }
+      return market === "listed"
+        ? this.parseTwseDaily(snapshot, url.toString(), date)
+        : this.parseTpexDaily(snapshot, url.toString(), date);
+    } catch (error) {
+      if (error instanceof MopsfinError && error.code === "UPSTREAM_BAD_RESPONSE") {
+        // Do not pin an invalid 200/JSON response across an explicit retry.
+        this.invalidateJson(url);
+      }
+      throw error;
+    }
   }
 
   private parseTwseLatest(snapshot: JsonSnapshot, sourceUrl: string): DailyResult {
-    if (!Array.isArray(snapshot.payload) || snapshot.payload.length === 0) {
+    if (!Array.isArray(snapshot.payload)) {
+      invalidDailyMarketResponse("listed", sourceUrl, snapshot.payload);
+    }
+    if (snapshot.payload.length === 0) {
       fail("NO_DATA", "TWSE 最新完成交易日查無行情。");
     }
     const rows = snapshot.payload.map((raw) => {
@@ -1740,7 +1781,10 @@ export class PriceClient {
   }
 
   private parseTpexLatest(snapshot: JsonSnapshot, sourceUrl: string): DailyResult {
-    if (!Array.isArray(snapshot.payload) || snapshot.payload.length === 0) {
+    if (!Array.isArray(snapshot.payload)) {
+      invalidDailyMarketResponse("otc", sourceUrl, snapshot.payload);
+    }
+    if (snapshot.payload.length === 0) {
       fail("NO_DATA", "TPEx 最新完成交易日查無行情。");
     }
     const rows = snapshot.payload.map((raw) => {
@@ -1789,11 +1833,12 @@ export class PriceClient {
     requestedDate: string,
   ): DailyResult {
     const payload = snapshot.payload as Record<string, unknown>;
-    if (String(payload?.stat ?? "") !== "OK") {
-      fail("NO_DATA", "TWSE 指定日期查無全市場行情。", {
-        requestedDate,
-        stat: payload?.stat,
-      });
+    const stat = typeof payload?.stat === "string" ? payload.stat.trim() : "";
+    if (stat !== "OK") {
+      if (TWSE_DAILY_NO_DATA_STATUSES.has(stat)) {
+        fail("NO_DATA", "TWSE 指定日期查無全市場行情。", { requestedDate, stat });
+      }
+      invalidDailyMarketResponse("listed", sourceUrl, payload);
     }
     const dataDate = parseCompactGregorianDate(payload.date);
     if (dataDate !== requestedDate) {
@@ -1843,10 +1888,7 @@ export class PriceClient {
   ): DailyResult {
     const payload = snapshot.payload as Record<string, unknown>;
     if (String(payload?.stat ?? "") !== "ok") {
-      fail("NO_DATA", "TPEx 指定日期查無全市場行情。", {
-        requestedDate,
-        stat: payload?.stat,
-      });
+      invalidDailyMarketResponse("otc", sourceUrl, payload);
     }
     const dataDate = parseCompactGregorianDate(payload.date);
     if (dataDate !== requestedDate) {

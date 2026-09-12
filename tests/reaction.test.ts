@@ -828,6 +828,94 @@ describe("ReactionClient getStockReactionSignals", () => {
     });
   });
 
+  it("rejects volume spanning a market transfer but retains the valid shorter window", async () => {
+    const companies = [company("3416", "融程電", "listed", "2026-06-24")];
+    const prices = fakePrice(companies);
+    const getOriginal = prices.getStockOhlc.getMockImplementation()!;
+    prices.getStockOhlc.mockImplementation(async (query) => {
+      const result = await getOriginal(query);
+      result.bars = result.bars.map((bar) => ({
+        ...bar,
+        market: bar.date < "2026-06-24" ? "otc" : "listed",
+      }));
+      return result;
+    });
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch, now, master(companies), prices,
+      { benchmarkClient: fakeBenchmark(), corporateActionClient: fakeCorporateActions() },
+    );
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["3416"], asOf: "2026-06-30", horizons: [5, 20],
+    });
+    const item = result.companies[0];
+    expect(item.comparability.reasons).toContain("market_transition_or_historical_market_mismatch");
+    expect(item.liquidity.averageVolume5SessionsShares).toMatchObject({
+      startDate: "2026-06-24", value: expect.any(Number), status: "available",
+    });
+    expect(item.liquidity.averageVolume20SessionsShares).toMatchObject({
+      value: null, status: "not_comparable_corporate_action",
+    });
+    expect(item.liquidity.volume5To20Ratio).toMatchObject({
+      value: null, status: "not_comparable_corporate_action",
+    });
+  });
+
+  it.each([
+    { historicalMarket: "otc" as const },
+    { observedNames: ["融程電", "舊公司"] },
+  ])("does not certify share-volume ratios when identity is unverified: %j", async (options) => {
+    const companies = [company("3416", "融程電")];
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch, now, master(companies), fakePrice(companies, options),
+      { benchmarkClient: fakeBenchmark(), corporateActionClient: fakeCorporateActions() },
+    );
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["3416"], asOf: "2026-06-30", horizons: [20],
+    });
+    const item = result.companies[0];
+    expect(item.comparability.status).toBe("not_comparable");
+    for (const signal of [
+      item.liquidity.averageVolume5SessionsShares,
+      item.liquidity.averageVolume20SessionsShares,
+      item.liquidity.volume5To20Ratio,
+    ]) {
+      expect(signal).toMatchObject({ value: null, status: "not_comparable_corporate_action" });
+    }
+  });
+
+  it("retains share-volume comparability across a cash-only dividend", async () => {
+    const companies = [company("2330", "台積電")];
+    const effectiveDate = "2026-06-29";
+    const priorClose = 100 + allSessions.indexOf("2026-06-26");
+    const client = new ReactionClient(
+      vi.fn() as typeof fetch, now, master(companies),
+      fakePrice(companies, { markerDate: effectiveDate }),
+      {
+        benchmarkClient: fakeBenchmark(),
+        corporateActionClient: fakeCorporateActions({ events: [action({
+          effectiveDate,
+          kind: "cash_dividend",
+          priorCloseTwd: priorClose,
+          referencePriceTwd: priorClose - 5,
+          cashDividendPerShareTwd: 5,
+          priceIndexAdjustmentFactor: 1,
+          shareCountChanged: false,
+          adjustmentReason: "cash_only_price_index_factor_is_one",
+          rawType: "息",
+        })] }),
+      },
+    );
+    const result = await client.getStockReactionSignals({
+      companyCodes: ["2330"], asOf: "2026-06-30", horizons: [20],
+    });
+    const item = result.companies[0];
+    expect(item.comparability.status).toBe("price_index_compatible");
+    expect(item.liquidity.volume5To20Ratio).toMatchObject({
+      value: expect.any(Number), status: "available",
+    });
+    expect(item.returns[0].priceIndexCompatibleStockReturnPercent).toBe(item.returns[0].stockReturnPercent);
+  });
+
   it("does not cross a return-anchor marker but retains it for the 20-session volume window", async () => {
     const companies = [company("2330", "台積電")];
     const endIndex = allSessions.indexOf("2026-06-30");

@@ -715,7 +715,13 @@ function volumeWindowComparable(
   });
   if (
     !adjustment.coverageComplete ||
-    adjustment.unmatchedOfficialChangeMarkers.length > 0
+    adjustment.unmatchedOfficialChangeMarkers.length > 0 ||
+    hasAdjustmentReason(adjustment, [
+      "market_transition_or_historical_market_mismatch",
+      "corporate_action_market_mismatch",
+      "company_identity_name_mismatch",
+      "corporate_action_company_code_mismatch",
+    ])
   ) {
     return false;
   }

@@ -7,8 +7,10 @@ import {
   dailyMarketOhlcOutputSchema,
   stockOhlcOutputSchema,
 } from "@/lib/mcp/schemas";
-import { buildResultMeta } from "@/lib/mcp/result-contract";
+import { buildResultMeta, structuredError } from "@/lib/mcp/result-contract";
+import { MopsfinError } from "@/lib/mopsfin/errors";
 import { PriceClient } from "@/lib/price/client";
+import { StockPriceSeriesClient } from "@/lib/price-series/client";
 
 function response(payload: unknown, status = 200) {
   return new Response(
@@ -140,6 +142,49 @@ function tpexMonth(code: string, name: string, rows: string[][], date = "2015010
 const now = () => new Date("2026-08-25T08:00:00.000Z");
 
 describe("PriceClient getStockOhlc", () => {
+  it("preserves historical TPEx thousand-share volumes through raw price series", async () => {
+    // Official tradingStock response for 6147, 2015-01-05.
+    const payload = tpexMonth("6147", "頎邦", [
+      ["104/01/05", "1,561", "90,577", "58.20", "58.50", "57.50", "58.50", "0.50", "1,001"],
+    ]);
+    payload.tables[0].fields[1] = "成交仟股";
+    const companies = master([company("6147", "頎邦", "otc", "2000-01-01")]);
+    const prices = new PriceClient(
+      vi.fn(async () => response(payload)) as typeof fetch,
+      now,
+      companies,
+    );
+    const query = {
+      companyCode: "6147",
+      startDate: "2015-01-01",
+      endDate: "2015-01-31",
+    };
+    const raw = await prices.getStockOhlc(query);
+    expect(raw.bars[0]).toMatchObject({
+      volumeShares: 1_561_000,
+      turnoverTwd: 90_577_000,
+      qualityStatus: "complete",
+      missingFields: [],
+    });
+    expect(raw.sources[0].normalization.volumeShares).toEqual({
+      sourceUnit: "lot",
+      outputUnit: "share",
+      multiplier: 1000,
+    });
+
+    const corporateActions = { getHistory: vi.fn() };
+    const series = await new StockPriceSeriesClient(
+      now, companies, prices, corporateActions,
+    ).getStockPriceSeries({
+      ...query,
+      priceBasis: "raw_unadjusted",
+      includeEventLedger: false,
+    });
+    expect(series.bars[0].volumeShares).toBe(1_561_000);
+    expect(series.dataQualityComplete).toBe(true);
+    expect(corporateActions.getHistory).not.toHaveBeenCalled();
+  });
+
   it("merges an OTC-to-listed transfer month without losing either market", async () => {
     const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
       const url = new URL(String(input));
@@ -975,6 +1020,84 @@ describe("PriceClient getDailyMarketOhlc", () => {
       },
     ],
   };
+
+  const dailyRoutes = [
+    { market: "listed", date: "latest" },
+    { market: "otc", date: "latest" },
+    { market: "listed", date: "2026-08-24" },
+    { market: "otc", date: "2026-08-24" },
+  ] as const;
+
+  it.each(dailyRoutes.flatMap((route) => [
+    { ...route, kind: "null JSON", payload: null, retryable: false },
+    { ...route, kind: "missing status", payload: {}, retryable: false },
+    { ...route, kind: "unknown status", payload: { stat: "unexpected" }, retryable: false },
+    { ...route, kind: "busy service", payload: { stat: "系統忙碌，請稍後再試" }, retryable: true },
+  ]))("classifies $market/$date $kind as upstream failure and allows a fresh retry", async ({
+    market, date, payload, retryable,
+  }) => {
+    const validPayload = date !== "latest"
+      ? structuredClone(market === "listed" ? twseDaily : tpexDaily)
+      : market === "listed"
+        ? [{
+            Date: "1150824", Code: "2330", Name: "台積電",
+            OpeningPrice: "100", HighestPrice: "101", LowestPrice: "99", ClosingPrice: "100",
+            TradeVolume: "1000", TradeValue: "100000", Transaction: "10", Change: "0",
+          }]
+        : [{
+            Date: "1150824", SecuritiesCompanyCode: "3105", CompanyName: "穩懋",
+            Open: "100", High: "101", Low: "99", Close: "100",
+            TradingShares: "1000", TransactionAmount: "100000", TransactionNumber: "10", Change: "0",
+          }];
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(async () => response(payload))
+      .mockImplementation(async () => response(validPayload));
+    const companies = master([
+      market === "listed"
+        ? company("2330", "台積電", "listed", "1994-09-05")
+        : company("3105", "穩懋", "otc", "2000-01-01"),
+    ]);
+    const client = new PriceClient(fetchMock as typeof fetch, now, companies);
+    const error: unknown = await client.getDailyMarketOhlc({ market, date })
+      .catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(MopsfinError);
+    expect(structuredError(error as MopsfinError).error).toMatchObject({
+      code: "UPSTREAM_BAD_RESPONSE",
+      category: "upstream",
+      retryable,
+      action: retryable ? "retry" : "none",
+    });
+
+    // The invalid 200/JSON body must not remain in the price cache.
+    const recovered = await client.getDailyMarketOhlc({ market, date });
+    expect(recovered.bars.length).toBeGreaterThan(0);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await client.getDailyMarketOhlc({ market, date });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(dailyRoutes)("preserves genuine no-data responses for $market/$date", async ({ market, date }) => {
+    const emptyTpex = structuredClone(tpexDaily);
+    emptyTpex.tables[0].totalCount = 0;
+    emptyTpex.tables[0].data = [];
+    const payload = date === "latest"
+      ? []
+      : market === "listed"
+        ? { stat: "很抱歉，沒有符合條件的資料!", type: "ALLBUT0999" }
+        : emptyTpex;
+    const client = new PriceClient(
+      vi.fn(async () => response(payload)) as typeof fetch, now, master([]),
+    );
+    const error: unknown = await client.getDailyMarketOhlc({ market, date })
+      .catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(MopsfinError);
+    expect(structuredError(error as MopsfinError).error).toMatchObject({
+      code: "NO_DATA",
+      category: "no_data",
+      retryable: false,
+      action: "change_query",
+    });
+  });
 
   it("returns a complete historical all-market company snapshot", async () => {
     const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
