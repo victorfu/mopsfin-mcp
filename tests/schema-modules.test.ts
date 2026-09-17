@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import * as publicSchemas from "@/lib/mcp/schemas";
+import * as researchInputs from "@/lib/mcp/schema/research-inputs";
+import * as researchOutputs from "@/lib/mcp/schema/research-outputs";
 import * as catalysts from "@/lib/mcp/schema/catalysts";
 import * as common from "@/lib/mcp/schema/common";
 import * as company from "@/lib/mcp/schema/company";
@@ -14,6 +16,12 @@ import * as valuation from "@/lib/mcp/schema/valuation";
 import * as valuationModel from "@/lib/mcp/schema/valuation-model";
 
 const publicSchemaOwners = {
+  screenCompaniesInputSchema: researchInputs.screenCompaniesInputSchema,
+  compareCompaniesInputSchema: researchInputs.compareCompaniesInputSchema,
+  stockTechnicalsInputSchema: researchInputs.stockTechnicalsInputSchema,
+  screenCompaniesOutputSchema: researchOutputs.screenCompaniesOutputSchema,
+  compareCompaniesOutputSchema: researchOutputs.compareCompaniesOutputSchema,
+  stockTechnicalsOutputSchema: researchOutputs.stockTechnicalsOutputSchema,
   sourceCacheObservationSchema: common.sourceCacheObservationSchema,
   freshnessEvaluationSchema: common.freshnessEvaluationSchema,
   resultMetaSchema: common.resultMetaSchema,

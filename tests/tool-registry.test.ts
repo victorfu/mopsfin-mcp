@@ -72,6 +72,9 @@ function descriptionGaps(
 }
 
 const TOOL_DESCRIPTION_REQUIREMENTS = {
+  screen_companies: ["undetermined", "cursor", "rankIncomplete", "point-in-time"],
+  compare_companies: ["12 個已完成曆季", "no_common_period", "definitionId", "financialFailures"],
+  get_stock_technicals: ["251 closes", "sqrt(252)", "不回退 raw", "18 個"],
   find_companies: ["company_codes", "不要臆測", "不含 TDR"],
   get_stock_ohlc: ["raw_unadjusted", "coverageComplete=false", "unverified_empty"],
   get_stock_price_series: [
@@ -173,7 +176,7 @@ describe("canonical MCP tool registry", () => {
   it("matches the ordered dependency-free public manifest one-to-one", () => {
     const names = TOOL_REGISTRY.map((definition) => definition.name);
 
-    expect(TOOL_COUNT).toBe(21);
+    expect(TOOL_COUNT).toBe(24);
     expect(names).toEqual(PUBLIC_TOOL_NAMES);
     expect(new Set(names).size).toBe(TOOL_COUNT);
   });

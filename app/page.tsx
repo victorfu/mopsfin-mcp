@@ -9,6 +9,9 @@ import { PUBLIC_MCP_URL, SERVER_VERSION } from "@/lib/server/identity";
 const endpoint = PUBLIC_MCP_URL;
 
 const toolSummaries = {
+  screen_companies: "以官方行情、估值與月營收三態篩選台股，先排序後分頁",
+  compare_companies: "對齊季度與指標定義，比較 1–20 家公司的價量、估值與財務",
+  get_stock_technicals: "以官方交易日與公司行動證據計算日線均線、RSI、波動及突破",
   find_companies: "用代號或名稱尋找台灣公司",
   get_stock_ohlc: "查詢單一台股跨期原始日線價量",
   get_stock_price_series:

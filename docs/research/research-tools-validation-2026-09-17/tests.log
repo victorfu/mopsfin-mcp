@@ -1,0 +1,13 @@
+
+> mopsfin-mcp@0.12.0 test
+> vitest run
+
+
+ RUN  v4.1.11 /home/victor/Documents/mopsfin-mcp
+
+
+ Test Files  57 passed | 8 skipped (65)
+      Tests  651 passed | 34 skipped (685)
+   Start at  14:37:25
+   Duration  7.21s (transform 20.76s, setup 0ms, import 53.26s, tests 11.38s, environment 7ms)
+

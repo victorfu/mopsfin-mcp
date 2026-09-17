@@ -37,6 +37,7 @@ import { MOPSFIN_SERVER_INSTRUCTIONS } from "@/lib/mopsfin/guidance";
 import type { Catalog } from "@/lib/mopsfin/types";
 import { priceClient } from "@/lib/price/client";
 import { stockPriceSeriesClient } from "@/lib/price-series/client";
+import { PriceSeriesSummaryClient, priceSeriesSummaryClient } from "@/lib/research/price-summary";
 import type { StockPriceSeriesResult } from "@/lib/price-series/types";
 import { reactionClient } from "@/lib/reaction/client";
 import type { StockReactionSignalsResult } from "@/lib/reaction/types";
@@ -3060,7 +3061,8 @@ describe("MCP protocol integration", () => {
     expect(stockPriceSeriesTool?.inputSchema.properties).not.toHaveProperty(
       "cursor",
     );
-    const stockPriceSeriesOutput = stockPriceSeriesTool?.outputSchema as
+    expect(stockPriceSeriesTool?.outputSchema?.anyOf).toHaveLength(2);
+    const stockPriceSeriesOutput = (stockPriceSeriesTool?.outputSchema?.anyOf as unknown[])?.[0] as
       | {
           additionalProperties?: boolean;
           properties?: Record<
@@ -4932,4 +4934,30 @@ describe("MCP protocol integration", () => {
     await client.close();
     await server.close();
   });
+});
+
+it("keeps a nonempty adjustment ledger and adjusted endpoints through price summary MCP", async () => {
+  vi.spyOn(stockPriceSeriesClient, "getStockPriceSeries").mockResolvedValue(stockPriceSeries);
+  const domain = new PriceSeriesSummaryClient({ getHistory: vi.fn(async () => ({
+    market: "listed" as const, benchmarkCode: "TAIEX" as const, benchmarkName: "發行量加權股價指數" as const, priceBasis: "price_index" as const,
+    bars: stockPriceSeries.bars.map((bar) => ({ date: bar.date, close: 100 })), sources: [],
+  })) });
+  vi.spyOn(priceSeriesSummaryClient, "summarize").mockImplementation(domain.summarize.bind(domain));
+  const server = new McpServer({ name: "adjusted-summary-test", version: "test" });
+  const client = new Client({ name: "test", version: "test" });
+  registerMopsfinTools(server);
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(b); await client.connect(a);
+    const result = await client.callTool({ name: "get_stock_price_series", arguments: {
+      company_code: "2330", start_date: "2026-01-01", end_date: "2026-01-31",
+      price_basis: "price_index_compatible_corporate_action_adjusted", include_event_ledger: true, output_mode: "summary",
+    } });
+    expect(result.isError, JSON.stringify(result.content)).not.toBe(true);
+    const parsed = stockPriceSeriesOutputSchema.parse(result.structuredContent);
+    expect(JSON.parse(JSON.stringify(parsed))).toEqual(JSON.parse(JSON.stringify(result.structuredContent)));
+    expect(parsed).toMatchObject({ barsOmitted: true, eventLedger: stockPriceSeries.eventLedger, coverage: stockPriceSeries.coverage, sources: stockPriceSeries.sources, adjustment: stockPriceSeries.adjustment, summary: { priceBasis: stockPriceSeries.requestedPriceBasis, firstClose: stockPriceSeries.bars[0].adjusted?.close, lastClose: stockPriceSeries.bars.at(-1)?.adjusted?.close } });
+    expect(parsed).not.toHaveProperty("bars");
+    expect(parsed.eventLedger).toHaveLength(1);
+  } finally { await Promise.allSettled([client.close(), server.close()]); }
 });

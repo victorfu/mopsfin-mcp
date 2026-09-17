@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
+import { StockTechnicalsClient } from "@/lib/technicals/client";
+import { completedSessionEvidenceFixture } from "./fixtures/completed-session";
 
 import type {
   CompanyMasterResult,
@@ -239,6 +241,33 @@ const adjustedQuery = {
     "price_index_compatible_corporate_action_adjusted" as const,
   includeEventLedger: true,
 };
+
+describe("technical indicators through the actual price adjustment engine", () => {
+  it.each([
+    { name: "cash dividend retained", event: sample.cashDividendEvent, closes: [100, 98, 99, 100, 101], mean: 99.6 },
+    { name: "stock rights", event: sample.stockEvent, closes: [100, 50, 55, 60, 65], mean: 56 },
+    { name: "par-value split", event: { ...sample.stockEvent, kind: "par_value_change" as const, sourceFamily: "par_value_change" as const }, closes: [100, 50, 55, 60, 65], mean: 56 },
+    { name: "capital reduction", event: { ...sample.stockEvent, kind: "capital_reduction" as const, sourceFamily: "capital_reduction" as const, referencePriceTwd: 200, priceIndexAdjustmentFactor: 2 }, closes: [100, 200, 201, 202, 203], mean: 201.2 },
+    { name: "unavailable factor", event: { ...sample.stockEvent, priceIndexAdjustmentFactor: null, adjustmentStatus: "unavailable" as const, adjustmentReason: "missing_required_official_value" as const }, closes: [100, 50, 55, 60, 65], mean: null },
+  ])("$name preserves the requested basis without raw fallback", async ({ event, closes, mean }) => {
+    const bars = closes.map((close, index) => ({ ...sample.bars[Math.min(index, 2)], date: `2026-08-${24 + index}`, open: close, high: close, low: close, close }));
+    const raw = rawPrice(async (query) => pricePage({ query, bars }));
+    const actionHistory = history([event], completeCoverage({ requestedEnd: "2026-08-28" }));
+    actionHistory.requestedEnd = "2026-08-28";
+    const corporateActions = actions(actionHistory);
+    const technical = new StockTechnicalsClient({
+      master: { listCompanies: vi.fn().mockResolvedValue(master()) },
+      resolver: { resolve: vi.fn().mockResolvedValue(completedSessionEvidenceFixture({ expectedAsOf: "2026-08-28" })) },
+      benchmark: { getHistory: vi.fn(async () => ({ market: "listed" as const, benchmarkCode: "TAIEX" as const, benchmarkName: "發行量加權股價指數" as const, priceBasis: "price_index" as const, bars: bars.map((bar) => ({ date: bar.date, close: 100 })), sources: [] })) },
+      prices: client(raw, corporateActions), now: () => new Date("2026-08-28T07:00:00Z"),
+    });
+    const output = await technical.getStockTechnicals({ companyCode: "2330", asOf: "latest", priceBasis: adjustedQuery.priceBasis, indicators: ["sma"], smaPeriods: [5] });
+    if (mean === null) expect(output.indicators.sma_5).toMatchObject({ value: null, reason: "adjustment_unavailable" });
+    else expect(output.indicators.sma_5.value).toBeCloseTo(mean, 10);
+    expect(output.eventLedger).toHaveLength(1);
+    expect(output.workBudget.priceSeries.corporateActionHistoryCalls).toBe(1);
+  });
+});
 
 describe("StockPriceSeriesClient", () => {
   it("returns raw official bars without making an unnecessary corporate-action call", async () => {

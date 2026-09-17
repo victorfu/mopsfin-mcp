@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { marketOutputModeInputShape, marketProjectionOutputShape } from "./output-modes";
 
 import {
   calendarDateSchema,
@@ -67,6 +68,7 @@ export const dailyMarketOhlcInputSchema = z
       .describe(
         "公司母體政策；compatible 維持 latest 四碼公司 fallback，但各市場與目前 master 的 matchRatio 仍須至少 95%；strict_current_master 只允許 latest 並要求完全吻合",
       ),
+    ...marketOutputModeInputShape,
     ...optionalCompanyPageShape,
   })
   .strict()
@@ -304,7 +306,7 @@ export const stockOhlcOutputSchema = z
   })
   .strict();
 
-export const dailyMarketOhlcOutputSchema = z
+export const dailyMarketOhlcFullOutputSchema = z
   .object({
     ...successResultShape,
     query: z
@@ -792,3 +794,8 @@ export const stockReactionSignalsOutputSchema = z
       });
     }
   });
+
+export const dailyMarketOhlcOutputSchema = z.union([
+  dailyMarketOhlcFullOutputSchema,
+  z.object({ ...dailyMarketOhlcFullOutputSchema.omit({ bars: true }).shape, ...marketProjectionOutputShape }).strict(),
+]).describe("原完整回應或明確標示的欄位投影／壓縮／摘要回應");

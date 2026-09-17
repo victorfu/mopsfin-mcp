@@ -1,0 +1,984 @@
+{
+  "recordedAt": "2026-09-17T06:41:02.176747+00:00",
+  "version": "0.12.0",
+  "scope": "app/lib/scripts/tests plus root package, README and configuration; excludes docs, .next, node_modules and git metadata",
+  "treeSha256": "7894f92cbd7d02a212571858efd726a96878bfc55a121da3217de7e5470ff9a1",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "d7314b0b5dbf69bfcf957e8b67ed7258c7061eead036fe02cd184c1ba7c8877c"
+    },
+    {
+      "path": "README.md",
+      "sha256": "7baa4352b0d8e1e3c6007a3ccb24b1adc8c3100d16abfc20ba018834e9856dd9"
+    },
+    {
+      "path": "app/api/health/route.ts",
+      "sha256": "2046639d44e50a57ae18347bcad39f10d8efe4a31b7c35c846f5ee81a2e493d6"
+    },
+    {
+      "path": "app/api/mcp/route.ts",
+      "sha256": "892375224a6e66ff35cc6468f6dd5e52e319c43a2702a5deb938f4a0a3b14669"
+    },
+    {
+      "path": "app/copy-button.tsx",
+      "sha256": "a854298e6a5c2f1d67d775d83bf6aa3849242de610a3dc58d19e4def1942d5c3"
+    },
+    {
+      "path": "app/globals.css",
+      "sha256": "e9ea94a37835f3d46b512ce6d99297728d27f1713c5cd74a6d6301c321a4cd50"
+    },
+    {
+      "path": "app/layout.tsx",
+      "sha256": "970053bb7b8a24cfb2b252e035b2f42aed303b46c12bf8ee5a7eb6e87aec3af2"
+    },
+    {
+      "path": "app/page.tsx",
+      "sha256": "44e2afa9aaa6108f8db2f3a287e616c8c9c5ba4e395862e1bf539db0f53008ee"
+    },
+    {
+      "path": "eslint.config.mjs",
+      "sha256": "a233817b5e6b6cd401ca967d8e621ddd4992339f13de39486bc9fe9d85fdda35"
+    },
+    {
+      "path": "lib/catalyst/client.ts",
+      "sha256": "cb07846fb618a92bc34346ad73575be6e797d8908b9026d28f7b9644018a7e68"
+    },
+    {
+      "path": "lib/catalyst/html-loader.ts",
+      "sha256": "8b74320bc6b1ed9f00bf7827ccea4139e3d2a2b3ad258bfeb280a1c06cdf310a"
+    },
+    {
+      "path": "lib/catalyst/snapshot-client.ts",
+      "sha256": "c37580847effff4416227a52148e061c8fcadffad5e6d1f47c1024d503d12312"
+    },
+    {
+      "path": "lib/catalyst/snapshot-types.ts",
+      "sha256": "2d255b7f0ead4be3fef59a5068d7575024fc7fbc21d53468839398861783395e"
+    },
+    {
+      "path": "lib/catalyst/types.ts",
+      "sha256": "f8de8dfd5a48f66be2466a5b55e71f7f62035bff4d8aa5fb6999bc26826aefca"
+    },
+    {
+      "path": "lib/company-master/client.ts",
+      "sha256": "030b47982ab14d2b88fdc36f4fbc28a92c461a5dc937f5376dd374653a94e914"
+    },
+    {
+      "path": "lib/company-master/types.ts",
+      "sha256": "48f497b3562345b8c3f7b5e8f86add45a140d4cb950e44fe715d6f327ae16971"
+    },
+    {
+      "path": "lib/comparison/alignment.ts",
+      "sha256": "a95574630793dd3edc1098fb6d82da1f52d400b70d44a51028514fa59ec0835e"
+    },
+    {
+      "path": "lib/comparison/client.ts",
+      "sha256": "f34f0945dde91d1047391cba382a6cc0f344a331f546e6f53016fae1fd292c37"
+    },
+    {
+      "path": "lib/comparison/types.ts",
+      "sha256": "103f7ae520474a5f5bd715a89a36c247651d8c7c1a645562479d84b996c8e67e"
+    },
+    {
+      "path": "lib/completed-close/client.ts",
+      "sha256": "d8021fd4b3c433e7b38f7abc1c17743de9f5d54ce969bea2540cd92868d64c45"
+    },
+    {
+      "path": "lib/completed-close/types.ts",
+      "sha256": "1da1e1a9b05a1f5bad4d21ec976f892430c857daea9d8e8f3c8122bc7b87abe0"
+    },
+    {
+      "path": "lib/corporate-actions/adjustment-engine.ts",
+      "sha256": "2980aeed62780c29f436e6b4bd8faa57a005c1fc33fe00355844b43b07b392ce"
+    },
+    {
+      "path": "lib/corporate-actions/client.ts",
+      "sha256": "d0c5b16882bd5a19a07bb44404c11e8f28ebeaafff91cac892c003152564c0cd"
+    },
+    {
+      "path": "lib/corporate-actions/types.ts",
+      "sha256": "25d4ccbbe2ddb97267c65d83b544095ba231c0612db2161e17fd3544fe515bfc"
+    },
+    {
+      "path": "lib/freshness/completed-session-resolver.ts",
+      "sha256": "0355d104f97b1a7c4b885934189e973adb4be288133bbea920491c33585bf6d0"
+    },
+    {
+      "path": "lib/freshness/completed-session-snapshot.ts",
+      "sha256": "887119ac7fcf31b072ddc49a867f8933e5e1195152f5dcd0ea23ae9087758843"
+    },
+    {
+      "path": "lib/freshness/evaluate.ts",
+      "sha256": "7049f529ca1deef665337b16a054095a40d0507968a51aa46d7afc690cf1d70f"
+    },
+    {
+      "path": "lib/freshness/official-json-post-loader.ts",
+      "sha256": "b6c687516659621e2729a45a3f9b54e6bde670d94ff77497d4cd288d355e2a5e"
+    },
+    {
+      "path": "lib/freshness/policies.ts",
+      "sha256": "a327df1841326481c2b1e4b9887c6313ae4c2c6d1bd9f000aafb46fce1046da3"
+    },
+    {
+      "path": "lib/freshness/types.ts",
+      "sha256": "ba880cda7661a0119245344f5015e789c4fd151038e0567e4c2a0f32c07f4c86"
+    },
+    {
+      "path": "lib/market-data/client-utils.ts",
+      "sha256": "51b1908161b7098ae037f9fe4ed827778c37fcee6e13e36e368268b8bfa1e517"
+    },
+    {
+      "path": "lib/market-data/types.ts",
+      "sha256": "0a4daeedd529cd87d646046b268cb894fc354d734e73513adc26c13793208c14"
+    },
+    {
+      "path": "lib/mcp/completed-session-snapshot.ts",
+      "sha256": "529358d9c333e3916757021c782ca746893c1a93f77555a4f5b6b65ea90b0bb0"
+    },
+    {
+      "path": "lib/mcp/cursor.ts",
+      "sha256": "0295f6b5469cb88ec4d0880932b68b34a1aa0f5cf51ea86e776888471738a29d"
+    },
+    {
+      "path": "lib/mcp/observed-price-meta-contract.ts",
+      "sha256": "f9b877748b1f54aa55888a4d1b50c81f2f4faaae0197d7f19d669f6ce9eb99a2"
+    },
+    {
+      "path": "lib/mcp/register-tools.ts",
+      "sha256": "92e990cde946ded30aae5617c39714cd3b6be909969d5d67b27aadd39cb378f0"
+    },
+    {
+      "path": "lib/mcp/result-contract.ts",
+      "sha256": "80d48e7ad16d1467f6e5263951c278155eb91717b7532cd715b1f0be5f6f6fb5"
+    },
+    {
+      "path": "lib/mcp/schema/batch-presentation.ts",
+      "sha256": "eb0473bf91924c8e35475944a3df9978f6c32fd741d82f50cf1970c5cdc34487"
+    },
+    {
+      "path": "lib/mcp/schema/catalysts.ts",
+      "sha256": "e26760ff5276465fe3fbb1cecb1a5f3dc108543e3217e29462d047a41a4adcbb"
+    },
+    {
+      "path": "lib/mcp/schema/common.ts",
+      "sha256": "d39b4491df65ed90dd6f8c44c4a27822910dcf9c81278f4d3baad9da6b230304"
+    },
+    {
+      "path": "lib/mcp/schema/company.ts",
+      "sha256": "722e65b342c27acd306ff6fb6f6da3a3159320caf2b4b1c94e73e6b3fddf0f8b"
+    },
+    {
+      "path": "lib/mcp/schema/financials.ts",
+      "sha256": "3bc0793a8d779001d687b41cdcb5c8f882061459a2778b595d2e7ec5bc0ae76b"
+    },
+    {
+      "path": "lib/mcp/schema/observed-price.ts",
+      "sha256": "2b09a2f67fd46b108314e9bd7f9efcb9bc1d28266fe47a9f4f3ea5186fcd629e"
+    },
+    {
+      "path": "lib/mcp/schema/output-modes.ts",
+      "sha256": "15289d75b7c5123447a1fee413fd903b0d2e93b49dc231bf56996bade006cc2c"
+    },
+    {
+      "path": "lib/mcp/schema/price-series.ts",
+      "sha256": "019dd1de6943c0096103ae78ef3f18c1dac63a86e1a186b8999d9b94562a71b7"
+    },
+    {
+      "path": "lib/mcp/schema/price-summary.ts",
+      "sha256": "1659403d462fcc2951cfedf7694c51e04c6ce4f8c7b53815bf6b51729a8a490c"
+    },
+    {
+      "path": "lib/mcp/schema/price.ts",
+      "sha256": "25a59a491ffef47d486cae97db17a59810b09f7f453fe4c0b9639884603d02da"
+    },
+    {
+      "path": "lib/mcp/schema/research-fields.ts",
+      "sha256": "fc436682665e924f141871378cd479f64353a3e091252dc3617bc5388564d53a"
+    },
+    {
+      "path": "lib/mcp/schema/research-inputs.ts",
+      "sha256": "3201ab3319325427116ead1139f605af0528f7cb57f5a865c72c92c73486c6a3"
+    },
+    {
+      "path": "lib/mcp/schema/research-outputs.ts",
+      "sha256": "b33befa533478640036a8cd23321054c25c8b75d606ad45a4156ee5459f623ae"
+    },
+    {
+      "path": "lib/mcp/schema/research.ts",
+      "sha256": "7d46379b75ca2a441269d721f86a9f67faff2ac29d795b9f3a045fc46d857540"
+    },
+    {
+      "path": "lib/mcp/schema/revenue.ts",
+      "sha256": "cbd2a07b9cfa7795b66662474765d0a1aac589e0b0aaa8dbd0722c0f7ab4af23"
+    },
+    {
+      "path": "lib/mcp/schema/reverse-dcf.ts",
+      "sha256": "0928b4f3d9289d8d95413d5611f473209aee07c9614dd06cb21179c834c157a8"
+    },
+    {
+      "path": "lib/mcp/schema/valuation-model.ts",
+      "sha256": "d3d46034b8fffde62a05a2f9898dc6ade53100cb2e5a8fcc6bb800175403d9a5"
+    },
+    {
+      "path": "lib/mcp/schema/valuation.ts",
+      "sha256": "ce0ddd0fea2d17625aadf08f097bc092b4edd358cbeb05e2fc5ae1a3ae711493"
+    },
+    {
+      "path": "lib/mcp/schemas.ts",
+      "sha256": "b58e9f3461d17432abb12d7096141d024e9b801e67144ab6b6c55eed18369759"
+    },
+    {
+      "path": "lib/mcp/tool-manifest.ts",
+      "sha256": "3420e33d28c1c60002c6353ddaab489179cbce66fed2425dc5c89a4329782cc3"
+    },
+    {
+      "path": "lib/mcp/tool-registry.ts",
+      "sha256": "bf0eae6019b02668f0dc85a898eb058cdc90267b88b81e09f8ba88f2b841a3da"
+    },
+    {
+      "path": "lib/mcp/tools/catalog.ts",
+      "sha256": "05e16b2219e733d1e9a92aa37a3ee7e0d923852d2dbf94724357799ec819373d"
+    },
+    {
+      "path": "lib/mcp/tools/catalyst.ts",
+      "sha256": "6500eccfe9d329e42848ec078d041f64e985771d40da61f095146f827a5c3eed"
+    },
+    {
+      "path": "lib/mcp/tools/companies.ts",
+      "sha256": "45acf84b9efe0f5807b7525ecebb44bbdccfbd11f782f87fcf7a97994273e9fa"
+    },
+    {
+      "path": "lib/mcp/tools/definition.ts",
+      "sha256": "5d03e775396e72de99f8e1fa1d604e8338857bd428153e9adeddda1ec3590490"
+    },
+    {
+      "path": "lib/mcp/tools/financials.ts",
+      "sha256": "5e549d82ea3a19d973e473134e6dfdd57a8b7dc30dd16d17a7b534f6db1ca954"
+    },
+    {
+      "path": "lib/mcp/tools/market.ts",
+      "sha256": "ad2b09829be182e93558089600ba8b89b46123ad253e364cf6d776277a1530d3"
+    },
+    {
+      "path": "lib/mcp/tools/observed-price.ts",
+      "sha256": "d235b784b581ac541d17ec759518ed6d31de35ba75022b129004f6bed549aa66"
+    },
+    {
+      "path": "lib/mcp/tools/price-series.ts",
+      "sha256": "b93af99a0486f2eb5a98b2d0cbd9a37fdeb5948827fe378bf2386dbd0a03bc44"
+    },
+    {
+      "path": "lib/mcp/tools/research.ts",
+      "sha256": "36a694c99a7f601e4566d4fcfd3f438abef3ac43e7e54d44f12be09a02e97064"
+    },
+    {
+      "path": "lib/mcp/tools/result.ts",
+      "sha256": "5a84af473b525e8ff0996b762125ebfe68ac376099696645d3882c7bb6ab4e51"
+    },
+    {
+      "path": "lib/mcp/tools/revenue.ts",
+      "sha256": "09f39edc38d14715badd7fa8d4a5d480cb6baadaf89a193b8711c8e007944156"
+    },
+    {
+      "path": "lib/mcp/tools/reverse-dcf.ts",
+      "sha256": "8a1b5d31dc48ef66b8c43b74234d076b2ef1732e3fc2e4010fa3ca81b01771ea"
+    },
+    {
+      "path": "lib/mcp/tools/shared.ts",
+      "sha256": "02ae4b256210601cd7e45e950f74f5967709ab5d42cba416b698d1b203c80dcc"
+    },
+    {
+      "path": "lib/mcp/tools/valuation-model.ts",
+      "sha256": "21d061053bb3d0252eccf6ad4fccadb5a27e4a3c6bfe1b7c2b12e97fb750e0f0"
+    },
+    {
+      "path": "lib/mopsfin/batch.ts",
+      "sha256": "2f82229128e590616fe043c72c34c61f32595295dd6677c7666c29a9d159ad5e"
+    },
+    {
+      "path": "lib/mopsfin/catalog.ts",
+      "sha256": "dd86205325741858fc8cba3138292a25cffa30eba7a0ca2d0b3ce32f817ce9d8"
+    },
+    {
+      "path": "lib/mopsfin/client.ts",
+      "sha256": "3a4d18f616b8bab05abb27d49f5348a873f4a0d1f04db38cee0b3668db11a908"
+    },
+    {
+      "path": "lib/mopsfin/constants.ts",
+      "sha256": "6f4b7be00b55a4356ea510242805c5cf0109d5e07caa08281f42d63619881da8"
+    },
+    {
+      "path": "lib/mopsfin/errors.ts",
+      "sha256": "0058b6c8dd518ef7960817d370b81f1deb92e91f6310e69db8754d8e870215c5"
+    },
+    {
+      "path": "lib/mopsfin/guidance.ts",
+      "sha256": "36dcda8276e6eb1952e7cc2e1f00350c11ea3399fb93b238d7a5c4fe2a0b0a61"
+    },
+    {
+      "path": "lib/mopsfin/html.ts",
+      "sha256": "70548e2f2c9bff20d4e86e951ebfc61b8398bb0414c608619dac2234f9f467f3"
+    },
+    {
+      "path": "lib/mopsfin/http.ts",
+      "sha256": "05032d7bcaf014615e9b66c49af6f200923c6e19ef38cbb7ee1f05dc756f4ce1"
+    },
+    {
+      "path": "lib/mopsfin/normalize.ts",
+      "sha256": "a0b35a48a387dd7daeee2a822561e6126cd66935a74cd5dd4bc9e33c0ef5c887"
+    },
+    {
+      "path": "lib/mopsfin/periods.ts",
+      "sha256": "22859c50a466086c71bfd0cfb35eb9924ab62666aad858973e19334ff5764522"
+    },
+    {
+      "path": "lib/mopsfin/types.ts",
+      "sha256": "de2ef4d14daf76f27810b721a9e27d38ded1016a3fd8d5e08d8df95a80b2c516"
+    },
+    {
+      "path": "lib/observability/telemetry.ts",
+      "sha256": "804c99e88200aa963b5698bb1cc296640d342f43e8a7090c7c8261fd5b0e94f6"
+    },
+    {
+      "path": "lib/observed-price/client.ts",
+      "sha256": "97b3926321dcd08f9a88d1b246d30f6949fe04fc76668c5794cfb2b9e41cacf8"
+    },
+    {
+      "path": "lib/observed-price/index.ts",
+      "sha256": "acc3fd4e94e5ae941fd2e23973cb9d3de68d59db3e707e5ae38b0e120b426eb8"
+    },
+    {
+      "path": "lib/observed-price/types.ts",
+      "sha256": "c0366e9f414720d8a190ee05bf032e8e296b2f3619747d76ae086b70344e8d7c"
+    },
+    {
+      "path": "lib/price/client.ts",
+      "sha256": "9018bc2e7e7ca856498fb8c63057d049bc300422dea0438a0d82a428c1db85bc"
+    },
+    {
+      "path": "lib/price/raw-page-contract.ts",
+      "sha256": "31ea015954fd6c102af78f4ec4af0026df3374c6c8150df373d1b167806bd4d1"
+    },
+    {
+      "path": "lib/price/types.ts",
+      "sha256": "906124c84931b76abc8c4e00bef9e8e97244a75eaec31fd372137fa4be9a14d0"
+    },
+    {
+      "path": "lib/price-series/client.ts",
+      "sha256": "f87db9e94b850c0f4f25aab1875f95519bf59004ada43ec303ccfbf49f17f4b9"
+    },
+    {
+      "path": "lib/price-series/types.ts",
+      "sha256": "76e0bb0e089f15b2588410d8df016d3fcda84342e120a6cf51c6b262af9a060d"
+    },
+    {
+      "path": "lib/reaction/benchmark-client.ts",
+      "sha256": "ab254d2aad00990c923c8fa81cbae7c21ac8cf3133a481e3aff1a6a944fc1268"
+    },
+    {
+      "path": "lib/reaction/calculations.ts",
+      "sha256": "6cdf55ab01a490b2e2aae0ed7602da7d5585168621d52384cb1c9461a1b57832"
+    },
+    {
+      "path": "lib/reaction/client.ts",
+      "sha256": "9e228176532b8663907fd47486bc4cb73f11ea26fee78151e932a073599c2657"
+    },
+    {
+      "path": "lib/reaction/cursor.ts",
+      "sha256": "fa6784443c732eb9440095806252bce1b9e3aa725f9d4fbd6c87265fa52566b7"
+    },
+    {
+      "path": "lib/reaction/types.ts",
+      "sha256": "3bbf5f24079c65177a134a2822891b20ca48b189acbdb40dd28a6fb73f125f36"
+    },
+    {
+      "path": "lib/research/batch-projection.ts",
+      "sha256": "8ced6554a4edb98b295c2a23b76f91089760f07fc906943fff034996c1e55404"
+    },
+    {
+      "path": "lib/research/fields.ts",
+      "sha256": "6b305c15b828bacd827d1251b17d48abb42b36fdd3de0ad6a076b8ce26d0404b"
+    },
+    {
+      "path": "lib/research/financials.ts",
+      "sha256": "f474bfc697e4378be713442c536dafed7c46042820c785514e8af6643cba95eb"
+    },
+    {
+      "path": "lib/research/market-data.ts",
+      "sha256": "94d49da37e0cddb4aeb26c980f8899645484615654d16214a7b314ad3fc14f46"
+    },
+    {
+      "path": "lib/research/market-projection.ts",
+      "sha256": "f392d6307bcdac3b6b0ea37b75089243cf8666d5db373782ef7c05f127624432"
+    },
+    {
+      "path": "lib/research/price-summary.ts",
+      "sha256": "9a12b529b53ea75d4fb72c1f375eb822dc67ec69d73b03e321515aa09be2e2c4"
+    },
+    {
+      "path": "lib/research/projection.ts",
+      "sha256": "41075c03c1a77bada29fbf65a80ed14cabfced3fc20c55ccac7ec49b421d4d24"
+    },
+    {
+      "path": "lib/research/statistics.ts",
+      "sha256": "b5a7239cf4b045f290062da1b75095bd18c96134ecd739bcfa53cd512201bd3f"
+    },
+    {
+      "path": "lib/research/types.ts",
+      "sha256": "33cc4ed60f68d7da0f6fe047d25540327c5427a1ef7b05782e06a194770ef47c"
+    },
+    {
+      "path": "lib/revenue/client.ts",
+      "sha256": "6a594e678f020392c49c4ff53683544f96a81c53ce45986ce8bf759fef58eec6"
+    },
+    {
+      "path": "lib/revenue/csv.ts",
+      "sha256": "363c927d071118ed9bbe530801bf268b746645b8c484b12a65c1a256a4388d72"
+    },
+    {
+      "path": "lib/revenue/types.ts",
+      "sha256": "7c2d3771fe615a285c31140c2295eb1e53ef983ad6d36d95a2d339e134f3bd84"
+    },
+    {
+      "path": "lib/reverse-dcf/engine.ts",
+      "sha256": "d366ff73ca2bde84eeb0b523adae9696ba3775f9b858209dd03ddd09810fb163"
+    },
+    {
+      "path": "lib/reverse-dcf/errors.ts",
+      "sha256": "f0f73644bcdfb532b3760a0f6075fc2ec337d2d6fb050b7e17e919d1163c9d2d"
+    },
+    {
+      "path": "lib/reverse-dcf/index.ts",
+      "sha256": "7790d8a59372f5f2bf59f899bfba8aeabb546273e78353cde7e8c0499f661c80"
+    },
+    {
+      "path": "lib/reverse-dcf/mcp-client.ts",
+      "sha256": "94226982516b75500b0da2d85c07e7d48c7b3ee7ec9139cba03f2edd98dd8dfd"
+    },
+    {
+      "path": "lib/reverse-dcf/types.ts",
+      "sha256": "2dfe1b7739d46d37419299fc02443ffd6bd9ab56937220462fb9f2d538b24c82"
+    },
+    {
+      "path": "lib/screener/client.ts",
+      "sha256": "f34ba0bf98918115b8233eb55ce270c44fa684ace167e7622338566d489334dc"
+    },
+    {
+      "path": "lib/screener/engine.ts",
+      "sha256": "a6b58fd8c7cfd4bd5a4819ff17b771d474534d7b577189dd0de43d5007682225"
+    },
+    {
+      "path": "lib/screener/types.ts",
+      "sha256": "2fd741d26d03ddec89363ab87b71535a8874dd8adf43826902fabe9245900ffb"
+    },
+    {
+      "path": "lib/server/identity.ts",
+      "sha256": "81a6a56ecbaa2db6f83b803057dccd8ed279ae883fbbca4b7b7ad791844a4f03"
+    },
+    {
+      "path": "lib/technicals/calculations.ts",
+      "sha256": "2546165afeb647be9d59562badc83220eea788d7d62d33c23f56e4f74c54cdb3"
+    },
+    {
+      "path": "lib/technicals/client.ts",
+      "sha256": "cae1de098757cb4de3f6f744815ffd39334c8b00e8436e10343f6c2eab167b8c"
+    },
+    {
+      "path": "lib/technicals/types.ts",
+      "sha256": "1e9c8fd494aea78a7ee74fbf4d201a76455704a75f0cf84c784ce06ad66e0acf"
+    },
+    {
+      "path": "lib/upstream/cache-provenance.ts",
+      "sha256": "8871a9ac6d6e82101c652ddfa9393f0a7872cd246c01ac0a136e2f995becf813"
+    },
+    {
+      "path": "lib/upstream/reliability.ts",
+      "sha256": "8f9eece8a627526d6d77a8d1571221d356b6c034623df513fd88e183c4d6547e"
+    },
+    {
+      "path": "lib/valuation/client.ts",
+      "sha256": "440ec6c27cdd62923a33b454485dc2f0ad3361541b401506e6231b56f1e5468b"
+    },
+    {
+      "path": "lib/valuation/types.ts",
+      "sha256": "ce0ea3041a067e50ecccc1f8f26282748508522021343f9afb8a5bc4194286c7"
+    },
+    {
+      "path": "lib/valuation-model/client.ts",
+      "sha256": "9a4a1cb3a48d41200b61ed204566c1ef90aa0763a8ea4b786453f9ddecf5d5c4"
+    },
+    {
+      "path": "lib/valuation-model/statement-resolver.ts",
+      "sha256": "92982765b522bd5cf159001ffd7103aa4ba763e5b3fd76377a6c8cabb375187a"
+    },
+    {
+      "path": "lib/valuation-model/types.ts",
+      "sha256": "bafde0869b8f1f3f898c546e1d660ff366a5c7d6a3bc6cd53263a2d5f26188c3"
+    },
+    {
+      "path": "next.config.ts",
+      "sha256": "cb1292b255083ef3cf1283bc6408fda00db178a09d07a822a67ab646a7cea882"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "285d2de18cfec68dc392c134867da63ae0341321d058a8377eca9f590c097afd"
+    },
+    {
+      "path": "package.json",
+      "sha256": "d73b2943167df0f5c716b3e54bbbdfd0c70e3ea40dfebf20e5e1d4b6b0e8a7ea"
+    },
+    {
+      "path": "scripts/test-client-contract.mjs",
+      "sha256": "43527887e9d9d108e6c898d4152c28005886edc8fd40f916c32e1f3433f4521a"
+    },
+    {
+      "path": "scripts/test-client-functional.mjs",
+      "sha256": "1af065e81fb5047c21e3cca255817955f103ba5806f7902f50aa5573df1fd3e7"
+    },
+    {
+      "path": "scripts/test-client-research.mjs",
+      "sha256": "762a7956f65dea8a44549802863e16f1b6f62564b6097e206cf8ced6c0d3b8ec"
+    },
+    {
+      "path": "scripts/test-client.mjs",
+      "sha256": "90c19a66d468f397c4e5f83ddcfb9ebbf3a4bc172b0035ee82e02263c8968924"
+    },
+    {
+      "path": "tests/adjustment-engine.test.ts",
+      "sha256": "d9b01293c3b7657f399e00babc18a32530958834c013e475a9ea8c7f355a6007"
+    },
+    {
+      "path": "tests/batch-projection.test.ts",
+      "sha256": "3340e631fdddb31048e5b659014e06b253ce2d764733a8dec43e60d2e7fabf97"
+    },
+    {
+      "path": "tests/catalog.test.ts",
+      "sha256": "9d7c6d94947e36328478293e5c8c2c762bbb36d502a443c92b7b74583200be45"
+    },
+    {
+      "path": "tests/catalyst-mcp-contract.test.ts",
+      "sha256": "4943677550bc5da9d9a58845b62528925e80a405ee4ef47ab78ec6a140372eb1"
+    },
+    {
+      "path": "tests/catalyst-snapshots-mcp-contract.test.ts",
+      "sha256": "6531e81bcf0aaa0893b6d82381b4da0879b0950cfd431c7d524b780100764462"
+    },
+    {
+      "path": "tests/catalyst-snapshots.test.ts",
+      "sha256": "0293147b6b819379313315be46f25e073d9cfb64a20d9656138381c068586ecd"
+    },
+    {
+      "path": "tests/catalyst.test.ts",
+      "sha256": "6b94eb2971c1a6ace572e52e8ac72286ece1598116612fc3823931a4881ea691"
+    },
+    {
+      "path": "tests/client.test.ts",
+      "sha256": "982ad68aeb09f150140d54d096e947ad7b16caafb5c8cee07d7781fad25266b7"
+    },
+    {
+      "path": "tests/company-master.test.ts",
+      "sha256": "78fee217cc9cc8bc7ecec5779dcae29133bfb6108a2ba58fc28b172aa13f4f89"
+    },
+    {
+      "path": "tests/company-metrics-batch-history.test.ts",
+      "sha256": "8befe53b1916c3ddeb6d9717b3f5e0f423caaac11ef55a1b457c285ece7f9613"
+    },
+    {
+      "path": "tests/company-metrics-batch.test.ts",
+      "sha256": "fb47feb5963688c7b297d46a095315a36d21cb562420a8cd37da08da41511e41"
+    },
+    {
+      "path": "tests/comparison-client.test.ts",
+      "sha256": "557191d9e6aaeb972204ac1c8d6f3cc05eca2811730481110f261bc4b7feacce"
+    },
+    {
+      "path": "tests/completed-close.test.ts",
+      "sha256": "c9be0653295f99d2d2c129c30cf999c9c5104143713f974fef485d6633183682"
+    },
+    {
+      "path": "tests/completed-session-resolver.test.ts",
+      "sha256": "c4ba78e414b42ceef6d2d397e441cc1f4a5aa6f1ae03f248f5ac256def567a67"
+    },
+    {
+      "path": "tests/corporate-actions.test.ts",
+      "sha256": "2c8e686b59b5d5114708e80d3433ddb86db8324160e089ef9090d740c380393f"
+    },
+    {
+      "path": "tests/fixtures/catalog.html",
+      "sha256": "c976ea977d63a619967e43735700cc63f71082083dd6746e44ea25560d34fa6f"
+    },
+    {
+      "path": "tests/fixtures/catalyst-conference-empty.html",
+      "sha256": "56dde12de095f4a1cffe59fbe7c7d84cc779d810d903b07bb28ae922384a4358"
+    },
+    {
+      "path": "tests/fixtures/catalyst-conference-history.html",
+      "sha256": "a445889dd612272663625df325f958fc84bba385ed5f4bf93f4ef0b818291609"
+    },
+    {
+      "path": "tests/fixtures/catalyst-current-tpex.json",
+      "sha256": "d9b7a93cdf67424b8dc6797707f0b1c4f80c088b84575429633be498855239f4"
+    },
+    {
+      "path": "tests/fixtures/catalyst-current-twse.json",
+      "sha256": "1c1fe92b3f95e492284a907da8e56a420d7ef972e759f66451d246de1e49bb88"
+    },
+    {
+      "path": "tests/fixtures/catalyst-material-empty.html",
+      "sha256": "c2c488acdfb67d2392e90f23b1c00f6702ec406c78de0f56bcc518a800cf23b4"
+    },
+    {
+      "path": "tests/fixtures/catalyst-material-history.html",
+      "sha256": "7748a7ce5406c338906bff9b34f3ff790604ad1b0b4ec0f14a3ae70d702fb1b5"
+    },
+    {
+      "path": "tests/fixtures/catalyst-snapshot-tpex-forecast-achievement-empty.json",
+      "sha256": "9db88992bace1a293191cca95b5b7d32f2ef4228c496ac1ce38c6ba293c53766"
+    },
+    {
+      "path": "tests/fixtures/catalyst-snapshot-tpex-forecast-variance-stale-empty.json",
+      "sha256": "6574319a09411a6d89038956a813a2c215c8b9276691623ff3d6fb9bb5d69bf2"
+    },
+    {
+      "path": "tests/fixtures/catalyst-snapshot-tpex-meetings.json",
+      "sha256": "fadb92111877cddc778badb8f2fa88c819b0596e8fc3cab0a0526fa209de1dd4"
+    },
+    {
+      "path": "tests/fixtures/catalyst-snapshot-twse-dividends.json",
+      "sha256": "fae43cb22b0b0893d0356a46aa373f8d951b9222d806bf9557d77e14f947a3f3"
+    },
+    {
+      "path": "tests/fixtures/catalyst-snapshot-twse-forecast-achievement.json",
+      "sha256": "07d3470295d092325bd50ec949b5963700cbca2b085f922bd6c23b59a2f4fd33"
+    },
+    {
+      "path": "tests/fixtures/catalyst-snapshot-twse-forecast-variance.json",
+      "sha256": "fc51e52adf1397f15cbc9504519e83755f3f93b4cec8ce211ea4c5e5340213f2"
+    },
+    {
+      "path": "tests/fixtures/catalyst-snapshot-twse-meetings.json",
+      "sha256": "429d341f4f855e9d54c34b4f8da36e1e4b488bd5746477f74af7259b7cdf0a4d"
+    },
+    {
+      "path": "tests/fixtures/company-metric-partial.json",
+      "sha256": "d262f6f43ff13f1972c85f7475be26033762dcb2c1f60a00d9cdcec00a68d044"
+    },
+    {
+      "path": "tests/fixtures/completed-close.ts",
+      "sha256": "36d33c84d22e2e7108789f2a05a2bfafa411f650610c505586d906487e2ebc80"
+    },
+    {
+      "path": "tests/fixtures/completed-session.ts",
+      "sha256": "a9aa3d75d9386f2b65c7f31333201d52640f3c4a10c1cf943b0f2247a97d6580"
+    },
+    {
+      "path": "tests/fixtures/corporate-actions-empty.json",
+      "sha256": "133f7c175556fee56111bfe84b24ea44a0877994b68fdd2a9fa9144c46d9a995"
+    },
+    {
+      "path": "tests/fixtures/corporate-actions-tpex.json",
+      "sha256": "d10e173d33e7367882a45acbb4461d7a379f375a36b67c42a2e2744b9f68a5c7"
+    },
+    {
+      "path": "tests/fixtures/corporate-actions-twse.json",
+      "sha256": "f76c99ed24ddf565467f1da64478e7320c91697fecc52a319cabfc40c946b589"
+    },
+    {
+      "path": "tests/fixtures/industry-statistics.json",
+      "sha256": "573057b0b2b894fab60d41424bfc57248fe24988fe1e2a33c23b33f482ffa927"
+    },
+    {
+      "path": "tests/fixtures/price-series.json",
+      "sha256": "ddf2cc914022a422a0baa387262d3858d66b0d1a9f3fcf52a6e9d75739411155"
+    },
+    {
+      "path": "tests/fixtures/reaction-tpex-index.json",
+      "sha256": "5f219e44112ddd5fce9ca5586dd97502612a0fb3bd3637404283f03c331dbce5"
+    },
+    {
+      "path": "tests/fixtures/reaction-twse-index.json",
+      "sha256": "9d057a65f594b8744e89ed21f581673292efc136c2614cb6010133ace42be711"
+    },
+    {
+      "path": "tests/fixtures/report.html",
+      "sha256": "998cd786372a1bd4dac3c735c2053e25ded82efde701d7e317e5832217d92f3b"
+    },
+    {
+      "path": "tests/fixtures/research-comparison.ts",
+      "sha256": "0d0347294f091f30b2880fdb98ab2966e97eaeaf040cee5dae8882ad3406d194"
+    },
+    {
+      "path": "tests/fixtures/research-market.ts",
+      "sha256": "81dfa3907620ce1a5c7136e751c172097f4190b88a18f4886b7ed472c5dd493f"
+    },
+    {
+      "path": "tests/fixtures/research-technicals.ts",
+      "sha256": "a17267245ffcfeca9076d6c949cd5162de3c3b275387801ba6884adbaa15d9f3"
+    },
+    {
+      "path": "tests/fixtures/revenue-archive-listed-2026-07.csv",
+      "sha256": "4d038265214e798587485099c9bbcce6ac6b37b048e8ab456fd274c7711c0c57"
+    },
+    {
+      "path": "tests/fixtures/revenue-archive-otc-2026-07.csv",
+      "sha256": "c60696cbc6b29b0ebcb9a997fa61aa48997df001ab047d41cbfe483a594fda9b"
+    },
+    {
+      "path": "tests/fixtures/revenue-tpex.json",
+      "sha256": "4fe5f095a592de992bd292da424d841b818fe2cbd4a229b582fdef547f1755cc"
+    },
+    {
+      "path": "tests/fixtures/revenue-twse.json",
+      "sha256": "08a0bf18497a633393273b7996d5014f4627710f15401bbf8b26b823b9068896"
+    },
+    {
+      "path": "tests/fixtures/tpex-companies.json",
+      "sha256": "a2f782963f915a18fa6f5fd9dcda726079b771db5918a8e1f15db9fe4e3b3352"
+    },
+    {
+      "path": "tests/fixtures/trend.json",
+      "sha256": "c2ae5ee99b6b72625d3b96efe8549b55ced4c772c7430f788a591d1cc4618d8e"
+    },
+    {
+      "path": "tests/fixtures/twse-companies.json",
+      "sha256": "6462ddfb1fdcc47134c63f847ee1f080b354cadf34c7ea10dbb43189247c2d37"
+    },
+    {
+      "path": "tests/fixtures/valuation-model-inputs.json",
+      "sha256": "aaeac2ced7a947471fea323e9334f9d63a956e08fba1576bd2e789ec3a63e481"
+    },
+    {
+      "path": "tests/fixtures/valuation-tpex-daily-legacy.json",
+      "sha256": "33d9133b3364e033a845fce785299f13ca6fbbb4c9b3fd418e9592bfe0627caf"
+    },
+    {
+      "path": "tests/fixtures/valuation-tpex-daily-modern.json",
+      "sha256": "11d8df87f555ed93c4580d59f578314a2b67e26f44126e95fa7da26b57cfd2c6"
+    },
+    {
+      "path": "tests/fixtures/valuation-tpex.json",
+      "sha256": "d8de303f08b9d4be34f3b4919544eac21d2209aac665f62d82c371dc347d6412"
+    },
+    {
+      "path": "tests/fixtures/valuation-twse-daily-legacy.json",
+      "sha256": "48d709ce621c86fb28aa82512e5f6ec8d4236e3041f550fb3976ffe6586dece9"
+    },
+    {
+      "path": "tests/fixtures/valuation-twse-daily-modern.json",
+      "sha256": "3b82f9b9a7296488efbc9eef7194024aaea6cf4f80c65401d034ae3eebe273a0"
+    },
+    {
+      "path": "tests/fixtures/valuation-twse.json",
+      "sha256": "44ca24b5b84da9bc1a164afd68972d17890cc1b39b191cdaec72454a39f55b62"
+    },
+    {
+      "path": "tests/freshness.test.ts",
+      "sha256": "e0233b16df956160867242657e90949e9de561e713a5df79e79a2321db1fd56a"
+    },
+    {
+      "path": "tests/guidance.test.ts",
+      "sha256": "59e070f2377624c95153401b4475af9b3c56273a1c1e17d4e20e44679d795905"
+    },
+    {
+      "path": "tests/health.test.ts",
+      "sha256": "1cd55fe70e653bb54c24d8a0390a95ae2ea1aefcaf1cb72129544851b47f861a"
+    },
+    {
+      "path": "tests/html.test.ts",
+      "sha256": "d82dd3c1709d68548d42cccf84142508285e8efea7777012457527771089c949"
+    },
+    {
+      "path": "tests/http.test.ts",
+      "sha256": "151419dae73b4852a307c0a17547d141ab503f9c2e9e8c8f66550f99c44e1f64"
+    },
+    {
+      "path": "tests/industry-data-tool.test.ts",
+      "sha256": "3ecddaf9559b04ded046fbee94c1f753ee2566c94473ed61508a1f709e8a36d6"
+    },
+    {
+      "path": "tests/live/catalyst-snapshots.live.test.ts",
+      "sha256": "75d787760d8b3d26d5afbc15f401944ef72761846c0e2c11a8098d0802ac6105"
+    },
+    {
+      "path": "tests/live/catalysts.live.test.ts",
+      "sha256": "70085e8ea80213632f16eaa710b8929ddf25a3c613aa2688def82d3d0b7d621b"
+    },
+    {
+      "path": "tests/live/completed-session.live.test.ts",
+      "sha256": "2518b5c3323d394229fc6280a8210556b8f44da5046d21c140bd5847aca96e1d"
+    },
+    {
+      "path": "tests/live/corporate-actions.live.test.ts",
+      "sha256": "ec22f2ba62cd25f8d7686ae3d336f21f44268e3d7cb986d2817fb8c04b301485"
+    },
+    {
+      "path": "tests/live/mopsfin.live.test.ts",
+      "sha256": "3d2a068022ea1e2d63881076ff7dde18177e0a1be7d87a71d0acc58c4902afef"
+    },
+    {
+      "path": "tests/live/observed-price.live.test.ts",
+      "sha256": "56eb2746f16a7136c5fbb0a28d30cfc3cf9bd06035aa40b4a2c816f3923991cb"
+    },
+    {
+      "path": "tests/live/price-series.live.test.ts",
+      "sha256": "c1ba048f3e7b9c81f825e7bc57fbfd99f37c9ede6238cbbe5b5edf9117584fb3"
+    },
+    {
+      "path": "tests/live/valuation-model-inputs.live.test.ts",
+      "sha256": "6f1c9fc585b68ead45c0ffbf3e8ec56b6d8117ae8bd418ee06cccce52d37d6c3"
+    },
+    {
+      "path": "tests/mcp.integration.test.ts",
+      "sha256": "cb4b5e5ae4ddc5b97d98f6c20a6dbb16d113955749b0d7ae10a16eb6752f916b"
+    },
+    {
+      "path": "tests/normalize.test.ts",
+      "sha256": "4d257462d07ed01a4583b72d3d73be1ce925fec19ad4942de71809b9cd27bde6"
+    },
+    {
+      "path": "tests/observed-price-schema.test.ts",
+      "sha256": "570604df5edfba480324887d661a358fb0a6a2df812f06fb972c5472da11358b"
+    },
+    {
+      "path": "tests/observed-price-tool.test.ts",
+      "sha256": "2d1c8f26b1cb1699b605e6c0fe126823009e9a27523e2798945cb7c6ea61787c"
+    },
+    {
+      "path": "tests/observed-price.test.ts",
+      "sha256": "aae30460c1297dbf91579f8358595cda2ba17c7890c03472f72b14674751b18a"
+    },
+    {
+      "path": "tests/official-json-loader.test.ts",
+      "sha256": "0882a05d18ded7bf2dffafa4ba8c580c000da9c05d58eab74fc669aa9891334b"
+    },
+    {
+      "path": "tests/price-series.test.ts",
+      "sha256": "8da1edea781ebf857f0df9d4161089bbe7acf9b99dff9c777764dfe553a4adc5"
+    },
+    {
+      "path": "tests/price-summary.test.ts",
+      "sha256": "a338a9fa8196639ec78a7147ba18a023fa99312d22bfe6bc46c28bd0e34e0642"
+    },
+    {
+      "path": "tests/price.test.ts",
+      "sha256": "937cf33b8d3d5e0dbe8f2f3aa8c81a1c3e96fa49b63e59b5a33c27d9d1e1e694"
+    },
+    {
+      "path": "tests/raw-price-page-contract.test.ts",
+      "sha256": "01a3afdd8f75a4a7b007ed1f67cf4499814f3e0183857e43ebd1fb74311d918a"
+    },
+    {
+      "path": "tests/reaction-cursor.test.ts",
+      "sha256": "41593d4204c3edf3078b38f3e719183b0a8ae838f29397f2cf16741a2d7b904f"
+    },
+    {
+      "path": "tests/reaction.test.ts",
+      "sha256": "b60b7c98301f7840037e7aa295023142c7f55064e07502b01c54bf197095991d"
+    },
+    {
+      "path": "tests/readme.test.ts",
+      "sha256": "d2ceac85143e5e1f47d92c3ef12ef15089544d4aa69f6b253efb89cb22b264ba"
+    },
+    {
+      "path": "tests/reliability.test.ts",
+      "sha256": "a3d7e483fc7d28a688a837f14303dfbfe70750f8e9a90487d4724f69f5cc4a58"
+    },
+    {
+      "path": "tests/research-engine.test.ts",
+      "sha256": "e6c81f7e3fb24305768512c05689f209fe8c3dba73af50c93b67fb856aafb754"
+    },
+    {
+      "path": "tests/research-mcp.test.ts",
+      "sha256": "b08374bc3fa9446a35f9ee05b57ee3a9c1e236b6500cc26564b8f0ee6f99f8a8"
+    },
+    {
+      "path": "tests/research-schema.test.ts",
+      "sha256": "2257f4e5e826f69bba3dfd1bc96a44dd57e414bcff4158f665dfe5e92c043ec5"
+    },
+    {
+      "path": "tests/result-contract.test.ts",
+      "sha256": "bcba1d1620f09c016216f9898ead8f06df337dd13dc6d1f1f3154b3c4d624f19"
+    },
+    {
+      "path": "tests/revenue-history.test.ts",
+      "sha256": "daae9fd4f07be94aaec44c3b5aef9e69bf4670682f76f9412b123a33a4dbda0a"
+    },
+    {
+      "path": "tests/revenue.test.ts",
+      "sha256": "045f75070544fa64bdfa56de9b665c35e82a4da9d9ae80dbf0ecf98dc0af3542"
+    },
+    {
+      "path": "tests/reverse-dcf-mcp.test.ts",
+      "sha256": "1040e805cb6a4b81b6d59cf0087945d9bf282476a4ee804e17d8199552eaf45b"
+    },
+    {
+      "path": "tests/reverse-dcf-tool.test.ts",
+      "sha256": "472e63cdf61670c975f0545342392284368ce257f14b31f3095a787ceb2f6677"
+    },
+    {
+      "path": "tests/reverse-dcf.test.ts",
+      "sha256": "88680c296a214bbf311351839e84ef96fc732bd0e2fbd3b43c1133dce4cb1e70"
+    },
+    {
+      "path": "tests/schema-modules.test.ts",
+      "sha256": "d06a4d72c71d7c80e59d3422eca8960048aa41cb561e04c6ff5605b02c93f544"
+    },
+    {
+      "path": "tests/screener-client.test.ts",
+      "sha256": "326806b258056f35b71f173ec7d8a5333f0c9c4f397f4d5fb1879cb23f1e9c77"
+    },
+    {
+      "path": "tests/server-identity.test.ts",
+      "sha256": "8b216efecbfb3527f4f5c206fe80355755e834aaf5f86375c75ab0ef9e2d3ec9"
+    },
+    {
+      "path": "tests/single-flight-isolation.test.ts",
+      "sha256": "8e43c8dd7a46b12a93c673fde1efbccab253bce5258c6a6f8fbecc446021fdf4"
+    },
+    {
+      "path": "tests/technicals-calculations.test.ts",
+      "sha256": "3f6b70dbc018e948e96ac38abd72ee551d1ff932154f9de89e89b86d9c667671"
+    },
+    {
+      "path": "tests/technicals-client.test.ts",
+      "sha256": "06f3e9795348aef54f53c388f81d66030fd54b86d1b3984ead0351640d72eb88"
+    },
+    {
+      "path": "tests/telemetry.test.ts",
+      "sha256": "e32a72cf6f9d607e187ee80276544f3f5f2bd46d086acaed436594b36b6c3c65"
+    },
+    {
+      "path": "tests/test-client-contract.test.mjs",
+      "sha256": "965d3b6dbf5f4cd22a69a6b9ecab9781a46d725a159018505a7af1c64ca85079"
+    },
+    {
+      "path": "tests/tool-registry.test.ts",
+      "sha256": "e8eb5cbeeec65d2ad370fa90a3b12613729a35e43570377b4e5842d97563377c"
+    },
+    {
+      "path": "tests/valuation-model-inputs.test.ts",
+      "sha256": "021b2a7f1d01122a4ac4016a54d1e01920f59400b71b00c7fb961c50c4523819"
+    },
+    {
+      "path": "tests/valuation-model-statement-resolver.test.ts",
+      "sha256": "9823047f5d0a294f12e42604a10ed51b61c123624b78ac5d5bc3c8a9a84ce558"
+    },
+    {
+      "path": "tests/valuation-model-tool-meta.test.ts",
+      "sha256": "8b095ec40518ff3b9abdfc696583c2e9a565adc5aae9740267d9c3523a499bd2"
+    },
+    {
+      "path": "tests/valuation.test.ts",
+      "sha256": "ca303b69c29d7caf5d80c71a76d2acaeaa3306e3ed127272d9bdc3f73cc6990a"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "177458c69cac92bba83480e2e8153e92232f01423f63b5fe58cec28c38ec688f"
+    },
+    {
+      "path": "vitest.config.ts",
+      "sha256": "436490f617fb0272280e2d4f6f958edb0893bea38b30c3fcb9f995967eb1e284"
+    }
+  ]
+}

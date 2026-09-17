@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { marketOutputModeInputShape, marketProjectionOutputShape } from "./output-modes";
 
 import {
   calendarDateSchema,
@@ -28,6 +29,7 @@ export const dailyMarketValuationInputSchema = z
       .describe(
         "估值公司母體政策；預設 compatible，保留合法無當日估值公司造成的 master 差異並揭露 reconciliation，但各市場 matchRatio 仍須至少 95%；strict_current_master 只允許 latest 且要求完全吻合",
       ),
+    ...marketOutputModeInputShape,
     ...optionalCompanyPageShape,
   })
   .strict()
@@ -100,7 +102,7 @@ const coreValuationValueStatusSchema = z
     "核心 PE／PB／殖利率欄位一定存在：reported=官方有效值；missing_or_not_meaningful=空白、- 或 N/A；invalid_upstream=非空但無法解析",
   );
 
-export const dailyMarketValuationOutputSchema = z
+export const dailyMarketValuationFullOutputSchema = z
   .object({
     ...successResultShape,
     query: latestMarketQueryOutputSchema
@@ -202,3 +204,8 @@ export const dailyMarketValuationOutputSchema = z
   })
   .strict();
 
+
+export const dailyMarketValuationOutputSchema = z.union([
+  dailyMarketValuationFullOutputSchema,
+  z.object({ ...dailyMarketValuationFullOutputSchema.omit({ rows: true }).shape, ...marketProjectionOutputShape }).strict(),
+]).describe("原完整回應或明確標示的欄位投影／壓縮／摘要回應");

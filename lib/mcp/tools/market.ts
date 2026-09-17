@@ -1,3 +1,4 @@
+import { marketProjectionColumns, projectMarketResponse } from "@/lib/research/market-projection";
 import { defineTool } from "./definition";
 import {
   annotations,
@@ -78,12 +79,13 @@ export const getDailyMarketOhlcTool = defineTool(
     {
       title: "查詢單日台股市場 OHLC",
       description:
-        "查詢最近完成交易日或指定 YYYY-MM-DD 的上市、上櫃或全部公司股票官方原始 OHLC、成交量（股）、成交金額（TWD）、成交筆數與漲跌價差。market=all 要求 TWSE／TPEx 資料日期一致；latest 不是盤中即時價，指定假日或未來日期不會靜默退回前一日。latest freshness 由各市場官方年度開休市日曆與 exact benchmark session、Asia/Taipei 13:33 completed-session guard 共同驗證；任一來源不可用、契約漂移或兩市場日期不一致時保守回 unknown，不猜測。company_codes 可選且最多 500 家；部分缺失以 selectionComplete=false 揭露。latest 預設 universe_policy=compatible，會保留四碼公司代號 fallback 並回傳 reconciliation，但各市場與目前 master 的 matchRatio 低於 95% 仍回 INCOMPLETE_COVERAGE；strict_current_master 僅支援 latest 且要求完全吻合。歷史日期只使用可解釋但未經目前母體驗證的代號規則。價格為 TWD、Asia/Taipei、1d、raw_unadjusted；qualityStatus、missingFields、dataQualityComplete 與單位 normalization 不可忽略。",
+        "查詢最近完成交易日或指定 YYYY-MM-DD 的上市、上櫃或全部公司股票官方原始 OHLC、成交量（股）、成交金額（TWD）、成交筆數與漲跌價差。market=all 要求 TWSE／TPEx 資料日期一致；latest 不是盤中即時價，指定假日或未來日期不會靜默退回前一日。latest freshness 由各市場官方年度開休市日曆與 exact benchmark session、Asia/Taipei 13:33 completed-session guard 共同驗證；任一來源不可用、契約漂移或兩市場日期不一致時保守回 unknown，不猜測。company_codes 可選且最多 500 家；部分缺失以 selectionComplete=false 揭露。latest 預設 universe_policy=compatible，會保留四碼公司代號 fallback 並回傳 reconciliation，但各市場與目前 master 的 matchRatio 低於 95% 仍回 INCOMPLETE_COVERAGE；strict_current_master 僅支援 latest 且要求完全吻合。歷史日期只使用可解釋但未經目前母體驗證的代號規則。價格為 TWD、Asia/Taipei、1d、raw_unadjusted；qualityStatus、missingFields、dataQualityComplete 與單位 normalization 不可忽略。 columns 限本工具 domain 與 company.code/name/market；output_mode=compact 回壓縮欄位表，summary 統計未分頁前完整 selected rowset。原始 rows/bars 以 rawRowsOmitted 明確標示，由 presentation 取代；來源、品質與 meta.page 保留。未帶新參數時維持原完整回應。",
       inputSchema: dailyMarketOhlcInputSchema,
       outputSchema: dailyMarketOhlcOutputSchema,
       annotations,
     },
-    async ({ market, date, company_codes, universe_policy, page_size, cursor }) => {
+    async ({ market, date, company_codes, universe_policy, page_size, cursor, columns, output_mode }) => {
+        if (columns) marketProjectionColumns("price", columns);
         const data = await priceClient.getDailyMarketOhlc({
           market,
           date,
@@ -145,7 +147,7 @@ export const getDailyMarketOhlcTool = defineTool(
                 observedAsOf: pageData.dataDate,
                 sources: pageData.sources,
               });
-        return success(
+        const response = success(
           `${pageData.dataDate} ${market} 市場：本頁回傳 ${pageData.counts.returned} 家公司價量資料，coverageComplete=true、universeCoverageVerified=${pageData.universeCoverageVerified}、selectionComplete=${pageData.selectionComplete}。`,
           pageData,
           {
@@ -154,6 +156,7 @@ export const getDailyMarketOhlcTool = defineTool(
             freshnessDetails,
           },
         );
+        return projectMarketResponse(response, data, "price", { columns, outputMode: output_mode });
     },
 );
 
@@ -421,12 +424,13 @@ export const getDailyMarketValuationTool = defineTool(
     {
       title: "查詢台股市場單日估值",
       description:
-        "查詢 TWSE／TPEx 官方 latest 或指定 YYYY-MM-DD 的上市、上櫃或全部公司本益比、股價淨值比、殖利率，以及來源可提供的收盤價、每股股利、股利年度與估值參考財報期。指定日採 exact-date，假日不退回前一交易日；上市自 2005-09-02、上櫃與 market=all 自 2007-01-02。latest freshness 由各市場官方年度開休市日曆與 exact benchmark session、Asia/Taipei 13:33 completed-session guard 共同驗證；任一來源不可用、契約漂移或兩市場日期不一致時保守回 unknown，不猜測。latest 預設 universe_policy=compatible 並揭露 reconciliation；strict_current_master 只允許 latest。歷史日採 historical_code_rule，不用今天 master 冒充歷史母體。company_codes 最多 500 家，省略 page_size/cursor 維持完整回傳，提供 page_size 才分頁。核心 PE／PB／殖利率 key 若從 eligible row 消失會視為上游 schema drift 並報錯；官方空白、N/A、不具意義或補強來源未提供的欄位則回 null、valueStatus 與 rawValue，不重算財報分母或股利。回答前應檢查 meta.asOf、meta.quality 與 meta.page。",
+        "查詢 TWSE／TPEx 官方 latest 或指定 YYYY-MM-DD 的上市、上櫃或全部公司本益比、股價淨值比、殖利率，以及來源可提供的收盤價、每股股利、股利年度與估值參考財報期。指定日採 exact-date，假日不退回前一交易日；上市自 2005-09-02、上櫃與 market=all 自 2007-01-02。latest freshness 由各市場官方年度開休市日曆與 exact benchmark session、Asia/Taipei 13:33 completed-session guard 共同驗證；任一來源不可用、契約漂移或兩市場日期不一致時保守回 unknown，不猜測。latest 預設 universe_policy=compatible 並揭露 reconciliation；strict_current_master 只允許 latest。歷史日採 historical_code_rule，不用今天 master 冒充歷史母體。company_codes 最多 500 家，省略 page_size/cursor 維持完整回傳，提供 page_size 才分頁。核心 PE／PB／殖利率 key 若從 eligible row 消失會視為上游 schema drift 並報錯；官方空白、N/A、不具意義或補強來源未提供的欄位則回 null、valueStatus 與 rawValue，不重算財報分母或股利。回答前應檢查 meta.asOf、meta.quality 與 meta.page。 columns 限本工具 domain 與 company.code/name/market；output_mode=compact 回壓縮欄位表，summary 統計未分頁前完整 selected rowset。原始 rows/bars 以 rawRowsOmitted 明確標示，由 presentation 取代；來源、品質與 meta.page 保留。未帶新參數時維持原完整回應。",
       inputSchema: dailyMarketValuationInputSchema,
       outputSchema: dailyMarketValuationOutputSchema,
       annotations,
     },
-    async ({ market, date, company_codes, universe_policy, page_size, cursor }) => {
+    async ({ market, date, company_codes, universe_policy, page_size, cursor, columns, output_mode }) => {
+        if (columns) marketProjectionColumns("valuation", columns);
         const data = await valuationClient.getDailyMarketValuation({
           market,
           date,
@@ -502,7 +506,7 @@ export const getDailyMarketValuationTool = defineTool(
                 observedAsOf: pageData.dataDate,
                 sources: pageData.sources,
               });
-        return success(
+        const response = success(
           `${pageData.dataDate} ${market} 市場：本頁回傳 ${pageData.counts.returned} 家公司估值，universeCoverageVerified=${pageData.universeCoverageVerified}、selectionComplete=${pageData.selectionComplete}。`,
           pageData,
           {
@@ -512,6 +516,7 @@ export const getDailyMarketValuationTool = defineTool(
             freshnessDetails,
           },
         );
+        return projectMarketResponse(response, data, "valuation", { columns, outputMode: output_mode });
     },
 );
 

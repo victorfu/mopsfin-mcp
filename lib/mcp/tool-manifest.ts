@@ -11,6 +11,9 @@ export const PUBLIC_RESULT_CONTRACT_VERSION = "mopsfin.result.v1" as const;
 export const PUBLIC_MCP_ENDPOINT = "/api/mcp" as const;
 
 export const PUBLIC_TOOL_NAMES = [
+  "screen_companies",
+  "compare_companies",
+  "get_stock_technicals",
   "find_companies",
   "get_stock_ohlc",
   "get_stock_price_series",
@@ -113,8 +116,8 @@ export function publicToolContractPayload(
  * title, description, inputSchema, outputSchema, and annotations.
  */
 export const PUBLIC_TOOL_CONTRACT_SHA256 =
-  "e2ee41eee150365a64fe60c0ea0c8e651c745d469ed21042f8ffc78f62b4f367" as const;
+  "1611bc2dc7eb479fc455733a76391d76bc309ee78bf4aae46b721b1c064955c3" as const;
 
 /** Exact UTF-8 SHA-256 of the MCP initialize instructions string. */
 export const PUBLIC_SERVER_INSTRUCTIONS_SHA256 =
-  "43a3d00fc45ee416729c453a1c6ab6aa80af5ac90dae1aa1f28458a73d832065" as const;
+  "78e1f0d4be5adf6fe1860dd9df24248c2e59825b3aa6e31424edb06ade88d81f" as const;

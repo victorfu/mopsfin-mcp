@@ -1,6 +1,6 @@
 # Mopsfin 台股 MCP Server
 
-目前版本 `0.11.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 21 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、年度開休市日曆、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。另可將 caller 自行觀察的價格與官方最近完成交易日收盤價分開標示後比較；caller 值不會被冒充成官方或即時行情。
+目前版本 `0.12.0`。這是一個公開、唯讀、無資料庫的台灣公司財務與市場資料 MCP Server，以 Next.js 16 App Router 與 MCP TypeScript SDK v2 實作，透過 Stateless Streamable HTTP `/api/mcp` 暴露 24 個工具；財務查詢直接存取[公開資訊觀測站－財務比較 E 點通](https://mopsfin.twse.com.tw/)，上市櫃公司母體、原始日線價量、可稽核的公司行動調整價格序列、歷史估值、月營收、大盤指數、公司行動實際結果、年度開休市日曆、重大訊息與法人說明會、current official catalyst snapshots 直接取自 MOPS、TWSE 與 TPEx 官方資料。另可將 caller 自行觀察的價格與官方最近完成交易日收盤價分開標示後比較；caller 值不會被冒充成官方或即時行情。
 
 這不是臺灣證券交易所或證券櫃檯買賣中心的官方 MCP Server，也不構成投資建議。
 
@@ -36,6 +36,9 @@ Next.js /api/mcp on Vercel
 
 | 工具 | 用途 |
 |---|---|
+| `screen_companies` | 以官方整批行情、估值與單月營收三態篩選；先排序後分頁，附條件 evidence |
+| `compare_companies` | 比較 1–20 家公司的價量、估值與最多 8 個季度指標；對齊期別與金融業定義 |
+| `get_stock_technicals` | 依官方交易日與公司行動證據計算 SMA、RSI、波動率、突破與量比 |
 | `find_companies` | 搜尋公司代號與名稱 |
 | `get_stock_ohlc` | 查詢單一目前或歷史公司股票的跨期原始日線 OHLC，支援時間游標與轉板合併 |
 | `get_stock_price_series` | 一次收齊單一公司最多 36 個月的 raw 或 price-index-compatible 公司行動調整日線，附可選事件 ledger 與 fail-closed 證據 |
@@ -58,9 +61,17 @@ Next.js /api/mcp on Vercel
 | `get_industry_data` | 產業統計與產業趨勢，支援營收／稅後純益 |
 | `get_financial_institution_metric` | 金融業資產品質與資本適足率，可加入產業平均及所選機構簡單平均 |
 
+研究工具的 `columns` 應先由 `list_catalog(kind="research_fields")` 查詢；此模式不呼叫上游，提供固定欄位的型別、單位、operators、sortable、cost 與 normalization。`kind="all"` 會額外載入動態 `financial.<metric_code>` 欄位。`screen_companies` 與 `compare_companies` 支援 `output_mode=full|compact|summary`，預設 compact；metadata 字典保留逐格品質及來源，summary 明示 `scope` 與 `rowsOmitted`。
+
+`screen_companies` 第一版只支援最新完成交易日，並保留每個數值自己的日期。最多 12 個 AND 條件、24 個欄位、3 個排序鍵；全市場使用 bulk 資料，不逐股發出市場請求。matched、notMatched、undetermined 加總等於 selected；missing、來源失敗與 stale 不能當作零或直接排除公司。`resultComplete` 與 `rankIncomplete` 分開，母體仍是 heuristic。來源內容更正會使舊 cursor 失效。summary 涵蓋全體匹配結果，不是只統計一頁。
+
+`compare_companies` 維持 caller 順序，不分公司頁。`common_latest` 在最近 12 個已完成曆季中，對全部 requested companies × applicable 指標取交集；沒有交集回 `no_common_period`。`company_latest` 各公司內取交集；`explicit` 須提供 `financial_period=YYYYQn` 且不回退。金融淨收益、一般營收及未知跨業別映射分開定義；summary 不合併不同定義、單位、口徑或期間。市場日期不等於財報首次公開時間，不提供歷史 point-in-time vintage。
+
+`get_stock_technicals` 第一版僅日線、單一目前上市櫃公司。預設公司行動調整並保留現金除息效果；不是 total return。SMA 支援 5/10/20/60/120/200 日；RSI14 固定最後 251 closes 的 Wilder seed；20/60 日波動率為 log returns 的樣本標準差乘 sqrt(252)。突破以前 20/60 日 high 為基準且排除今日，量比為今日 raw shares 除以前 20 日平均。停牌缺日不補值，adjusted null 不回退 raw，跨股數變動的成交量不可直接比較。最多取得 18 個 benchmark 月份，仍受整體 request deadline 限制。
+
 每個工具都有嚴格 Zod input/output schema，回傳短 `content` 摘要及完整 `structuredContent`。成功結果固定包含 `ok=true` 與 `meta`；`meta.asOf`、`meta.quality`、`meta.page` 分別揭露實際資料時間、來源／母體／selection／值品質與續頁狀態。工具 annotations 標記為唯讀、非破壞、冪等、無開放世界副作用。
 
-LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 21 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
+LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions 說明整體資料範圍與呼叫順序；`tools/list` 對 24 個工具及每個 input/output 欄位提供用途與口徑；`list_catalog` 的 `officialGuidance` 與每個 metric 的 `guidance` 則提供公式、數值基礎、適用業別與注意事項。實際查詢結果的 `warnings` 與 `meta.quality.issues` 會再帶入與本次查詢直接相關的母體／時間覆蓋、價格口徑、事件日期、snapshot freshness、申報頻率、缺值、平均數、研究代理或分頁警示。
 
 需要目前上市櫃公司代號清單時使用 `list_companies`；只知道特定公司名稱或代號時使用 `find_companies`，不要以 `find_companies` 枚舉全市場。不知道資料指標或期間時使用 `list_catalog`。`list_catalog` 的 `family` 對應如下：
 
@@ -71,6 +82,20 @@ LLM 可從三層取得解讀資料：MCP `initialize` 的 server instructions �
 | `bcode` | `get_industry_data` |
 | `xb` | `get_financial_note` |
 | `fin`, `adequacy` | `get_financial_institution_metric` |
+
+### 欄位選擇、壓縮與摘要
+
+先用 `list_catalog(kind=research_fields)` 取得固定欄位名稱、單位與可用工具；例如 `price.close`、`valuation.pe`、`revenue.yoy_pct`。
+
+| 工具 | 可選輸出 | 統計／投影範圍 |
+|---|---|---|
+| `get_daily_market_ohlc`、`get_daily_market_valuation`、`get_monthly_revenue` | `columns`；`output_mode=full/compact/summary` | full 欄位投影及 compact 為本頁；summary 為分頁前完整選取集合 |
+| `get_company_metrics_batch` | `output_mode=full/compact/summary` | compact 與 summary 均只包含本頁；沿 `meta.page.next` 續查 |
+| `get_stock_price_series` | `output_mode=full/summary` | 收齊完整 requested window 後才摘要 |
+
+舊工具省略新參數，或只設定 `output_mode=full`，維持原完整回應。指定欄位或精簡模式時，`presentation` 取代原明細，`rawRowsOmitted`／`rawCompaniesOmitted`／`barsOmitted` 明示省略；來源、日期、品質、warnings 與分頁資訊仍保留。compact 的字典編碼保留數值、缺值狀態與來源資訊；summary 只在相同期別、單位與已確認定義下合併統計，不能直接把金融淨收益與一般企業營收混合。
+
+價格 summary 回觀察首末收盤價的端點報酬、收盤價最大回撤及**未年化**每日對數報酬樣本標準差（ddof=1）。後兩項需額外取得官方 benchmark session grid，缺交易日或所選 adjusted close 不可用時回 null 與原因，絕不回退 raw。端點報酬可在中間缺日時存在，但不能据此宣稱逐日資料完整。原公司行動 ledger、coverage 與價格來源保留，額外成本與來源列在 `summaryWorkBudget`、`summarySources`；來源失敗列在 `summaryFailure`。精簡輸出不保證節省上游請求。
 
 ### `get_company_catalyst_events` 官方事件
 
@@ -248,6 +273,14 @@ npm run test:client:functional -- https://your-preview.vercel.app/api/mcp
 
 `test:client` 是不呼叫資料工具的部署契約 smoke check：遠端 MCP initialize 與 `/api/health` 的版本都必須精確等於本機 `package.json`；server name、result contract、endpoint、tool count、liveness、application readiness 及「本次未檢查上游」語意也必須吻合。遠端 `tools/list` 除了名稱與順序必須等於 canonical `PUBLIC_TOOL_NAMES`，每個工具的 title、description、inputSchema、outputSchema、annotations 也會以排序鍵 canonical JSON 計算 SHA-256；initialize instructions 則以原始 UTF-8 字串計算 SHA-256。兩份 expected hash 存在 dependency-free tool manifest，並由本機 in-memory MCP test 防止 registry、instructions 與常數不同步。
 
+新增研究工具的小樣本探針可在本機 server 啟動後執行：
+
+```bash
+npm run test:client:research -- http://localhost:3000/api/mcp docs/research/research-tools-live.json
+```
+
+它先測静態欄位目錄，再依上市、上櫃、all 的順序查 2330／6488／2881／2886，接著比較共同季財務及 2330 的 raw SMA5。總 deadline 為 300 秒，不自動重試，記錄逐次 latency、source cutoffs、品質與完整 MCP 回應。`allToolContractsPassed` 只表示工具成功回應合約；即使它為 true，partial quality 或缺資料仍不能視為完整 live 驗證，須逐項檢視 evidence。
+
 `test:client:functional` 是獨立的低成本上游功能探針，只呼叫一次 `find_companies(query=2330)`，並嚴格要求 MCP 沒有 tool error、`ok=true`、`meta.contractVersion=mopsfin.result.v1`、公司陣列欄位完整且包含 `2330`。因此 deployment contract 失敗代表部署內容漂移；functional probe 失敗則可獨立判讀為工具或 Mopsfin 上游問題。兩支 script 預設都以單一 60 秒 absolute deadline 包住 connect、requests 與 cleanup；可用 `MOPSFIN_SMOKE_TIMEOUT_MS=90000` 調整，合法範圍為 1000–300000 毫秒。
 
 MCP client 設定範例：
@@ -270,7 +303,7 @@ ChatGPT 需要可連線的公開 HTTPS `/api/mcp` URL；本機的 `localhost` �
 2. 在 ChatGPT 開啟 **Settings → Security and login → Developer mode**。
 3. 前往 ChatGPT Plugins，按加號新增連線。
 4. 輸入名稱，例如 `Mopsfin 台股`，並將 Connection URL 設為完整的 `https://<你的網域>/api/mcp`。
-5. 建立後確認 ChatGPT 能辨識 21 個工具。
+5. 建立後確認 ChatGPT 能辨識 24 個工具。
 6. 開始新對話，從工具選單加入這個 MCP connection，再直接以自然語言詢問台股。
 
 Developer mode 是否可用取決於帳號方案與 workspace policy。詳細流程見 [OpenAI 官方連接說明](https://developers.openai.com/plugins/deploy/connect-chatgpt)。

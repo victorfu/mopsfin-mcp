@@ -1,0 +1,22 @@
+
+> mopsfin-mcp@0.12.0 test:client:functional
+> node scripts/test-client-functional.mjs http://127.0.0.1:3000/api/mcp
+
+{
+  "check": "find_companies_functional",
+  "endpoint": "http://127.0.0.1:3000/api/mcp",
+  "timeoutMs": 60000,
+  "server": {
+    "name": "mopsfin-taiwan-equities",
+    "version": "0.12.0"
+  },
+  "ok": true,
+  "contractVersion": "mopsfin.result.v1",
+  "companies": [
+    {
+      "code": "2330",
+      "name": "台積電",
+      "displayName": "2330 台積電"
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { priceSummaryOutputShape } from "./price-summary";
 
 import {
   calendarDateSchema,
@@ -46,6 +47,7 @@ export const stockPriceSeriesInputSchema = z
     end_date: calendarDateSchema.describe(
       "含尾的 YYYY-MM-DD 結束日，不得早於 start_date 或晚於 Asia/Taipei 今日",
     ),
+    output_mode: z.enum(["full", "summary"]).optional().describe("省略或 full 保留完整既有 bars；summary 省略 bars，回完整收集範圍統計並額外驗證官方交易日"),
     price_basis: priceBasisSchema,
     include_event_ledger: z
       .boolean()
@@ -653,7 +655,7 @@ const officialChangeMarkerSchema = z
   .strict()
   .describe("raw OHLC 中觀察到的一筆官方價格變動 marker");
 
-export const stockPriceSeriesOutputSchema = z
+const stockPriceSeriesBaseOutputSchema = z
   .object({
     ...successResultShape,
     query: z
@@ -838,8 +840,13 @@ export const stockPriceSeriesOutputSchema = z
       .describe("fingerprint 排除 retrievedAt/cache caller state 並納入公司行動與 adjustment evidence 的固定基礎"),
     ...warningShape,
   })
-  .strict()
-  .superRefine((result, context) => {
+  .strict();
+
+type SeriesValidationResult = Omit<z.infer<typeof stockPriceSeriesBaseOutputSchema>, "bars"> & {
+  bars?: z.infer<typeof stockPriceSeriesBaseOutputSchema>["bars"];
+  summary?: { barCount: number; priceBasis: string };
+};
+function validateSeriesResult(result: SeriesValidationResult, context: z.RefinementCtx) {
     if (
       result.requestedPriceBasis !== result.query.priceBasis ||
       result.eventLedgerIncluded !== result.query.includeEventLedger
@@ -858,7 +865,7 @@ export const stockPriceSeriesOutputSchema = z
       });
     }
     if (
-      result.coverage.rawPrice.barCount !== result.bars.length ||
+      result.coverage.rawPrice.barCount !== (result.bars?.length ?? result.summary?.barCount) ||
       result.coverage.rawPrice.pageCount !== result.workBudget.rawPricePageCount
     ) {
       context.addIssue({
@@ -867,15 +874,15 @@ export const stockPriceSeriesOutputSchema = z
         message: "raw bar/page counts 必須和 bars 與 workBudget 一致",
       });
     }
-    const completeBars = result.bars.filter(
+    const completeBars = result.bars?.filter(
       (bar) => bar.adjustmentStatus === "complete",
     ).length;
-    const unknownBars = result.bars.filter(
+    const unknownBars = result.bars?.filter(
       (bar) => bar.adjustmentStatus === "unknown",
     ).length;
     if (
-      completeBars !== result.coverage.adjustment.completeBarCount ||
-      unknownBars !== result.coverage.adjustment.unknownBarCount ||
+      (result.bars !== undefined && (completeBars !== result.coverage.adjustment.completeBarCount ||
+      unknownBars !== result.coverage.adjustment.unknownBarCount)) ||
       result.coverage.adjustment.status !== result.adjustment.status
     ) {
       context.addIssue({
@@ -902,7 +909,7 @@ export const stockPriceSeriesOutputSchema = z
         result.workBudget.corporateActionHistoryCalls === 0 &&
         result.workBudget.corporateActionOfficialRequestCount === 0 &&
         result.eventLedger.length === 0 &&
-        result.bars.every((bar) => bar.adjustmentStatus === "not_requested");
+        (result.bars?.every((bar) => bar.adjustmentStatus === "not_requested") ?? true);
       if (!rawStateValid) {
         context.addIssue({
           code: "custom",
@@ -919,7 +926,7 @@ export const stockPriceSeriesOutputSchema = z
         result.adjustment.cashDividendTreatment === "retained" &&
         result.coverage.corporateActions.status !== "not_requested" &&
         result.coverage.adjustment.status !== "not_requested" &&
-        result.bars.every((bar) => bar.adjustmentStatus !== "not_requested");
+        (result.bars?.every((bar) => bar.adjustmentStatus !== "not_requested") ?? true);
       if (!adjustedStateValid) {
         context.addIssue({
           code: "custom",
@@ -928,7 +935,19 @@ export const stockPriceSeriesOutputSchema = z
         });
       }
     }
-  })
-  .describe(
-    "單一台股在完整 requested range 的 raw 或 price-index-compatible corporate-action-adjusted 日線序列成功結果",
-  );
+    if (result.summary && result.summary.priceBasis !== result.requestedPriceBasis) {
+      context.addIssue({ code: "custom", path: ["summary", "priceBasis"], message: "摘要必須使用 requested price basis" });
+    }
+}
+
+export const stockPriceSeriesFullOutputSchema = stockPriceSeriesBaseOutputSchema
+  .superRefine(validateSeriesResult)
+  .describe("單一台股完整 requested range 的 raw 或公司行動調整日線序列");
+
+export const stockPriceSeriesOutputSchema = z.union([
+  stockPriceSeriesFullOutputSchema,
+  z.object({
+    ...stockPriceSeriesBaseOutputSchema.omit({ bars: true }).shape,
+    ...priceSummaryOutputShape,
+  }).strict().superRefine(validateSeriesResult).describe("保留 coverage、ledger、sources 與 quality 的完整範圍價格摘要"),
+]).describe("完整 bars 或明確省略 bars 的價格摘要成功結果");

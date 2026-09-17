@@ -1,3 +1,4 @@
+import { compactFinancialBatch, summarizeFinancialBatch } from "@/lib/research/batch-projection";
 import { defineTool } from "./definition";
 import type { ResultMetaHints } from "./shared";
 import {
@@ -78,7 +79,7 @@ export const getCompanyMetricsBatchTool = defineTool(
     {
       title: "批次查詢多家公司多項財務指標",
       description:
-        "以單一呼叫取得 1–100 家公司、1–8 個 list_catalog family=data 指標；每個成功解析 identity 的公司頁面都保留全部 requested metrics，不按指標拆頁。預設每家公司每項指標最多回自己的最近 12 個 reported 有效期別；不同公司可跨不同年份，少於 12 期不補值，來源異常仍保留警示，也可指定最多 12 季的成對 start_period/end_period。basis 與 yoy_quarter 語意沿用 get_company_metric；本工具不提供產業平均或所選公司平均。每頁最多 20 家、comparison 與有界二分 failure isolation 合計最多 24 個上游工作單位。單一公司 identity 或 company×metric failure 會以 evaluationStatus、availability=unavailable、failure、failures 與 coverage 隔離，其他成功公司／指標仍回傳；合法 no_data 與 unavailable 明確分開，兩者都不能當成 0。failureIsolationComplete=false 或 failures[].attribution=chunk 表示共享 request 或隔離預算使錯誤不能精確歸因至單一公司。Partial success 仍保留按 requested companies 計算的 meta.page.next。無狀態 cursor 只綁 query 與 catalog 定義，各頁財務值於該頁即時取得，不是跨頁 point-in-time 快照；回答前應檢查 failures、coverage、workBudget、meta.quality 與 meta.page.next。",
+        "以單一呼叫取得 1–100 家公司、1–8 個 list_catalog family=data 指標；每個成功解析 identity 的公司頁面都保留全部 requested metrics，不按指標拆頁。預設每家公司每項指標最多回自己的最近 12 個 reported 有效期別；不同公司可跨不同年份，少於 12 期不補值，來源異常仍保留警示，也可指定最多 12 季的成對 start_period/end_period。basis 與 yoy_quarter 語意沿用 get_company_metric；本工具不提供產業平均或所選公司平均。每頁最多 20 家、comparison 與有界二分 failure isolation 合計最多 24 個上游工作單位。單一公司 identity 或 company×metric failure 會以 evaluationStatus、availability=unavailable、failure、failures 與 coverage 隔離，其他成功公司／指標仍回傳；合法 no_data 與 unavailable 明確分開，兩者都不能當成 0。failureIsolationComplete=false 或 failures[].attribution=chunk 表示共享 request 或隔離預算使錯誤不能精確歸因至單一公司。Partial success 仍保留按 requested companies 計算的 meta.page.next。無狀態 cursor 只綁 query 與 catalog 定義，各頁財務值於該頁即時取得，不是跨頁 point-in-time 快照；回答前應檢查 failures、coverage、workBudget、meta.quality 與 meta.page.next。 output_mode=compact 使用期別／metric metadata 字典，summary 僅統計 current_page，不代表全部 requested companies；保留來源、coverage、failures、工作量及 next cursor。未指定或 full 維持原完整回應，不改用 columns 作第二個指標 selector。",
       inputSchema: companyMetricsBatchInputSchema,
       outputSchema: companyMetricsBatchOutputSchema,
       annotations,
@@ -237,7 +238,7 @@ export const getCompanyMetricsBatchTool = defineTool(
               ]
             : []),
         ];
-        return success(
+        const response = success(
           `本頁處理 ${data.coverage.requestedCompanyCodes.length} 家 requested 公司、${data.metricDefinitions.length} 項財務指標；${data.companies.length} 家完成 identity、${data.coverage.unavailableCompanyCodes.length} 家含 unavailable 結果，selectionComplete=${data.coverage.selectionComplete}。`,
           data,
           {
@@ -258,6 +259,17 @@ export const getCompanyMetricsBatchTool = defineTool(
             issues: qualityIssues,
           },
         );
+        if (!input.output_mode || input.output_mode === "full") return response;
+        const { companies: _companies, ...metadata } = response.structuredContent;
+        void _companies;
+        return {
+          ...response,
+          content: [{ type: "text" as const, text: `本頁 ${data.coverage.requestedCompanyCodes.length} 家 requested 公司：${input.output_mode}，續頁仍見 meta.page.next。` }],
+          structuredContent: {
+            ...metadata, outputMode: input.output_mode, rawCompaniesOmitted: true as const,
+            presentation: input.output_mode === "compact" ? compactFinancialBatch(data) : summarizeFinancialBatch(data),
+          },
+        };
     },
 );
 

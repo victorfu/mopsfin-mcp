@@ -1,0 +1,4720 @@
+{
+  "startedAt": "2026-09-17T06:20:09.250Z",
+  "endpoint": "http://127.0.0.1:3000/api/mcp",
+  "packageVersion": "0.11.0",
+  "sampleCodes": [
+    "2330",
+    "6488",
+    "2881",
+    "2886"
+  ],
+  "scope": "purposeful small sample; not whole-market coverage or point-in-time validation",
+  "calls": [
+    {
+      "label": "static_catalog",
+      "name": "list_catalog",
+      "arguments": {
+        "kind": "research_fields"
+      },
+      "elapsedMs": 14,
+      "contractValid": true,
+      "quality": {
+        "status": "complete",
+        "source": "complete",
+        "universe": "not_applicable",
+        "selection": "complete",
+        "values": "complete",
+        "freshness": "not_applicable",
+        "freshnessDetails": [
+          {
+            "status": "not_applicable",
+            "policyId": "legacy.handler-hint.v1",
+            "observedAsOf": null,
+            "expectedAsOf": null,
+            "lag": null,
+            "reasonCode": "HISTORICAL_SELECTOR_NOT_APPLICABLE",
+            "reason": "此查詢不適用 latest freshness。",
+            "sourceUrls": []
+          }
+        ],
+        "issues": []
+      },
+      "resolved": {
+        "granularity": "none",
+        "from": null,
+        "through": null
+      },
+      "sourceCount": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "固定研究欄位目錄；財務動態欄位請使用 kind=all。"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "meta": {
+            "contractVersion": "mopsfin.result.v1",
+            "asOf": {
+              "selector": "none",
+              "resolved": {
+                "granularity": "none",
+                "from": null,
+                "through": null
+              },
+              "timezone": "Asia/Taipei",
+              "servedAt": "2026-09-17T06:20:09.313Z",
+              "assembledAt": "2026-09-17T06:20:09.313Z",
+              "snapshotId": null,
+              "sourceCutoffs": []
+            },
+            "quality": {
+              "status": "complete",
+              "source": "complete",
+              "universe": "not_applicable",
+              "selection": "complete",
+              "values": "complete",
+              "freshness": "not_applicable",
+              "freshnessDetails": [
+                {
+                  "status": "not_applicable",
+                  "policyId": "legacy.handler-hint.v1",
+                  "observedAsOf": null,
+                  "expectedAsOf": null,
+                  "lag": null,
+                  "reasonCode": "HISTORICAL_SELECTOR_NOT_APPLICABLE",
+                  "reason": "此查詢不適用 latest freshness。",
+                  "sourceUrls": []
+                }
+              ],
+              "issues": []
+            },
+            "page": {
+              "mode": "none",
+              "unit": "none",
+              "limit": null,
+              "returned": null,
+              "total": null,
+              "next": null
+            }
+          },
+          "query": {
+            "kind": "research_fields",
+            "limit": 200
+          },
+          "scope": "static_fields",
+          "researchFields": [
+            {
+              "id": "company.code",
+              "name": "公司代碼",
+              "type": "string",
+              "unit": "code",
+              "domain": "company",
+              "frequency": "snapshot",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.company.code.v1",
+              "dependencies": [
+                "company"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "eq",
+                "in"
+              ],
+              "sortable": true,
+              "cost": "master",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "company.name",
+              "name": "公司名稱",
+              "type": "string",
+              "unit": "text",
+              "domain": "company",
+              "frequency": "snapshot",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.company.name.v1",
+              "dependencies": [
+                "company"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "eq",
+                "in"
+              ],
+              "sortable": true,
+              "cost": "master",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "company.market",
+              "name": "市場",
+              "type": "string",
+              "unit": "category",
+              "domain": "company",
+              "frequency": "snapshot",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.company.market.v1",
+              "dependencies": [
+                "company"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "eq",
+                "in"
+              ],
+              "sortable": true,
+              "cost": "master",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "company.industry_code",
+              "name": "產業代碼",
+              "type": "string",
+              "unit": "code",
+              "domain": "company",
+              "frequency": "snapshot",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.company.industry_code.v1",
+              "dependencies": [
+                "company"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "eq",
+                "in"
+              ],
+              "sortable": true,
+              "cost": "master",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "company.is_financial",
+              "name": "金融業",
+              "type": "boolean",
+              "unit": "boolean",
+              "domain": "company",
+              "frequency": "snapshot",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.company.is_financial.v1",
+              "dependencies": [
+                "company"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "eq",
+                "in"
+              ],
+              "sortable": true,
+              "cost": "master",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "company.is_ky",
+              "name": "KY 公司",
+              "type": "boolean",
+              "unit": "boolean",
+              "domain": "company",
+              "frequency": "snapshot",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.company.is_ky.v1",
+              "dependencies": [
+                "company"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "eq",
+                "in"
+              ],
+              "sortable": true,
+              "cost": "master",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "price.open",
+              "name": "開盤價",
+              "type": "number",
+              "unit": "TWD",
+              "domain": "price",
+              "frequency": "daily",
+              "basis": "raw_unadjusted",
+              "definitionId": "mopsfin.price.open.v1",
+              "dependencies": [
+                "price"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "price.high",
+              "name": "最高價",
+              "type": "number",
+              "unit": "TWD",
+              "domain": "price",
+              "frequency": "daily",
+              "basis": "raw_unadjusted",
+              "definitionId": "mopsfin.price.high.v1",
+              "dependencies": [
+                "price"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "price.low",
+              "name": "最低價",
+              "type": "number",
+              "unit": "TWD",
+              "domain": "price",
+              "frequency": "daily",
+              "basis": "raw_unadjusted",
+              "definitionId": "mopsfin.price.low.v1",
+              "dependencies": [
+                "price"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "price.close",
+              "name": "收盤價",
+              "type": "number",
+              "unit": "TWD",
+              "domain": "price",
+              "frequency": "daily",
+              "basis": "raw_unadjusted",
+              "definitionId": "mopsfin.price.close.v1",
+              "dependencies": [
+                "price"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "price.volume_shares",
+              "name": "成交股數",
+              "type": "number",
+              "unit": "share",
+              "domain": "price",
+              "frequency": "daily",
+              "basis": "raw_unadjusted",
+              "definitionId": "mopsfin.price.volume_shares.v1",
+              "dependencies": [
+                "price"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "price.turnover_twd",
+              "name": "成交金額",
+              "type": "number",
+              "unit": "TWD",
+              "domain": "price",
+              "frequency": "daily",
+              "basis": "raw_unadjusted",
+              "definitionId": "mopsfin.price.turnover_twd.v1",
+              "dependencies": [
+                "price"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "valuation.pe",
+              "name": "本益比",
+              "type": "number",
+              "unit": "ratio",
+              "domain": "valuation",
+              "frequency": "daily",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.valuation.pe.v1",
+              "dependencies": [
+                "valuation"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "valuation.pb",
+              "name": "股價淨值比",
+              "type": "number",
+              "unit": "ratio",
+              "domain": "valuation",
+              "frequency": "daily",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.valuation.pb.v1",
+              "dependencies": [
+                "valuation"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "valuation.dividend_yield_pct",
+              "name": "殖利率",
+              "type": "number",
+              "unit": "%",
+              "domain": "valuation",
+              "frequency": "daily",
+              "basis": "official_snapshot",
+              "definitionId": "mopsfin.valuation.dividend_yield_pct.v1",
+              "dependencies": [
+                "valuation"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "revenue.month_amount_twd",
+              "name": "當月營收",
+              "type": "number",
+              "unit": "TWD",
+              "domain": "revenue",
+              "frequency": "monthly",
+              "basis": "monthly_filing",
+              "definitionId": "mopsfin.revenue.month_amount_twd.v1",
+              "dependencies": [
+                "revenue"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "revenue.mom_pct",
+              "name": "月營收月增率",
+              "type": "number",
+              "unit": "%",
+              "domain": "revenue",
+              "frequency": "monthly",
+              "basis": "monthly_filing",
+              "definitionId": "mopsfin.revenue.mom_pct.v1",
+              "dependencies": [
+                "revenue"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "revenue.yoy_pct",
+              "name": "月營收年增率",
+              "type": "number",
+              "unit": "%",
+              "domain": "revenue",
+              "frequency": "monthly",
+              "basis": "monthly_filing",
+              "definitionId": "mopsfin.revenue.yoy_pct.v1",
+              "dependencies": [
+                "revenue"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "revenue.cumulative_amount_twd",
+              "name": "累計營收",
+              "type": "number",
+              "unit": "TWD",
+              "domain": "revenue",
+              "frequency": "monthly",
+              "basis": "monthly_filing",
+              "definitionId": "mopsfin.revenue.cumulative_amount_twd.v1",
+              "dependencies": [
+                "revenue"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            },
+            {
+              "id": "revenue.cumulative_yoy_pct",
+              "name": "累計營收年增率",
+              "type": "number",
+              "unit": "%",
+              "domain": "revenue",
+              "frequency": "monthly",
+              "basis": "monthly_filing",
+              "definitionId": "mopsfin.revenue.cumulative_yoy_pct.v1",
+              "dependencies": [
+                "revenue"
+              ],
+              "applicability": "all",
+              "filterOperators": [
+                "gt",
+                "gte",
+                "lt",
+                "lte",
+                "between"
+              ],
+              "sortable": true,
+              "cost": "market_bulk",
+              "normalization": null,
+              "supportedTools": [
+                "screen_companies",
+                "compare_companies"
+              ]
+            }
+          ],
+          "researchFieldsVersion": "mopsfin.research.fields.v1",
+          "researchFieldsCount": 20,
+          "financialFieldsIncluded": false,
+          "warnings": [
+            "固定欄位目錄不代表本次上游資料可用性；financial.<code> 請由 kind=all 的動態目錄取得。"
+          ]
+        }
+      }
+    },
+    {
+      "label": "screen_listed",
+      "name": "screen_companies",
+      "arguments": {
+        "market": "listed",
+        "company_codes": [
+          "2330",
+          "2881",
+          "2886"
+        ],
+        "filters": [
+          {
+            "field": "company.code",
+            "op": "in",
+            "value": [
+              "2330",
+              "2881",
+              "2886"
+            ]
+          }
+        ],
+        "columns": [
+          "company.market",
+          "price.close",
+          "valuation.pe",
+          "revenue.yoy_pct"
+        ],
+        "output_mode": "full"
+      },
+      "elapsedMs": 1758,
+      "contractValid": true,
+      "quality": {
+        "status": "partial",
+        "source": "partial",
+        "universe": "unverified",
+        "selection": "partial",
+        "values": "partial",
+        "freshness": "within_expected_window",
+        "freshnessDetails": [
+          {
+            "status": "within_expected_window",
+            "lag": {
+              "value": 1,
+              "unit": "calendar_day"
+            },
+            "reasonCode": "WITHIN_MAXIMUM_LAG",
+            "reason": "observed as-of 位於 policy 容許窗口內。",
+            "policyId": "official.current-snapshot.max-age-7d.v1",
+            "observedAsOf": "2026-09-16",
+            "expectedAsOf": "2026-09-17",
+            "sourceUrls": [
+              "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+            ]
+          },
+          {
+            "status": "within_expected_window",
+            "lag": {
+              "value": 0,
+              "unit": "trading_session"
+            },
+            "reasonCode": "MATCHES_EXPECTED_AS_OF",
+            "reason": "observed as-of 與 expected as-of 相符。",
+            "policyId": "official.completed-session.v1",
+            "observedAsOf": "2026-09-17",
+            "expectedAsOf": "2026-09-17",
+            "sourceUrls": [
+              "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20260917&type=ALLBUT0999&response=json"
+            ]
+          },
+          {
+            "status": "within_expected_window",
+            "lag": {
+              "value": 0,
+              "unit": "calendar_month"
+            },
+            "reasonCode": "MATCHES_EXPECTED_AS_OF",
+            "reason": "observed as-of 與 expected as-of 相符。",
+            "policyId": "official.monthly-revenue.latest-common.v1",
+            "observedAsOf": "2026-08",
+            "expectedAsOf": "2026-08",
+            "sourceUrls": [
+              "https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_115_8.csv"
+            ]
+          }
+        ],
+        "issues": [
+          {
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "code": "RESEARCH_UNIVERSE_HEURISTIC",
+            "severity": "info",
+            "scope": "universe",
+            "message": "current master 通過 heuristic 門檻；沒有官方 declared row count，不能宣稱 verified 全市場。"
+          },
+          {
+            "code": "RESEARCH_SOURCE_UNAVAILABLE",
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "severity": "warning",
+            "scope": "source",
+            "message": "valuation: TWSE 指定日期沒有官方估值資料。"
+          }
+        ]
+      },
+      "resolved": {
+        "granularity": "mixed",
+        "from": null,
+        "through": null
+      },
+      "sourceCount": 3,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "選取 3 家，符合 3 家、不符合 0 家、無法判定 0 家。"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "meta": {
+            "contractVersion": "mopsfin.result.v1",
+            "asOf": {
+              "selector": "latest",
+              "resolved": {
+                "granularity": "mixed",
+                "from": null,
+                "through": null
+              },
+              "timezone": "Asia/Taipei",
+              "servedAt": "2026-09-17T06:20:11.065Z",
+              "assembledAt": "2026-09-17T06:20:11.065Z",
+              "snapshotId": "D6QIspaVEctZUO_dhNUfa5JmIobeccTK",
+              "sourceCutoffs": [
+                {
+                  "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                  "resolved": {
+                    "granularity": "mixed",
+                    "from": null,
+                    "through": null
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:09.771Z",
+                  "cache": {
+                    "status": "miss",
+                    "observedAt": "2026-09-17T06:20:09.777Z",
+                    "storedAt": "2026-09-17T06:20:09.777Z",
+                    "ageMs": 0,
+                    "ttlMs": 21600000
+                  }
+                },
+                {
+                  "sourceUrl": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20260917&type=ALLBUT0999&response=json",
+                  "resolved": {
+                    "granularity": "mixed",
+                    "from": null,
+                    "through": null
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:10.026Z",
+                  "cache": {
+                    "status": "miss",
+                    "observedAt": "2026-09-17T06:20:10.026Z",
+                    "storedAt": "2026-09-17T06:20:10.026Z",
+                    "ageMs": 0,
+                    "ttlMs": 300000
+                  }
+                },
+                {
+                  "sourceUrl": "https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_115_8.csv",
+                  "resolved": {
+                    "granularity": "mixed",
+                    "from": null,
+                    "through": null
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:10.896Z",
+                  "cache": {
+                    "status": "miss",
+                    "observedAt": "2026-09-17T06:20:10.896Z",
+                    "storedAt": "2026-09-17T06:20:10.896Z",
+                    "ageMs": 0,
+                    "ttlMs": 300000
+                  }
+                }
+              ]
+            },
+            "quality": {
+              "status": "partial",
+              "source": "partial",
+              "universe": "unverified",
+              "selection": "partial",
+              "values": "partial",
+              "freshness": "within_expected_window",
+              "freshnessDetails": [
+                {
+                  "status": "within_expected_window",
+                  "lag": {
+                    "value": 1,
+                    "unit": "calendar_day"
+                  },
+                  "reasonCode": "WITHIN_MAXIMUM_LAG",
+                  "reason": "observed as-of 位於 policy 容許窗口內。",
+                  "policyId": "official.current-snapshot.max-age-7d.v1",
+                  "observedAsOf": "2026-09-16",
+                  "expectedAsOf": "2026-09-17",
+                  "sourceUrls": [
+                    "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+                  ]
+                },
+                {
+                  "status": "within_expected_window",
+                  "lag": {
+                    "value": 0,
+                    "unit": "trading_session"
+                  },
+                  "reasonCode": "MATCHES_EXPECTED_AS_OF",
+                  "reason": "observed as-of 與 expected as-of 相符。",
+                  "policyId": "official.completed-session.v1",
+                  "observedAsOf": "2026-09-17",
+                  "expectedAsOf": "2026-09-17",
+                  "sourceUrls": [
+                    "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20260917&type=ALLBUT0999&response=json"
+                  ]
+                },
+                {
+                  "status": "within_expected_window",
+                  "lag": {
+                    "value": 0,
+                    "unit": "calendar_month"
+                  },
+                  "reasonCode": "MATCHES_EXPECTED_AS_OF",
+                  "reason": "observed as-of 與 expected as-of 相符。",
+                  "policyId": "official.monthly-revenue.latest-common.v1",
+                  "observedAsOf": "2026-08",
+                  "expectedAsOf": "2026-08",
+                  "sourceUrls": [
+                    "https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_115_8.csv"
+                  ]
+                }
+              ],
+              "issues": [
+                {
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "code": "RESEARCH_UNIVERSE_HEURISTIC",
+                  "severity": "info",
+                  "scope": "universe",
+                  "message": "current master 通過 heuristic 門檻；沒有官方 declared row count，不能宣稱 verified 全市場。"
+                },
+                {
+                  "code": "RESEARCH_SOURCE_UNAVAILABLE",
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "severity": "warning",
+                  "scope": "source",
+                  "message": "valuation: TWSE 指定日期沒有官方估值資料。"
+                }
+              ]
+            },
+            "page": {
+              "mode": "cursor",
+              "unit": "company",
+              "limit": 50,
+              "returned": 3,
+              "total": 3,
+              "next": null
+            }
+          },
+          "query": {
+            "market": "listed",
+            "includeFinancial": true,
+            "includeKy": true,
+            "companyCodes": [
+              "2330",
+              "2881",
+              "2886"
+            ],
+            "asOf": "latest",
+            "revenueMonth": "latest",
+            "filters": [
+              {
+                "field": "company.code",
+                "op": "in",
+                "value": [
+                  "2330",
+                  "2881",
+                  "2886"
+                ]
+              }
+            ],
+            "columns": [
+              "company.market",
+              "price.close",
+              "valuation.pe",
+              "revenue.yoy_pct"
+            ],
+            "sort": [],
+            "outputMode": "full"
+          },
+          "evaluatedAt": "2026-09-17T06:20:09.325Z",
+          "registryVersion": "mopsfin.research.fields.v1",
+          "snapshotId": "D6QIspaVEctZUO_dhNUfa5JmIobeccTK",
+          "resolvedDates": {
+            "marketDate": "2026-09-17",
+            "revenueMonth": "2026-08"
+          },
+          "universe": {
+            "market": "listed",
+            "verification": {
+              "status": "heuristic",
+              "method": "required_sources_schema_single_report_date_minimum_count",
+              "officialDeclaredRowCountAvailable": false
+            },
+            "freshness": [
+              {
+                "market": "listed",
+                "freshness": "fresh"
+              }
+            ],
+            "masterCount": 1084,
+            "selectedCount": 3,
+            "excludedCount": 1081,
+            "currentMasterOnly": true,
+            "historicalPointInTime": false
+          },
+          "counts": {
+            "selected": 3,
+            "matched": 3,
+            "notMatched": 0,
+            "undetermined": 0,
+            "unknownFilterCells": 0
+          },
+          "resultComplete": false,
+          "rankIncomplete": false,
+          "fieldCoverage": [
+            {
+              "field": "company.market",
+              "usable": 3,
+              "unavailable": 0,
+              "statuses": {
+                "available": 3
+              }
+            },
+            {
+              "field": "price.close",
+              "usable": 3,
+              "unavailable": 0,
+              "statuses": {
+                "available": 3
+              }
+            },
+            {
+              "field": "valuation.pe",
+              "usable": 0,
+              "unavailable": 3,
+              "statuses": {
+                "source_unavailable": 3
+              }
+            },
+            {
+              "field": "revenue.yoy_pct",
+              "usable": 3,
+              "unavailable": 0,
+              "statuses": {
+                "available": 3
+              }
+            },
+            {
+              "field": "company.code",
+              "usable": 3,
+              "unavailable": 0,
+              "statuses": {
+                "available": 3
+              }
+            }
+          ],
+          "sources": [
+            {
+              "id": "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g",
+              "domain": "company",
+              "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+              "cutoff": "2026-09-16",
+              "retrievedAt": "2026-09-17T06:20:09.771Z",
+              "cache": {
+                "status": "miss",
+                "observedAt": "2026-09-17T06:20:09.777Z",
+                "storedAt": "2026-09-17T06:20:09.777Z",
+                "ageMs": 0,
+                "ttlMs": 21600000
+              },
+              "evidence": {
+                "market": "listed",
+                "exchange": "TWSE",
+                "sourceName": "臺灣證券交易所－上市公司基本資料",
+                "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:09.771Z",
+                "rawCount": 1094,
+                "excludedTdrCount": 10,
+                "companyCount": 1084,
+                "minimumExpectedCount": 1000,
+                "cache": {
+                  "status": "miss",
+                  "observedAt": "2026-09-17T06:20:09.777Z",
+                  "storedAt": "2026-09-17T06:20:09.777Z",
+                  "ageMs": 0,
+                  "ttlMs": 21600000
+                }
+              }
+            },
+            {
+              "id": "src_o63pIZ0orrk4TRYw62g-ererwfwtRwb2",
+              "domain": "price",
+              "sourceUrl": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20260917&type=ALLBUT0999&response=json",
+              "cutoff": "2026-09-17",
+              "retrievedAt": "2026-09-17T06:20:10.026Z",
+              "cache": {
+                "status": "miss",
+                "observedAt": "2026-09-17T06:20:10.026Z",
+                "storedAt": "2026-09-17T06:20:10.026Z",
+                "ageMs": 0,
+                "ttlMs": 300000
+              },
+              "evidence": {
+                "market": "listed",
+                "sourceName": "臺灣證券交易所－每日收盤行情",
+                "sourceUrl": "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=20260917&type=ALLBUT0999&response=json",
+                "retrievedAt": "2026-09-17T06:20:10.026Z",
+                "cache": {
+                  "status": "miss",
+                  "observedAt": "2026-09-17T06:20:10.026Z",
+                  "storedAt": "2026-09-17T06:20:10.026Z",
+                  "ageMs": 0,
+                  "ttlMs": 300000
+                },
+                "snapshotIdentity": "verified",
+                "dataDate": "2026-09-17",
+                "normalization": {
+                  "volumeShares": {
+                    "sourceUnit": "share",
+                    "outputUnit": "share",
+                    "multiplier": 1
+                  },
+                  "turnoverTwd": {
+                    "sourceUnit": "TWD",
+                    "outputUnit": "TWD",
+                    "multiplier": 1
+                  },
+                  "tradeCount": {
+                    "sourceUnit": "trade",
+                    "outputUnit": "trade",
+                    "multiplier": 1
+                  }
+                }
+              }
+            },
+            {
+              "id": "src_b3IbfvsqPNWrPsilmGj_32YvMVOwicLJ",
+              "domain": "revenue",
+              "sourceUrl": "https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_115_8.csv",
+              "cutoff": "2026-08",
+              "retrievedAt": "2026-09-17T06:20:10.896Z",
+              "cache": {
+                "status": "miss",
+                "observedAt": "2026-09-17T06:20:10.896Z",
+                "storedAt": "2026-09-17T06:20:10.896Z",
+                "ageMs": 0,
+                "ttlMs": 300000
+              },
+              "evidence": {
+                "market": "listed",
+                "exchange": "TWSE",
+                "sourceName": "公開資訊觀測站－上市公司歷史每月營業收入彙總表",
+                "sourceUrl": "https://mopsov.twse.com.tw/nas/t21/sii/t21sc03_115_8.csv",
+                "retrievedAt": "2026-09-17T06:20:10.896Z",
+                "rawCount": 1086,
+                "eligibleRowCount": 1084,
+                "dataMonth": "2026-08",
+                "sourceReportDate": "2026-09-17",
+                "sourceAmountUnit": "thousand_TWD",
+                "outputAmountUnit": "TWD",
+                "amountMultiplier": 1000,
+                "cache": {
+                  "status": "miss",
+                  "observedAt": "2026-09-17T06:20:10.896Z",
+                  "storedAt": "2026-09-17T06:20:10.896Z",
+                  "ageMs": 0,
+                  "ttlMs": 300000
+                },
+                "integrity": {
+                  "format": "rfc4180_csv",
+                  "structure": "verified",
+                  "snapshotIdentity": "verified",
+                  "eligibleCompanyCodesUnique": "verified",
+                  "officialDeclaredRowCount": null,
+                  "rowsetCompleteness": "unverified_no_official_declared_count"
+                }
+              }
+            }
+          ],
+          "failures": [
+            {
+              "domain": "valuation",
+              "code": "NO_DATA",
+              "reason": null,
+              "message": "TWSE 指定日期沒有官方估值資料。"
+            }
+          ],
+          "sourceCoverage": {
+            "price": {
+              "coverageComplete": true,
+              "universeCoverageVerified": false,
+              "selectionComplete": true,
+              "reconciliation": []
+            },
+            "valuation": null,
+            "revenue": {
+              "sourceCoverage": {
+                "status": "verified",
+                "method": "current_master_exact_match",
+                "complete": true
+              },
+              "filingCoverage": {
+                "expectedCompanyCount": 1084,
+                "reportedCompanyCount": 1084,
+                "missingCompanyCodes": [],
+                "coverageRatio": 1,
+                "complete": true,
+                "status": "complete"
+              },
+              "selectionComplete": true,
+              "reconciliation": [
+                {
+                  "market": "listed",
+                  "masterCount": 1084,
+                  "sourceRowCount": 1084,
+                  "matchedCount": 1084,
+                  "marketOnlyCodes": [],
+                  "masterMissingCodes": [],
+                  "matchRatio": 1,
+                  "coverageComplete": true
+                }
+              ]
+            }
+          },
+          "resolverEvidence": {
+            "resolverId": "taiwan-equity.completed-session.v1",
+            "status": "resolved",
+            "evaluatedAt": "2026-09-17T06:20:09.325Z",
+            "timezone": "Asia/Taipei",
+            "completionGuardTaipei": "13:33:00",
+            "markets": [
+              "listed"
+            ],
+            "expectedAsOf": "2026-09-17",
+            "reasonCode": "COMPLETED_SESSION_RESOLVED",
+            "reason": "各市場 scheduled calendar candidate 已由該市場官方 exact benchmark session 確認。",
+            "marketResolutions": [
+              {
+                "market": "listed",
+                "status": "resolved",
+                "scheduledCandidate": "2026-09-17",
+                "expectedAsOf": "2026-09-17",
+                "reasonCode": "COMPLETED_SESSION_RESOLVED",
+                "reason": "scheduled candidate 已由該市場官方 exact benchmark session 確認。",
+                "sources": [
+                  {
+                    "role": "calendar",
+                    "market": "listed",
+                    "exchange": "TWSE",
+                    "sourceName": "臺灣證券交易所－有價證券集中交易市場開休市日期",
+                    "sourceUrl": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?queryYear=115&response=json",
+                    "retrievedAt": "2026-09-17T06:20:09.873Z",
+                    "cache": {
+                      "status": "miss",
+                      "observedAt": "2026-09-17T06:20:09.873Z",
+                      "storedAt": "2026-09-17T06:20:09.873Z",
+                      "ageMs": 0,
+                      "ttlMs": 300000
+                    },
+                    "asOf": "2026",
+                    "asOfGranularity": "year"
+                  },
+                  {
+                    "role": "session_marker",
+                    "market": "listed",
+                    "exchange": "TWSE",
+                    "sourceName": "臺灣證券交易所－發行量加權股價指數歷史資料",
+                    "sourceUrl": "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json",
+                    "retrievedAt": "2026-09-17T06:20:09.995Z",
+                    "cache": {
+                      "status": "miss",
+                      "observedAt": "2026-09-17T06:20:09.995Z",
+                      "storedAt": "2026-09-17T06:20:09.995Z",
+                      "ageMs": 0,
+                      "ttlMs": 300000
+                    },
+                    "asOf": "2026-09",
+                    "asOfGranularity": "month"
+                  }
+                ],
+                "workBudget": {
+                  "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+                  "calendarLogicalLoads": 1,
+                  "sessionMarkerLogicalLoads": 1,
+                  "actualTotal": 2,
+                  "maximumTotal": 2
+                }
+              }
+            ],
+            "workBudget": {
+              "scope": "freshness_meta_layer",
+              "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+              "marketCount": 1,
+              "calendarLogicalLoads": 1,
+              "sessionMarkerLogicalLoads": 1,
+              "actualTotal": 2,
+              "maximumTotal": 2
+            }
+          },
+          "presentation": {
+            "outputMode": "full",
+            "scope": "current_page",
+            "rowCount": 3,
+            "rowsOmitted": false,
+            "rows": [
+              {
+                "code": "2330",
+                "name": "台積電",
+                "market": "listed",
+                "cells": {
+                  "company.market": {
+                    "unit": "category",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.market.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "listed"
+                  },
+                  "price.close": {
+                    "unit": "TWD",
+                    "period": "2026-09-17",
+                    "basis": "raw_unadjusted",
+                    "definitionId": "mopsfin.price.close.v1",
+                    "sourceRefs": [
+                      "src_o63pIZ0orrk4TRYw62g-ererwfwtRwb2"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": 2425
+                  },
+                  "valuation.pe": {
+                    "unit": "ratio",
+                    "period": "2026-09-17",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.valuation.pe.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "TWSE 指定日期沒有官方估值資料。",
+                    "value": null
+                  },
+                  "revenue.yoy_pct": {
+                    "unit": "%",
+                    "period": "2026-08",
+                    "basis": "monthly_filing",
+                    "definitionId": "mopsfin.revenue.yoy_pct.v1",
+                    "sourceRefs": [
+                      "src_b3IbfvsqPNWrPsilmGj_32YvMVOwicLJ"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": 53.320053714712955
+                  }
+                }
+              },
+              {
+                "code": "2881",
+                "name": "富邦金",
+                "market": "listed",
+                "cells": {
+                  "company.market": {
+                    "unit": "category",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.market.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "listed"
+                  },
+                  "price.close": {
+                    "unit": "TWD",
+                    "period": "2026-09-17",
+                    "basis": "raw_unadjusted",
+                    "definitionId": "mopsfin.price.close.v1",
+                    "sourceRefs": [
+                      "src_o63pIZ0orrk4TRYw62g-ererwfwtRwb2"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": 151.5
+                  },
+                  "valuation.pe": {
+                    "unit": "ratio",
+                    "period": "2026-09-17",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.valuation.pe.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "TWSE 指定日期沒有官方估值資料。",
+                    "value": null
+                  },
+                  "revenue.yoy_pct": {
+                    "unit": "%",
+                    "period": "2026-08",
+                    "basis": "monthly_filing",
+                    "definitionId": "mopsfin.revenue.yoy_pct.v1.financial_reported.2881",
+                    "sourceRefs": [
+                      "src_b3IbfvsqPNWrPsilmGj_32YvMVOwicLJ"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "reason": "金融業月營收申報定義須逐公司核對；不與非金融營收或其他未核對金融公司合併統計。",
+                    "value": -48.01854159471246
+                  }
+                }
+              },
+              {
+                "code": "2886",
+                "name": "兆豐金",
+                "market": "listed",
+                "cells": {
+                  "company.market": {
+                    "unit": "category",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.market.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "listed"
+                  },
+                  "price.close": {
+                    "unit": "TWD",
+                    "period": "2026-09-17",
+                    "basis": "raw_unadjusted",
+                    "definitionId": "mopsfin.price.close.v1",
+                    "sourceRefs": [
+                      "src_o63pIZ0orrk4TRYw62g-ererwfwtRwb2"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": 51.9
+                  },
+                  "valuation.pe": {
+                    "unit": "ratio",
+                    "period": "2026-09-17",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.valuation.pe.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "TWSE 指定日期沒有官方估值資料。",
+                    "value": null
+                  },
+                  "revenue.yoy_pct": {
+                    "unit": "%",
+                    "period": "2026-08",
+                    "basis": "monthly_filing",
+                    "definitionId": "mopsfin.revenue.yoy_pct.v1.financial_reported.2886",
+                    "sourceRefs": [
+                      "src_b3IbfvsqPNWrPsilmGj_32YvMVOwicLJ"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "reason": "金融業月營收申報定義須逐公司核對；不與非金融營收或其他未核對金融公司合併統計。",
+                    "value": 15.550439685057762
+                  }
+                }
+              }
+            ]
+          },
+          "filterEvidence": [
+            {
+              "code": "2330",
+              "market": "listed",
+              "evidence": [
+                {
+                  "filter": {
+                    "field": "company.code",
+                    "op": "in",
+                    "value": [
+                      "2330",
+                      "2881",
+                      "2886"
+                    ]
+                  },
+                  "outcome": "true",
+                  "cell": {
+                    "unit": "code",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.code.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "2330"
+                  }
+                }
+              ]
+            },
+            {
+              "code": "2881",
+              "market": "listed",
+              "evidence": [
+                {
+                  "filter": {
+                    "field": "company.code",
+                    "op": "in",
+                    "value": [
+                      "2330",
+                      "2881",
+                      "2886"
+                    ]
+                  },
+                  "outcome": "true",
+                  "cell": {
+                    "unit": "code",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.code.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "2881"
+                  }
+                }
+              ]
+            },
+            {
+              "code": "2886",
+              "market": "listed",
+              "evidence": [
+                {
+                  "filter": {
+                    "field": "company.code",
+                    "op": "in",
+                    "value": [
+                      "2330",
+                      "2881",
+                      "2886"
+                    ]
+                  },
+                  "outcome": "true",
+                  "cell": {
+                    "unit": "code",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.code.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "2886"
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved": {
+            "total": 0,
+            "returned": 0,
+            "omitted": 0,
+            "companies": []
+          },
+          "page": {
+            "mode": "cursor",
+            "unit": "company",
+            "limit": 50,
+            "returned": 3,
+            "total": 3,
+            "next": null
+          },
+          "workBudget": {
+            "orchestrationMasterCalls": 1,
+            "catalogCalls": 0,
+            "resolverCalls": 1,
+            "resolver": {
+              "scope": "freshness_meta_layer",
+              "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+              "marketCount": 1,
+              "calendarLogicalLoads": 1,
+              "sessionMarkerLogicalLoads": 1,
+              "actualTotal": 2,
+              "maximumTotal": 2
+            },
+            "domainCalls": [
+              "price",
+              "valuation",
+              "revenue"
+            ],
+            "perCompanyMarketCalls": 0,
+            "dependencyCosts": {
+              "price": {
+                "sourceLoads": 1,
+                "masterLookupPolicy": "dependency_managed"
+              },
+              "valuation": null,
+              "revenue": {
+                "sourceLoads": 1,
+                "discoveryAndArchiveLoads": "dependency_managed_not_fully_observable",
+                "masterLookupPolicy": "dependency_managed"
+              }
+            },
+            "unitDefinition": "domain calls are logical calls; sources describe returned evidence, not all discovery, cache, retry or failed HTTP attempts"
+          },
+          "warnings": [
+            "本清單代表 TWSE／TPEx 官方公司母體，不保證每家公司在 Mopsfin 的每個指標或期別都有資料。",
+            "上市清單已排除 TDR；ETF、ETN、權證與特別股不在本工具的公司母體內。",
+            "coverageComplete=true 僅代表必要來源、必要欄位、單一出表日期、唯一代號與最低筆數 heuristic gate 均通過；官方來源沒有 declared row count，因此無法證明完整 rowset。",
+            "價格為官方原始未還原權值日線，不含 adjusted close；不可直接視為含公司行動調整的報酬率。",
+            "歷史官方市場 snapshot 以四碼、首碼非 0 且非 -DR 的證券列辨識公司股票；不可據此推論歷史母體已被獨立驗證。",
+            "latest 先以 OpenAPI 發現各市場目前月份，再與同月／前一月 MOPS archive 核對並選擇最新共同有效月份；資料可能在法定申報期限內持續增加。",
+            "營收金額已由官方仟元乘以 1,000 正規化為 TWD；百分比沿用官方值，不由本工具重算。",
+            "sourceReportDate 是官方資料集出表日期，不是個別公司的申報時間 filedAt。",
+            "母體完整性為 heuristic；價格、月營收與當前公司分類不構成歷史 point-in-time 資料。"
+          ]
+        }
+      }
+    },
+    {
+      "label": "screen_otc",
+      "name": "screen_companies",
+      "arguments": {
+        "market": "otc",
+        "company_codes": [
+          "6488"
+        ],
+        "filters": [
+          {
+            "field": "company.code",
+            "op": "in",
+            "value": [
+              "6488"
+            ]
+          }
+        ],
+        "columns": [
+          "company.market",
+          "price.close",
+          "valuation.pe",
+          "revenue.yoy_pct"
+        ],
+        "output_mode": "full"
+      },
+      "elapsedMs": 52007,
+      "contractValid": false,
+      "quality": null,
+      "resolved": null,
+      "sourceCount": 0,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "UPSTREAM_BAD_RESPONSE: Mopsfin 查詢發生未預期錯誤。"
+          }
+        ],
+        "structuredContent": {
+          "ok": false,
+          "meta": {
+            "contractVersion": "mopsfin.result.v1",
+            "asOf": null,
+            "quality": null,
+            "page": null
+          },
+          "error": {
+            "code": "UPSTREAM_BAD_RESPONSE",
+            "reason": null,
+            "category": "upstream",
+            "message": "Mopsfin 查詢發生未預期錯誤。",
+            "retryable": false,
+            "retryAfterMs": null,
+            "action": "none",
+            "details": {}
+          }
+        },
+        "isError": true
+      }
+    },
+    {
+      "label": "screen_all",
+      "name": "screen_companies",
+      "arguments": {
+        "market": "all",
+        "company_codes": [
+          "2330",
+          "6488",
+          "2881",
+          "2886"
+        ],
+        "filters": [
+          {
+            "field": "company.code",
+            "op": "in",
+            "value": [
+              "2330",
+              "6488",
+              "2881",
+              "2886"
+            ]
+          }
+        ],
+        "columns": [
+          "company.market",
+          "price.close",
+          "valuation.pe",
+          "revenue.yoy_pct"
+        ],
+        "output_mode": "full"
+      },
+      "elapsedMs": 50043,
+      "contractValid": true,
+      "quality": {
+        "status": "partial",
+        "source": "partial",
+        "universe": "unverified",
+        "selection": "partial",
+        "values": "partial",
+        "freshness": "within_expected_window",
+        "freshnessDetails": [
+          {
+            "status": "within_expected_window",
+            "lag": {
+              "value": 1,
+              "unit": "calendar_day"
+            },
+            "reasonCode": "WITHIN_MAXIMUM_LAG",
+            "reason": "observed as-of 位於 policy 容許窗口內。",
+            "policyId": "official.current-snapshot.max-age-7d.v1",
+            "observedAsOf": "2026-09-16",
+            "expectedAsOf": "2026-09-17",
+            "sourceUrls": [
+              "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+            ]
+          },
+          {
+            "status": "within_expected_window",
+            "lag": {
+              "value": 1,
+              "unit": "calendar_day"
+            },
+            "reasonCode": "WITHIN_MAXIMUM_LAG",
+            "reason": "observed as-of 位於 policy 容許窗口內。",
+            "policyId": "official.current-snapshot.max-age-7d.v1",
+            "observedAsOf": "2026-09-16",
+            "expectedAsOf": "2026-09-17",
+            "sourceUrls": [
+              "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+            ]
+          }
+        ],
+        "issues": [
+          {
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "code": "RESEARCH_UNIVERSE_HEURISTIC",
+            "severity": "info",
+            "scope": "universe",
+            "message": "current master 通過 heuristic 門檻；沒有官方 declared row count，不能宣稱 verified 全市場。"
+          },
+          {
+            "code": "RESEARCH_SOURCE_UNAVAILABLE",
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "severity": "warning",
+            "scope": "source",
+            "message": "price: 無法取得所選市場共同完成交易日。"
+          },
+          {
+            "code": "RESEARCH_SOURCE_UNAVAILABLE",
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "severity": "warning",
+            "scope": "source",
+            "message": "valuation: 無法取得所選市場共同完成交易日。"
+          },
+          {
+            "code": "RESEARCH_SOURCE_UNAVAILABLE",
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "severity": "warning",
+            "scope": "source",
+            "message": "revenue: TPEx 證券櫃檯買賣中心－上櫃公司每月營業收入彙總表超過本次工作的總時間上限。"
+          }
+        ]
+      },
+      "resolved": {
+        "granularity": "mixed",
+        "from": null,
+        "through": null
+      },
+      "sourceCount": 2,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "選取 4 家，符合 4 家、不符合 0 家、無法判定 0 家。"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "meta": {
+            "contractVersion": "mopsfin.result.v1",
+            "asOf": {
+              "selector": "latest",
+              "resolved": {
+                "granularity": "mixed",
+                "from": null,
+                "through": null
+              },
+              "timezone": "Asia/Taipei",
+              "servedAt": "2026-09-17T06:21:53.124Z",
+              "assembledAt": "2026-09-17T06:21:53.124Z",
+              "snapshotId": "GF6FhWaNVMxaeoihstx_u0vw0FL6mAvO",
+              "sourceCutoffs": [
+                {
+                  "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                  "resolved": {
+                    "granularity": "mixed",
+                    "from": null,
+                    "through": null
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:09.771Z",
+                  "cache": {
+                    "status": "hit",
+                    "observedAt": "2026-09-17T06:21:03.089Z",
+                    "storedAt": "2026-09-17T06:20:09.777Z",
+                    "ageMs": 53312,
+                    "ttlMs": 21600000
+                  }
+                },
+                {
+                  "sourceUrl": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+                  "resolved": {
+                    "granularity": "mixed",
+                    "from": null,
+                    "through": null
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:25.031Z",
+                  "cache": {
+                    "status": "hit",
+                    "observedAt": "2026-09-17T06:21:03.089Z",
+                    "storedAt": "2026-09-17T06:20:25.036Z",
+                    "ageMs": 38053,
+                    "ttlMs": 21600000
+                  }
+                }
+              ]
+            },
+            "quality": {
+              "status": "partial",
+              "source": "partial",
+              "universe": "unverified",
+              "selection": "partial",
+              "values": "partial",
+              "freshness": "within_expected_window",
+              "freshnessDetails": [
+                {
+                  "status": "within_expected_window",
+                  "lag": {
+                    "value": 1,
+                    "unit": "calendar_day"
+                  },
+                  "reasonCode": "WITHIN_MAXIMUM_LAG",
+                  "reason": "observed as-of 位於 policy 容許窗口內。",
+                  "policyId": "official.current-snapshot.max-age-7d.v1",
+                  "observedAsOf": "2026-09-16",
+                  "expectedAsOf": "2026-09-17",
+                  "sourceUrls": [
+                    "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+                  ]
+                },
+                {
+                  "status": "within_expected_window",
+                  "lag": {
+                    "value": 1,
+                    "unit": "calendar_day"
+                  },
+                  "reasonCode": "WITHIN_MAXIMUM_LAG",
+                  "reason": "observed as-of 位於 policy 容許窗口內。",
+                  "policyId": "official.current-snapshot.max-age-7d.v1",
+                  "observedAsOf": "2026-09-16",
+                  "expectedAsOf": "2026-09-17",
+                  "sourceUrls": [
+                    "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+                  ]
+                }
+              ],
+              "issues": [
+                {
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "code": "RESEARCH_UNIVERSE_HEURISTIC",
+                  "severity": "info",
+                  "scope": "universe",
+                  "message": "current master 通過 heuristic 門檻；沒有官方 declared row count，不能宣稱 verified 全市場。"
+                },
+                {
+                  "code": "RESEARCH_SOURCE_UNAVAILABLE",
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "severity": "warning",
+                  "scope": "source",
+                  "message": "price: 無法取得所選市場共同完成交易日。"
+                },
+                {
+                  "code": "RESEARCH_SOURCE_UNAVAILABLE",
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "severity": "warning",
+                  "scope": "source",
+                  "message": "valuation: 無法取得所選市場共同完成交易日。"
+                },
+                {
+                  "code": "RESEARCH_SOURCE_UNAVAILABLE",
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "severity": "warning",
+                  "scope": "source",
+                  "message": "revenue: TPEx 證券櫃檯買賣中心－上櫃公司每月營業收入彙總表超過本次工作的總時間上限。"
+                }
+              ]
+            },
+            "page": {
+              "mode": "cursor",
+              "unit": "company",
+              "limit": 50,
+              "returned": 4,
+              "total": 4,
+              "next": null
+            }
+          },
+          "query": {
+            "market": "all",
+            "includeFinancial": true,
+            "includeKy": true,
+            "companyCodes": [
+              "2330",
+              "2881",
+              "2886",
+              "6488"
+            ],
+            "asOf": "latest",
+            "revenueMonth": "latest",
+            "filters": [
+              {
+                "field": "company.code",
+                "op": "in",
+                "value": [
+                  "2330",
+                  "6488",
+                  "2881",
+                  "2886"
+                ]
+              }
+            ],
+            "columns": [
+              "company.market",
+              "price.close",
+              "valuation.pe",
+              "revenue.yoy_pct"
+            ],
+            "sort": [],
+            "outputMode": "full"
+          },
+          "evaluatedAt": "2026-09-17T06:21:03.089Z",
+          "registryVersion": "mopsfin.research.fields.v1",
+          "snapshotId": "GF6FhWaNVMxaeoihstx_u0vw0FL6mAvO",
+          "resolvedDates": {
+            "marketDate": null,
+            "revenueMonth": null
+          },
+          "universe": {
+            "market": "all",
+            "verification": {
+              "status": "heuristic",
+              "method": "required_sources_schema_single_report_date_minimum_count",
+              "officialDeclaredRowCountAvailable": false
+            },
+            "freshness": [
+              {
+                "market": "listed",
+                "freshness": "fresh"
+              },
+              {
+                "market": "otc",
+                "freshness": "fresh"
+              }
+            ],
+            "masterCount": 1976,
+            "selectedCount": 4,
+            "excludedCount": 1972,
+            "currentMasterOnly": true,
+            "historicalPointInTime": false
+          },
+          "counts": {
+            "selected": 4,
+            "matched": 4,
+            "notMatched": 0,
+            "undetermined": 0,
+            "unknownFilterCells": 0
+          },
+          "resultComplete": false,
+          "rankIncomplete": false,
+          "fieldCoverage": [
+            {
+              "field": "company.market",
+              "usable": 4,
+              "unavailable": 0,
+              "statuses": {
+                "available": 4
+              }
+            },
+            {
+              "field": "price.close",
+              "usable": 0,
+              "unavailable": 4,
+              "statuses": {
+                "source_unavailable": 4
+              }
+            },
+            {
+              "field": "valuation.pe",
+              "usable": 0,
+              "unavailable": 4,
+              "statuses": {
+                "source_unavailable": 4
+              }
+            },
+            {
+              "field": "revenue.yoy_pct",
+              "usable": 0,
+              "unavailable": 4,
+              "statuses": {
+                "source_unavailable": 4
+              }
+            },
+            {
+              "field": "company.code",
+              "usable": 4,
+              "unavailable": 0,
+              "statuses": {
+                "available": 4
+              }
+            }
+          ],
+          "sources": [
+            {
+              "id": "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g",
+              "domain": "company",
+              "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+              "cutoff": "2026-09-16",
+              "retrievedAt": "2026-09-17T06:20:09.771Z",
+              "cache": {
+                "status": "hit",
+                "observedAt": "2026-09-17T06:21:03.089Z",
+                "storedAt": "2026-09-17T06:20:09.777Z",
+                "ageMs": 53312,
+                "ttlMs": 21600000
+              },
+              "evidence": {
+                "market": "listed",
+                "exchange": "TWSE",
+                "sourceName": "臺灣證券交易所－上市公司基本資料",
+                "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:09.771Z",
+                "rawCount": 1094,
+                "excludedTdrCount": 10,
+                "companyCount": 1084,
+                "minimumExpectedCount": 1000,
+                "cache": {
+                  "status": "hit",
+                  "observedAt": "2026-09-17T06:21:03.089Z",
+                  "storedAt": "2026-09-17T06:20:09.777Z",
+                  "ageMs": 53312,
+                  "ttlMs": 21600000
+                }
+              }
+            },
+            {
+              "id": "src_krirdKhEV8XH0lt9ZERIW4KyZH2M9p62",
+              "domain": "company",
+              "sourceUrl": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+              "cutoff": "2026-09-16",
+              "retrievedAt": "2026-09-17T06:20:25.031Z",
+              "cache": {
+                "status": "hit",
+                "observedAt": "2026-09-17T06:21:03.089Z",
+                "storedAt": "2026-09-17T06:20:25.036Z",
+                "ageMs": 38053,
+                "ttlMs": 21600000
+              },
+              "evidence": {
+                "market": "otc",
+                "exchange": "TPEx",
+                "sourceName": "證券櫃檯買賣中心－上櫃股票基本資料",
+                "sourceUrl": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:25.031Z",
+                "rawCount": 892,
+                "excludedTdrCount": 0,
+                "companyCount": 892,
+                "minimumExpectedCount": 800,
+                "cache": {
+                  "status": "hit",
+                  "observedAt": "2026-09-17T06:21:03.089Z",
+                  "storedAt": "2026-09-17T06:20:25.036Z",
+                  "ageMs": 38053,
+                  "ttlMs": 21600000
+                }
+              }
+            }
+          ],
+          "failures": [
+            {
+              "domain": "price",
+              "code": "INCOMPLETE_COVERAGE",
+              "reason": "COMMON_COMPLETED_DATE_UNRESOLVED",
+              "message": "無法取得所選市場共同完成交易日。"
+            },
+            {
+              "domain": "valuation",
+              "code": "INCOMPLETE_COVERAGE",
+              "reason": "COMMON_COMPLETED_DATE_UNRESOLVED",
+              "message": "無法取得所選市場共同完成交易日。"
+            },
+            {
+              "domain": "revenue",
+              "code": "UPSTREAM_TIMEOUT",
+              "reason": "UPSTREAM_DEADLINE_EXCEEDED",
+              "message": "TPEx 證券櫃檯買賣中心－上櫃公司每月營業收入彙總表超過本次工作的總時間上限。"
+            }
+          ],
+          "sourceCoverage": {
+            "price": null,
+            "valuation": null,
+            "revenue": null
+          },
+          "resolverEvidence": {
+            "resolverId": "taiwan-equity.completed-session.v1",
+            "status": "unresolved",
+            "evaluatedAt": "2026-09-17T06:21:03.089Z",
+            "timezone": "Asia/Taipei",
+            "completionGuardTaipei": "13:33:00",
+            "markets": [
+              "listed",
+              "otc"
+            ],
+            "expectedAsOf": null,
+            "reasonCode": "SESSION_MARKER_NOT_CONFIRMED",
+            "reason": "scheduled candidate 未等於 boundary 前最新官方 exact benchmark session；可能是發布尚未完成、日曆漏列臨時／補行 session，或來源漂移。",
+            "marketResolutions": [
+              {
+                "market": "listed",
+                "status": "resolved",
+                "scheduledCandidate": "2026-09-17",
+                "expectedAsOf": "2026-09-17",
+                "reasonCode": "COMPLETED_SESSION_RESOLVED",
+                "reason": "scheduled candidate 已由該市場官方 exact benchmark session 確認。",
+                "sources": [
+                  {
+                    "role": "calendar",
+                    "market": "listed",
+                    "exchange": "TWSE",
+                    "sourceName": "臺灣證券交易所－有價證券集中交易市場開休市日期",
+                    "sourceUrl": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?queryYear=115&response=json",
+                    "retrievedAt": "2026-09-17T06:20:09.873Z",
+                    "cache": {
+                      "status": "hit",
+                      "observedAt": "2026-09-17T06:21:03.091Z",
+                      "storedAt": "2026-09-17T06:20:09.873Z",
+                      "ageMs": 53218,
+                      "ttlMs": 300000
+                    },
+                    "asOf": "2026",
+                    "asOfGranularity": "year"
+                  },
+                  {
+                    "role": "session_marker",
+                    "market": "listed",
+                    "exchange": "TWSE",
+                    "sourceName": "臺灣證券交易所－發行量加權股價指數歷史資料",
+                    "sourceUrl": "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json",
+                    "retrievedAt": "2026-09-17T06:20:09.995Z",
+                    "cache": {
+                      "status": "hit",
+                      "observedAt": "2026-09-17T06:21:03.095Z",
+                      "storedAt": "2026-09-17T06:20:09.995Z",
+                      "ageMs": 53100,
+                      "ttlMs": 300000
+                    },
+                    "asOf": "2026-09",
+                    "asOfGranularity": "month"
+                  }
+                ],
+                "workBudget": {
+                  "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+                  "calendarLogicalLoads": 1,
+                  "sessionMarkerLogicalLoads": 1,
+                  "actualTotal": 2,
+                  "maximumTotal": 2
+                }
+              },
+              {
+                "market": "otc",
+                "status": "unresolved",
+                "scheduledCandidate": "2026-09-17",
+                "expectedAsOf": null,
+                "reasonCode": "SESSION_MARKER_NOT_CONFIRMED",
+                "reason": "scheduled candidate 未等於 boundary 前最新官方 exact benchmark session；可能是發布尚未完成、日曆漏列臨時／補行 session，或來源漂移。",
+                "sources": [
+                  {
+                    "role": "calendar",
+                    "market": "otc",
+                    "exchange": "TPEx",
+                    "sourceName": "證券櫃檯買賣中心－有價證券櫃檯買賣市場開休市日期",
+                    "sourceUrl": "https://www.tpex.org.tw/www/zh-tw/bulletin/tradingDate",
+                    "retrievedAt": "2026-09-17T06:20:27.451Z",
+                    "cache": {
+                      "status": "hit",
+                      "observedAt": "2026-09-17T06:21:03.092Z",
+                      "storedAt": "2026-09-17T06:20:27.451Z",
+                      "ageMs": 35641,
+                      "ttlMs": 300000
+                    },
+                    "asOf": "2026",
+                    "asOfGranularity": "year"
+                  },
+                  {
+                    "role": "session_marker",
+                    "market": "otc",
+                    "exchange": "TPEx",
+                    "sourceName": "證券櫃檯買賣中心－櫃買價格指數歷史資料",
+                    "sourceUrl": "https://www.tpex.org.tw/www/zh-tw/afterTrading/tradingIndex?date=2026%2F09%2F01&response=json",
+                    "retrievedAt": "2026-09-17T06:20:27.526Z",
+                    "cache": {
+                      "status": "hit",
+                      "observedAt": "2026-09-17T06:21:03.095Z",
+                      "storedAt": "2026-09-17T06:20:27.526Z",
+                      "ageMs": 35569,
+                      "ttlMs": 300000
+                    },
+                    "asOf": "2026-09",
+                    "asOfGranularity": "month"
+                  }
+                ],
+                "workBudget": {
+                  "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+                  "calendarLogicalLoads": 1,
+                  "sessionMarkerLogicalLoads": 1,
+                  "actualTotal": 2,
+                  "maximumTotal": 2
+                }
+              }
+            ],
+            "workBudget": {
+              "scope": "freshness_meta_layer",
+              "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+              "marketCount": 2,
+              "calendarLogicalLoads": 2,
+              "sessionMarkerLogicalLoads": 2,
+              "actualTotal": 4,
+              "maximumTotal": 4
+            }
+          },
+          "presentation": {
+            "outputMode": "full",
+            "scope": "current_page",
+            "rowCount": 4,
+            "rowsOmitted": false,
+            "rows": [
+              {
+                "code": "2330",
+                "name": "台積電",
+                "market": "listed",
+                "cells": {
+                  "company.market": {
+                    "unit": "category",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.market.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "listed"
+                  },
+                  "price.close": {
+                    "unit": "TWD",
+                    "period": null,
+                    "basis": "raw_unadjusted",
+                    "definitionId": "mopsfin.price.close.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "無法取得所選市場共同完成交易日。",
+                    "value": null
+                  },
+                  "valuation.pe": {
+                    "unit": "ratio",
+                    "period": null,
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.valuation.pe.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "無法取得所選市場共同完成交易日。",
+                    "value": null
+                  },
+                  "revenue.yoy_pct": {
+                    "unit": "%",
+                    "period": null,
+                    "basis": "monthly_filing",
+                    "definitionId": "mopsfin.revenue.yoy_pct.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "TPEx 證券櫃檯買賣中心－上櫃公司每月營業收入彙總表超過本次工作的總時間上限。",
+                    "value": null
+                  }
+                }
+              },
+              {
+                "code": "2881",
+                "name": "富邦金",
+                "market": "listed",
+                "cells": {
+                  "company.market": {
+                    "unit": "category",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.market.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "listed"
+                  },
+                  "price.close": {
+                    "unit": "TWD",
+                    "period": null,
+                    "basis": "raw_unadjusted",
+                    "definitionId": "mopsfin.price.close.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "無法取得所選市場共同完成交易日。",
+                    "value": null
+                  },
+                  "valuation.pe": {
+                    "unit": "ratio",
+                    "period": null,
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.valuation.pe.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "無法取得所選市場共同完成交易日。",
+                    "value": null
+                  },
+                  "revenue.yoy_pct": {
+                    "unit": "%",
+                    "period": null,
+                    "basis": "monthly_filing",
+                    "definitionId": "mopsfin.revenue.yoy_pct.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "TPEx 證券櫃檯買賣中心－上櫃公司每月營業收入彙總表超過本次工作的總時間上限。",
+                    "value": null
+                  }
+                }
+              },
+              {
+                "code": "2886",
+                "name": "兆豐金",
+                "market": "listed",
+                "cells": {
+                  "company.market": {
+                    "unit": "category",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.market.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "listed"
+                  },
+                  "price.close": {
+                    "unit": "TWD",
+                    "period": null,
+                    "basis": "raw_unadjusted",
+                    "definitionId": "mopsfin.price.close.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "無法取得所選市場共同完成交易日。",
+                    "value": null
+                  },
+                  "valuation.pe": {
+                    "unit": "ratio",
+                    "period": null,
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.valuation.pe.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "無法取得所選市場共同完成交易日。",
+                    "value": null
+                  },
+                  "revenue.yoy_pct": {
+                    "unit": "%",
+                    "period": null,
+                    "basis": "monthly_filing",
+                    "definitionId": "mopsfin.revenue.yoy_pct.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "TPEx 證券櫃檯買賣中心－上櫃公司每月營業收入彙總表超過本次工作的總時間上限。",
+                    "value": null
+                  }
+                }
+              },
+              {
+                "code": "6488",
+                "name": "環球晶",
+                "market": "otc",
+                "cells": {
+                  "company.market": {
+                    "unit": "category",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.market.v1",
+                    "sourceRefs": [
+                      "src_krirdKhEV8XH0lt9ZERIW4KyZH2M9p62"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "otc"
+                  },
+                  "price.close": {
+                    "unit": "TWD",
+                    "period": null,
+                    "basis": "raw_unadjusted",
+                    "definitionId": "mopsfin.price.close.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "無法取得所選市場共同完成交易日。",
+                    "value": null
+                  },
+                  "valuation.pe": {
+                    "unit": "ratio",
+                    "period": null,
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.valuation.pe.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "無法取得所選市場共同完成交易日。",
+                    "value": null
+                  },
+                  "revenue.yoy_pct": {
+                    "unit": "%",
+                    "period": null,
+                    "basis": "monthly_filing",
+                    "definitionId": "mopsfin.revenue.yoy_pct.v1",
+                    "sourceRefs": [],
+                    "freshness": "unverified",
+                    "status": "source_unavailable",
+                    "reason": "TPEx 證券櫃檯買賣中心－上櫃公司每月營業收入彙總表超過本次工作的總時間上限。",
+                    "value": null
+                  }
+                }
+              }
+            ]
+          },
+          "filterEvidence": [
+            {
+              "code": "2330",
+              "market": "listed",
+              "evidence": [
+                {
+                  "filter": {
+                    "field": "company.code",
+                    "op": "in",
+                    "value": [
+                      "2330",
+                      "6488",
+                      "2881",
+                      "2886"
+                    ]
+                  },
+                  "outcome": "true",
+                  "cell": {
+                    "unit": "code",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.code.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "2330"
+                  }
+                }
+              ]
+            },
+            {
+              "code": "2881",
+              "market": "listed",
+              "evidence": [
+                {
+                  "filter": {
+                    "field": "company.code",
+                    "op": "in",
+                    "value": [
+                      "2330",
+                      "6488",
+                      "2881",
+                      "2886"
+                    ]
+                  },
+                  "outcome": "true",
+                  "cell": {
+                    "unit": "code",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.code.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "2881"
+                  }
+                }
+              ]
+            },
+            {
+              "code": "2886",
+              "market": "listed",
+              "evidence": [
+                {
+                  "filter": {
+                    "field": "company.code",
+                    "op": "in",
+                    "value": [
+                      "2330",
+                      "6488",
+                      "2881",
+                      "2886"
+                    ]
+                  },
+                  "outcome": "true",
+                  "cell": {
+                    "unit": "code",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.code.v1",
+                    "sourceRefs": [
+                      "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "2886"
+                  }
+                }
+              ]
+            },
+            {
+              "code": "6488",
+              "market": "otc",
+              "evidence": [
+                {
+                  "filter": {
+                    "field": "company.code",
+                    "op": "in",
+                    "value": [
+                      "2330",
+                      "6488",
+                      "2881",
+                      "2886"
+                    ]
+                  },
+                  "outcome": "true",
+                  "cell": {
+                    "unit": "code",
+                    "period": "2026-09-16",
+                    "basis": "official_snapshot",
+                    "definitionId": "mopsfin.company.code.v1",
+                    "sourceRefs": [
+                      "src_krirdKhEV8XH0lt9ZERIW4KyZH2M9p62"
+                    ],
+                    "freshness": "fresh",
+                    "status": "available",
+                    "value": "6488"
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved": {
+            "total": 0,
+            "returned": 0,
+            "omitted": 0,
+            "companies": []
+          },
+          "page": {
+            "mode": "cursor",
+            "unit": "company",
+            "limit": 50,
+            "returned": 4,
+            "total": 4,
+            "next": null
+          },
+          "workBudget": {
+            "orchestrationMasterCalls": 1,
+            "catalogCalls": 0,
+            "resolverCalls": 1,
+            "resolver": {
+              "scope": "freshness_meta_layer",
+              "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+              "marketCount": 2,
+              "calendarLogicalLoads": 2,
+              "sessionMarkerLogicalLoads": 2,
+              "actualTotal": 4,
+              "maximumTotal": 4
+            },
+            "domainCalls": [
+              "revenue"
+            ],
+            "perCompanyMarketCalls": 0,
+            "dependencyCosts": {
+              "price": null,
+              "valuation": null,
+              "revenue": null
+            },
+            "unitDefinition": "domain calls are logical calls; sources describe returned evidence, not all discovery, cache, retry or failed HTTP attempts"
+          },
+          "warnings": [
+            "本清單代表 TWSE／TPEx 官方公司母體，不保證每家公司在 Mopsfin 的每個指標或期別都有資料。",
+            "上市清單已排除 TDR；ETF、ETN、權證與特別股不在本工具的公司母體內。",
+            "coverageComplete=true 僅代表必要來源、必要欄位、單一出表日期、唯一代號與最低筆數 heuristic gate 均通過；官方來源沒有 declared row count，因此無法證明完整 rowset。",
+            "母體完整性為 heuristic；價格、月營收與當前公司分類不構成歷史 point-in-time 資料。"
+          ]
+        }
+      }
+    },
+    {
+      "label": "compare_common_quarter",
+      "name": "compare_companies",
+      "arguments": {
+        "company_codes": [
+          "2330",
+          "6488",
+          "2881",
+          "2886"
+        ],
+        "columns": [
+          "financial.Revenue",
+          "financial.EPS",
+          "financial.GrossMargin"
+        ],
+        "output_mode": "full"
+      },
+      "elapsedMs": 1271,
+      "contractValid": true,
+      "quality": {
+        "status": "partial",
+        "source": "complete",
+        "universe": "unverified",
+        "selection": "complete",
+        "values": "complete",
+        "freshness": "unknown",
+        "freshnessDetails": [
+          {
+            "status": "within_expected_window",
+            "lag": {
+              "value": 1,
+              "unit": "calendar_day"
+            },
+            "reasonCode": "WITHIN_MAXIMUM_LAG",
+            "reason": "observed as-of 位於 policy 容許窗口內。",
+            "policyId": "official.current-snapshot.max-age-7d.v1",
+            "observedAsOf": "2026-09-16",
+            "expectedAsOf": "2026-09-17",
+            "sourceUrls": [
+              "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+            ]
+          },
+          {
+            "status": "within_expected_window",
+            "lag": {
+              "value": 1,
+              "unit": "calendar_day"
+            },
+            "reasonCode": "WITHIN_MAXIMUM_LAG",
+            "reason": "observed as-of 位於 policy 容許窗口內。",
+            "policyId": "official.current-snapshot.max-age-7d.v1",
+            "observedAsOf": "2026-09-16",
+            "expectedAsOf": "2026-09-17",
+            "sourceUrls": [
+              "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+            ]
+          },
+          {
+            "status": "unknown",
+            "lag": null,
+            "reasonCode": "EXPECTED_AS_OF_UNAVAILABLE",
+            "reason": "目前沒有可靠的 expected as-of 可驗證此資料是否為最新。",
+            "policyId": "mopsfin.latest-unverified.v1",
+            "observedAsOf": "2026Q2",
+            "expectedAsOf": null,
+            "sourceUrls": [
+              "https://mopsfin.twse.com.tw/"
+            ]
+          }
+        ],
+        "issues": [
+          {
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "code": "RESEARCH_UNIVERSE_HEURISTIC",
+            "severity": "info",
+            "scope": "universe",
+            "message": "current master 通過 heuristic 門檻；沒有官方 declared row count，不能宣稱 verified 全市場。"
+          },
+          {
+            "code": "RESEARCH_DEFINITION_MISMATCH",
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "severity": "warning",
+            "scope": "value",
+            "message": "部分同名欄位定義不同；不得跨定義作共同排名或統計。"
+          },
+          {
+            "code": "FRESHNESS_UNVERIFIED",
+            "severity": "warning",
+            "scope": "source",
+            "message": "至少一項來源缺少可靠 expected as-of，無法驗證為最新。",
+            "refs": {
+              "companyCodes": [],
+              "fields": [
+                "meta.quality.freshnessDetails"
+              ],
+              "periods": [
+                "2026Q2"
+              ],
+              "sourceUrls": [
+                "https://mopsfin.twse.com.tw/"
+              ]
+            }
+          }
+        ]
+      },
+      "resolved": {
+        "granularity": "mixed",
+        "from": null,
+        "through": null
+      },
+      "sourceCount": 3,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "比較 4 家公司；財務共同季 2026Q2。"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "meta": {
+            "contractVersion": "mopsfin.result.v1",
+            "asOf": {
+              "selector": "snapshot",
+              "resolved": {
+                "granularity": "mixed",
+                "from": null,
+                "through": null
+              },
+              "timezone": "Asia/Taipei",
+              "servedAt": "2026-09-17T06:21:54.392Z",
+              "assembledAt": "2026-09-17T06:21:54.392Z",
+              "snapshotId": "FiTPZp582A123JEh9luoIwKigZB68Hcp",
+              "sourceCutoffs": [
+                {
+                  "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                  "resolved": {
+                    "granularity": "mixed",
+                    "from": null,
+                    "through": null
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:09.771Z",
+                  "cache": {
+                    "status": "hit",
+                    "observedAt": "2026-09-17T06:21:53.269Z",
+                    "storedAt": "2026-09-17T06:20:09.777Z",
+                    "ageMs": 103492,
+                    "ttlMs": 21600000
+                  }
+                },
+                {
+                  "sourceUrl": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+                  "resolved": {
+                    "granularity": "mixed",
+                    "from": null,
+                    "through": null
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:25.031Z",
+                  "cache": {
+                    "status": "hit",
+                    "observedAt": "2026-09-17T06:21:53.269Z",
+                    "storedAt": "2026-09-17T06:20:25.036Z",
+                    "ageMs": 88233,
+                    "ttlMs": 21600000
+                  }
+                },
+                {
+                  "sourceUrl": "https://mopsfin.twse.com.tw/",
+                  "resolved": {
+                    "granularity": "mixed",
+                    "from": null,
+                    "through": null
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:21:54.388Z",
+                  "cache": {
+                    "status": "bypass",
+                    "observedAt": "2026-09-17T06:21:54.388Z",
+                    "storedAt": null,
+                    "ageMs": null,
+                    "ttlMs": 0
+                  }
+                }
+              ]
+            },
+            "quality": {
+              "status": "partial",
+              "source": "complete",
+              "universe": "unverified",
+              "selection": "complete",
+              "values": "complete",
+              "freshness": "unknown",
+              "freshnessDetails": [
+                {
+                  "status": "within_expected_window",
+                  "lag": {
+                    "value": 1,
+                    "unit": "calendar_day"
+                  },
+                  "reasonCode": "WITHIN_MAXIMUM_LAG",
+                  "reason": "observed as-of 位於 policy 容許窗口內。",
+                  "policyId": "official.current-snapshot.max-age-7d.v1",
+                  "observedAsOf": "2026-09-16",
+                  "expectedAsOf": "2026-09-17",
+                  "sourceUrls": [
+                    "https://openapi.twse.com.tw/v1/opendata/t187ap03_L"
+                  ]
+                },
+                {
+                  "status": "within_expected_window",
+                  "lag": {
+                    "value": 1,
+                    "unit": "calendar_day"
+                  },
+                  "reasonCode": "WITHIN_MAXIMUM_LAG",
+                  "reason": "observed as-of 位於 policy 容許窗口內。",
+                  "policyId": "official.current-snapshot.max-age-7d.v1",
+                  "observedAsOf": "2026-09-16",
+                  "expectedAsOf": "2026-09-17",
+                  "sourceUrls": [
+                    "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O"
+                  ]
+                },
+                {
+                  "status": "unknown",
+                  "lag": null,
+                  "reasonCode": "EXPECTED_AS_OF_UNAVAILABLE",
+                  "reason": "目前沒有可靠的 expected as-of 可驗證此資料是否為最新。",
+                  "policyId": "mopsfin.latest-unverified.v1",
+                  "observedAsOf": "2026Q2",
+                  "expectedAsOf": null,
+                  "sourceUrls": [
+                    "https://mopsfin.twse.com.tw/"
+                  ]
+                }
+              ],
+              "issues": [
+                {
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "code": "RESEARCH_UNIVERSE_HEURISTIC",
+                  "severity": "info",
+                  "scope": "universe",
+                  "message": "current master 通過 heuristic 門檻；沒有官方 declared row count，不能宣稱 verified 全市場。"
+                },
+                {
+                  "code": "RESEARCH_DEFINITION_MISMATCH",
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "severity": "warning",
+                  "scope": "value",
+                  "message": "部分同名欄位定義不同；不得跨定義作共同排名或統計。"
+                },
+                {
+                  "code": "FRESHNESS_UNVERIFIED",
+                  "severity": "warning",
+                  "scope": "source",
+                  "message": "至少一項來源缺少可靠 expected as-of，無法驗證為最新。",
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [
+                      "meta.quality.freshnessDetails"
+                    ],
+                    "periods": [
+                      "2026Q2"
+                    ],
+                    "sourceUrls": [
+                      "https://mopsfin.twse.com.tw/"
+                    ]
+                  }
+                }
+              ]
+            },
+            "page": {
+              "mode": "none",
+              "unit": "none",
+              "limit": null,
+              "returned": null,
+              "total": null,
+              "next": null
+            }
+          },
+          "query": {
+            "companyCodes": [
+              "2330",
+              "6488",
+              "2881",
+              "2886"
+            ],
+            "columns": [
+              "financial.Revenue",
+              "financial.EPS",
+              "financial.GrossMargin"
+            ],
+            "marketDate": "latest",
+            "revenueMonth": "latest",
+            "outputMode": "full"
+          },
+          "evaluatedAt": "2026-09-17T06:21:53.133Z",
+          "registryVersion": "mopsfin.research.fields.v1",
+          "columns": [
+            {
+              "id": "financial.Revenue",
+              "name": "營業收入",
+              "type": "number",
+              "unit": "TWD",
+              "domain": "financial",
+              "frequency": "quarterly",
+              "basis": "quarterly",
+              "definitionId": "mopsfin.financial.Revenue.quarterly.v1",
+              "dependencies": [
+                "financial"
+              ],
+              "applicability": "all",
+              "filterOperators": [],
+              "sortable": false,
+              "cost": "company_metric_batch",
+              "normalization": {
+                "sourceUnit": "仟元",
+                "outputUnit": "TWD",
+                "factor": 1000
+              },
+              "supportedTools": [
+                "compare_companies"
+              ],
+              "definitions": [
+                "mopsfin.financial.Revenue.quarterly.v1",
+                "mopsfin.financial.Revenue.quarterly.v1.financial_net_revenue"
+              ],
+              "periods": [
+                "2026Q2"
+              ],
+              "definitionMismatch": true,
+              "periodMismatch": false
+            },
+            {
+              "id": "financial.EPS",
+              "name": "每股盈餘",
+              "type": "number",
+              "unit": "TWD/share",
+              "domain": "financial",
+              "frequency": "quarterly",
+              "basis": "quarterly",
+              "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+              "dependencies": [
+                "financial"
+              ],
+              "applicability": "all",
+              "filterOperators": [],
+              "sortable": false,
+              "cost": "company_metric_batch",
+              "normalization": {
+                "sourceUnit": "元",
+                "outputUnit": "TWD/share",
+                "factor": 1
+              },
+              "supportedTools": [
+                "compare_companies"
+              ],
+              "definitions": [
+                "mopsfin.financial.EPS.quarterly.v1"
+              ],
+              "periods": [
+                "2026Q2"
+              ],
+              "definitionMismatch": false,
+              "periodMismatch": false
+            },
+            {
+              "id": "financial.GrossMargin",
+              "name": "毛利率",
+              "type": "number",
+              "unit": "%",
+              "domain": "financial",
+              "frequency": "quarterly",
+              "basis": "quarterly",
+              "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+              "dependencies": [
+                "financial"
+              ],
+              "applicability": "non_financial",
+              "filterOperators": [],
+              "sortable": false,
+              "cost": "company_metric_batch",
+              "normalization": {
+                "sourceUnit": "%",
+                "outputUnit": "%",
+                "factor": 1
+              },
+              "supportedTools": [
+                "compare_companies"
+              ],
+              "definitions": [
+                "mopsfin.financial.GrossMargin.quarterly.v1"
+              ],
+              "periods": [
+                "2026Q2"
+              ],
+              "definitionMismatch": false,
+              "periodMismatch": false
+            }
+          ],
+          "alignment": {
+            "policy": "common_latest",
+            "searchWindow": [
+              "2023Q3",
+              "2023Q4",
+              "2024Q1",
+              "2024Q2",
+              "2024Q3",
+              "2024Q4",
+              "2025Q1",
+              "2025Q2",
+              "2025Q3",
+              "2025Q4",
+              "2026Q1",
+              "2026Q2"
+            ],
+            "status": "selected",
+            "commonPeriod": "2026Q2",
+            "companies": [
+              {
+                "companyCode": "2330",
+                "constraints": [
+                  {
+                    "metricCode": "Revenue",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  },
+                  {
+                    "metricCode": "EPS",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  },
+                  {
+                    "metricCode": "GrossMargin",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  }
+                ],
+                "availablePeriods": [
+                  "2026Q2",
+                  "2026Q1",
+                  "2025Q4",
+                  "2025Q3",
+                  "2025Q2",
+                  "2025Q1",
+                  "2024Q4",
+                  "2024Q3",
+                  "2024Q2",
+                  "2024Q1",
+                  "2023Q4",
+                  "2023Q3"
+                ],
+                "applicableMetricCount": 3,
+                "selectedPeriod": "2026Q2"
+              },
+              {
+                "companyCode": "6488",
+                "constraints": [
+                  {
+                    "metricCode": "Revenue",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  },
+                  {
+                    "metricCode": "EPS",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  },
+                  {
+                    "metricCode": "GrossMargin",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  }
+                ],
+                "availablePeriods": [
+                  "2026Q2",
+                  "2026Q1",
+                  "2025Q4",
+                  "2025Q3",
+                  "2025Q2",
+                  "2025Q1",
+                  "2024Q4",
+                  "2024Q3",
+                  "2024Q2",
+                  "2024Q1",
+                  "2023Q4",
+                  "2023Q3"
+                ],
+                "applicableMetricCount": 3,
+                "selectedPeriod": "2026Q2"
+              },
+              {
+                "companyCode": "2881",
+                "constraints": [
+                  {
+                    "metricCode": "Revenue",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  },
+                  {
+                    "metricCode": "EPS",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  },
+                  {
+                    "metricCode": "GrossMargin",
+                    "applicability": "not_applicable",
+                    "availablePeriods": []
+                  }
+                ],
+                "availablePeriods": [
+                  "2026Q2",
+                  "2026Q1",
+                  "2025Q4",
+                  "2025Q3",
+                  "2025Q2",
+                  "2025Q1",
+                  "2024Q4",
+                  "2024Q3",
+                  "2024Q2",
+                  "2024Q1",
+                  "2023Q4",
+                  "2023Q3"
+                ],
+                "applicableMetricCount": 2,
+                "selectedPeriod": "2026Q2"
+              },
+              {
+                "companyCode": "2886",
+                "constraints": [
+                  {
+                    "metricCode": "Revenue",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  },
+                  {
+                    "metricCode": "EPS",
+                    "applicability": "applicable",
+                    "availablePeriods": [
+                      "2026Q2",
+                      "2026Q1",
+                      "2025Q4",
+                      "2025Q3",
+                      "2025Q2",
+                      "2025Q1",
+                      "2024Q4",
+                      "2024Q3",
+                      "2024Q2",
+                      "2024Q1",
+                      "2023Q4",
+                      "2023Q3"
+                    ]
+                  },
+                  {
+                    "metricCode": "GrossMargin",
+                    "applicability": "not_applicable",
+                    "availablePeriods": []
+                  }
+                ],
+                "availablePeriods": [
+                  "2026Q2",
+                  "2026Q1",
+                  "2025Q4",
+                  "2025Q3",
+                  "2025Q2",
+                  "2025Q1",
+                  "2024Q4",
+                  "2024Q3",
+                  "2024Q2",
+                  "2024Q1",
+                  "2023Q4",
+                  "2023Q3"
+                ],
+                "applicableMetricCount": 2,
+                "selectedPeriod": "2026Q2"
+              }
+            ]
+          },
+          "financialDefinitions": [
+            {
+              "companyCode": "2330",
+              "metricCode": "Revenue",
+              "field": "financial.Revenue",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.Revenue.quarterly.v1",
+              "meaning": "營業收入",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "2330",
+              "metricCode": "EPS",
+              "field": "financial.EPS",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+              "meaning": "每股盈餘",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "2330",
+              "metricCode": "GrossMargin",
+              "field": "financial.GrossMargin",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+              "meaning": "毛利率",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "6488",
+              "metricCode": "Revenue",
+              "field": "financial.Revenue",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.Revenue.quarterly.v1",
+              "meaning": "營業收入",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "6488",
+              "metricCode": "EPS",
+              "field": "financial.EPS",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+              "meaning": "每股盈餘",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "6488",
+              "metricCode": "GrossMargin",
+              "field": "financial.GrossMargin",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+              "meaning": "毛利率",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "2881",
+              "metricCode": "Revenue",
+              "field": "financial.Revenue",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.Revenue.quarterly.v1.financial_net_revenue",
+              "meaning": "營業收入：金融／金控官方對應淨收益",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "2881",
+              "metricCode": "EPS",
+              "field": "financial.EPS",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+              "meaning": "每股盈餘",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "2881",
+              "metricCode": "GrossMargin",
+              "field": "financial.GrossMargin",
+              "applicability": "not_applicable",
+              "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+              "meaning": "毛利率",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "2886",
+              "metricCode": "Revenue",
+              "field": "financial.Revenue",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.Revenue.quarterly.v1.financial_net_revenue",
+              "meaning": "營業收入：金融／金控官方對應淨收益",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "2886",
+              "metricCode": "EPS",
+              "field": "financial.EPS",
+              "applicability": "applicable",
+              "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+              "meaning": "每股盈餘",
+              "definitionVerified": true
+            },
+            {
+              "companyCode": "2886",
+              "metricCode": "GrossMargin",
+              "field": "financial.GrossMargin",
+              "applicability": "not_applicable",
+              "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+              "meaning": "毛利率",
+              "definitionVerified": true
+            }
+          ],
+          "financialFreshness": {
+            "latestFilingVerified": false,
+            "periodSelection": "latest observed within calendar window or explicit; not filing vintage"
+          },
+          "universe": {
+            "verification": {
+              "status": "heuristic",
+              "method": "required_sources_schema_single_report_date_minimum_count",
+              "officialDeclaredRowCountAvailable": false
+            },
+            "freshness": [
+              {
+                "market": "listed",
+                "freshness": "fresh"
+              },
+              {
+                "market": "otc",
+                "freshness": "fresh"
+              }
+            ],
+            "currentMasterOnly": true,
+            "historicalPointInTime": false
+          },
+          "resolvedDates": {
+            "marketDate": null,
+            "revenueMonth": null
+          },
+          "presentation": {
+            "outputMode": "full",
+            "scope": "entire_selection",
+            "rowCount": 4,
+            "rowsOmitted": false,
+            "rows": [
+              {
+                "code": "2330",
+                "name": "台積電",
+                "market": "listed",
+                "cells": {
+                  "financial.Revenue": {
+                    "value": 1270380250000,
+                    "status": "available",
+                    "unit": "TWD",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.Revenue.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "仟元",
+                      "sourceValue": 1270380250,
+                      "factor": 1000
+                    }
+                  },
+                  "financial.EPS": {
+                    "value": 27.25,
+                    "status": "available",
+                    "unit": "TWD/share",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "元",
+                      "sourceValue": 27.25,
+                      "factor": 1
+                    }
+                  },
+                  "financial.GrossMargin": {
+                    "value": 67.72,
+                    "status": "available",
+                    "unit": "%",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "%",
+                      "sourceValue": 67.72,
+                      "factor": 1
+                    }
+                  }
+                }
+              },
+              {
+                "code": "6488",
+                "name": "環球晶",
+                "market": "otc",
+                "cells": {
+                  "financial.Revenue": {
+                    "value": 15214310000,
+                    "status": "available",
+                    "unit": "TWD",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.Revenue.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "仟元",
+                      "sourceValue": 15214310,
+                      "factor": 1000
+                    }
+                  },
+                  "financial.EPS": {
+                    "value": 7.9,
+                    "status": "available",
+                    "unit": "TWD/share",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "元",
+                      "sourceValue": 7.9,
+                      "factor": 1
+                    }
+                  },
+                  "financial.GrossMargin": {
+                    "value": 20.64,
+                    "status": "available",
+                    "unit": "%",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "%",
+                      "sourceValue": 20.64,
+                      "factor": 1
+                    }
+                  }
+                }
+              },
+              {
+                "code": "2881",
+                "name": "富邦金",
+                "market": "listed",
+                "cells": {
+                  "financial.Revenue": {
+                    "value": 106275016000,
+                    "status": "available",
+                    "unit": "TWD",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.Revenue.quarterly.v1.financial_net_revenue",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "仟元",
+                      "sourceValue": 106275016,
+                      "factor": 1000
+                    }
+                  },
+                  "financial.EPS": {
+                    "value": 4.27,
+                    "status": "available",
+                    "unit": "TWD/share",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "元",
+                      "sourceValue": 4.27,
+                      "factor": 1
+                    }
+                  },
+                  "financial.GrossMargin": {
+                    "value": null,
+                    "status": "not_applicable",
+                    "unit": "%",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "reason": "金融業不適用此財務指標。",
+                    "normalization": {
+                      "sourceUnit": "%",
+                      "sourceValue": null,
+                      "factor": 1
+                    }
+                  }
+                }
+              },
+              {
+                "code": "2886",
+                "name": "兆豐金",
+                "market": "listed",
+                "cells": {
+                  "financial.Revenue": {
+                    "value": 25524113000,
+                    "status": "available",
+                    "unit": "TWD",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.Revenue.quarterly.v1.financial_net_revenue",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "仟元",
+                      "sourceValue": 25524113,
+                      "factor": 1000
+                    }
+                  },
+                  "financial.EPS": {
+                    "value": 0.8,
+                    "status": "available",
+                    "unit": "TWD/share",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.EPS.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "normalization": {
+                      "sourceUnit": "元",
+                      "sourceValue": 0.8,
+                      "factor": 1
+                    }
+                  },
+                  "financial.GrossMargin": {
+                    "value": null,
+                    "status": "not_applicable",
+                    "unit": "%",
+                    "period": "2026Q2",
+                    "basis": "quarterly",
+                    "definitionId": "mopsfin.financial.GrossMargin.quarterly.v1",
+                    "sourceRefs": [
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+                      "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9"
+                    ],
+                    "freshness": "not_applicable",
+                    "reason": "金融業不適用此財務指標。",
+                    "normalization": {
+                      "sourceUnit": "%",
+                      "sourceValue": null,
+                      "factor": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "sources": [
+            {
+              "id": "src_5FS1aGFn7mnjc_9yl-cTIotW_87oWm7g",
+              "domain": "company",
+              "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+              "cutoff": "2026-09-16",
+              "retrievedAt": "2026-09-17T06:20:09.771Z",
+              "cache": {
+                "status": "hit",
+                "observedAt": "2026-09-17T06:21:53.269Z",
+                "storedAt": "2026-09-17T06:20:09.777Z",
+                "ageMs": 103492,
+                "ttlMs": 21600000
+              },
+              "evidence": {
+                "market": "listed",
+                "exchange": "TWSE",
+                "sourceName": "臺灣證券交易所－上市公司基本資料",
+                "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:09.771Z",
+                "rawCount": 1094,
+                "excludedTdrCount": 10,
+                "companyCount": 1084,
+                "minimumExpectedCount": 1000,
+                "cache": {
+                  "status": "hit",
+                  "observedAt": "2026-09-17T06:21:53.269Z",
+                  "storedAt": "2026-09-17T06:20:09.777Z",
+                  "ageMs": 103492,
+                  "ttlMs": 21600000
+                }
+              }
+            },
+            {
+              "id": "src_krirdKhEV8XH0lt9ZERIW4KyZH2M9p62",
+              "domain": "company",
+              "sourceUrl": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+              "cutoff": "2026-09-16",
+              "retrievedAt": "2026-09-17T06:20:25.031Z",
+              "cache": {
+                "status": "hit",
+                "observedAt": "2026-09-17T06:21:53.269Z",
+                "storedAt": "2026-09-17T06:20:25.036Z",
+                "ageMs": 88233,
+                "ttlMs": 21600000
+              },
+              "evidence": {
+                "market": "otc",
+                "exchange": "TPEx",
+                "sourceName": "證券櫃檯買賣中心－上櫃股票基本資料",
+                "sourceUrl": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:25.031Z",
+                "rawCount": 892,
+                "excludedTdrCount": 0,
+                "companyCount": 892,
+                "minimumExpectedCount": 800,
+                "cache": {
+                  "status": "hit",
+                  "observedAt": "2026-09-17T06:21:53.269Z",
+                  "storedAt": "2026-09-17T06:20:25.036Z",
+                  "ageMs": 88233,
+                  "ttlMs": 21600000
+                }
+              }
+            },
+            {
+              "id": "src_Pf2EqDTELh33QAIImkEKLpu0oa-VTvp9",
+              "domain": "financial",
+              "sourceUrl": "https://mopsfin.twse.com.tw/",
+              "cutoff": null,
+              "retrievedAt": "2026-09-17T06:21:54.388Z",
+              "cache": {
+                "status": "bypass",
+                "observedAt": "2026-09-17T06:21:54.388Z",
+                "storedAt": null,
+                "ageMs": null,
+                "ttlMs": 0
+              },
+              "evidence": {
+                "sourceName": "公開資訊觀測站－財務比較 E 點通",
+                "sourceUrl": "https://mopsfin.twse.com.tw/",
+                "retrievedAt": "2026-09-17T06:21:54.388Z",
+                "upstreamRoute": "/compare/data",
+                "freshnessNote": "原站每日更新一次，資料可能較最新申報落後約一日。",
+                "cache": {
+                  "status": "bypass",
+                  "observedAt": "2026-09-17T06:21:54.388Z",
+                  "storedAt": null,
+                  "ageMs": null,
+                  "ttlMs": 0
+                }
+              }
+            }
+          ],
+          "failures": [],
+          "financialFailures": [],
+          "sourceCoverage": {
+            "price": null,
+            "valuation": null,
+            "revenue": null
+          },
+          "financialCoverage": {
+            "selectionComplete": false,
+            "requestedCompanyCodes": [
+              "2330",
+              "6488",
+              "2881",
+              "2886"
+            ],
+            "returnedCompanyCodes": [
+              "2330",
+              "6488",
+              "2881",
+              "2886"
+            ],
+            "missingCompanyCodes": [],
+            "noValidDataCompanyCodes": [],
+            "unavailableCompanyCodes": [],
+            "sourceComplete": true,
+            "failureIsolationComplete": true,
+            "identityFailedCompanyCodes": [],
+            "metrics": [
+              {
+                "metricCode": "Revenue",
+                "returnedCompanyCodes": [
+                  "2330",
+                  "6488",
+                  "2881",
+                  "2886"
+                ],
+                "missingCompanyCodes": [],
+                "noValidDataCompanyCodes": [],
+                "unavailableCompanyCodes": []
+              },
+              {
+                "metricCode": "EPS",
+                "returnedCompanyCodes": [
+                  "2330",
+                  "6488",
+                  "2881",
+                  "2886"
+                ],
+                "missingCompanyCodes": [],
+                "noValidDataCompanyCodes": [],
+                "unavailableCompanyCodes": []
+              },
+              {
+                "metricCode": "GrossMargin",
+                "returnedCompanyCodes": [
+                  "2330",
+                  "6488",
+                  "2881",
+                  "2886"
+                ],
+                "missingCompanyCodes": [],
+                "noValidDataCompanyCodes": [
+                  "2881",
+                  "2886"
+                ],
+                "unavailableCompanyCodes": []
+              }
+            ]
+          },
+          "resolverEvidence": null,
+          "snapshotId": "FiTPZp582A123JEh9luoIwKigZB68Hcp",
+          "workBudget": {
+            "orchestrationMasterCalls": 1,
+            "catalogCalls": 1,
+            "resolverCalls": 0,
+            "resolver": null,
+            "domainCalls": [],
+            "perCompanyMarketCalls": 0,
+            "dependencyCosts": {
+              "price": null,
+              "valuation": null,
+              "revenue": null
+            },
+            "unitDefinition": "domain calls are logical calls; sources describe returned evidence, not all discovery, cache, retry or failed HTTP attempts",
+            "financialBatchCalls": 1,
+            "financialBatch": {
+              "comparisonPlanUnits": 3,
+              "comparisonExecutedUnits": 3,
+              "isolationRetryUnits": 0,
+              "comparisonUnitLimit": 24,
+              "identityLookupUpperBound": 4,
+              "unitDefinition": "one_metric_by_up_to_ten_companies_request"
+            },
+            "financialBatchDependencyCatalogLookup": "dependency_managed"
+          },
+          "warnings": [
+            "本清單代表 TWSE／TPEx 官方公司母體，不保證每家公司在 Mopsfin 的每個指標或期別都有資料。",
+            "上市清單已排除 TDR；ETF、ETN、權證與特別股不在本工具的公司母體內。",
+            "coverageComplete=true 僅代表必要來源、必要欄位、單一出表日期、唯一代號與最低筆數 heuristic gate 均通過；官方來源沒有 declared row count，因此無法證明完整 rowset。",
+            "Revenue [2330、6488、2881、2886]：quarterly 是 Mopsfin 單季口徑；上市櫃 Q4 通常以全年累計減 Q3，興櫃／公開發行 Q2 通常為前兩季累計、Q4 通常以全年累計減 Q2。",
+            "Revenue [2330、6488、2881、2886]：請同時檢查 unit、basis、periods 與 warnings。",
+            "EPS [2330、6488、2881、2886]：quarterly 是 Mopsfin 單季口徑；上市櫃 Q4 通常以全年累計減 Q3，興櫃／公開發行 Q2 通常為前兩季累計、Q4 通常以全年累計減 Q2。",
+            "EPS [2330、6488、2881、2886]：請同時檢查 unit、basis、periods 與 warnings。",
+            "GrossMargin [2330、6488、2881、2886]：部分資料點缺值；可能是該公司不適用或尚未申報。",
+            "GrossMargin [2330、6488、2881、2886]：下列公司在本次期別範圍沒有有效數值：2881、2886；selectionComplete=false。",
+            "GrossMargin [2330、6488、2881、2886]：quarterly 是 Mopsfin 單季口徑；上市櫃 Q4 通常以全年累計減 Q3，興櫃／公開發行 Q2 通常為前兩季累計、Q4 通常以全年累計減 Q2。",
+            "GrossMargin [2330、6488、2881、2886]：請同時檢查 unit、basis、periods 與 warnings。",
+            "批次工具不包含產業平均或所選公司平均；完成 identity 的每家公司都保留全部 requested metrics，unavailable 不會被改寫成 no_data 或 0。",
+            "本頁 comparison work units=3/24（planned=3、isolation=0）；identity logical lookup 上限=4（cache hit 可減少，HTTP retry 另計）。",
+            "各欄位保留自己的日期；market_date 並非整份比較的歷史 as-of。",
+            "選定季度代表目前來源可觀察資料，不保證最新申報或當時已知 vintage。"
+          ]
+        }
+      }
+    },
+    {
+      "label": "technicals_sma5_raw",
+      "name": "get_stock_technicals",
+      "arguments": {
+        "company_code": "2330",
+        "price_basis": "raw_unadjusted",
+        "indicators": [
+          "sma"
+        ],
+        "sma_periods": [
+          5
+        ]
+      },
+      "elapsedMs": 377,
+      "contractValid": true,
+      "quality": {
+        "status": "partial",
+        "source": "complete",
+        "universe": "unverified",
+        "selection": "complete",
+        "values": "complete",
+        "freshness": "within_expected_window",
+        "freshnessDetails": [
+          {
+            "status": "within_expected_window",
+            "lag": {
+              "value": 0,
+              "unit": "trading_session"
+            },
+            "reasonCode": "MATCHES_EXPECTED_AS_OF",
+            "reason": "observed as-of 與 expected as-of 相符。",
+            "policyId": "official.completed-session.v1",
+            "observedAsOf": "2026-09-17",
+            "expectedAsOf": "2026-09-17",
+            "sourceUrls": [
+              "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json"
+            ],
+            "resolverEvidence": {
+              "resolverId": "taiwan-equity.completed-session.v1",
+              "status": "resolved",
+              "evaluatedAt": "2026-09-17T06:21:54.404Z",
+              "timezone": "Asia/Taipei",
+              "completionGuardTaipei": "13:33:00",
+              "markets": [
+                "listed"
+              ],
+              "expectedAsOf": "2026-09-17",
+              "reasonCode": "COMPLETED_SESSION_RESOLVED",
+              "reason": "各市場 scheduled calendar candidate 已由該市場官方 exact benchmark session 確認。",
+              "marketResolutions": [
+                {
+                  "market": "listed",
+                  "status": "resolved",
+                  "scheduledCandidate": "2026-09-17",
+                  "expectedAsOf": "2026-09-17",
+                  "reasonCode": "COMPLETED_SESSION_RESOLVED",
+                  "reason": "scheduled candidate 已由該市場官方 exact benchmark session 確認。",
+                  "sources": [
+                    {
+                      "role": "calendar",
+                      "market": "listed",
+                      "exchange": "TWSE",
+                      "sourceName": "臺灣證券交易所－有價證券集中交易市場開休市日期",
+                      "sourceUrl": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?queryYear=115&response=json",
+                      "retrievedAt": "2026-09-17T06:20:09.873Z",
+                      "cache": {
+                        "status": "hit",
+                        "observedAt": "2026-09-17T06:21:54.406Z",
+                        "storedAt": "2026-09-17T06:20:09.873Z",
+                        "ageMs": 104533,
+                        "ttlMs": 300000
+                      },
+                      "asOf": "2026",
+                      "asOfGranularity": "year"
+                    },
+                    {
+                      "role": "session_marker",
+                      "market": "listed",
+                      "exchange": "TWSE",
+                      "sourceName": "臺灣證券交易所－發行量加權股價指數歷史資料",
+                      "sourceUrl": "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json",
+                      "retrievedAt": "2026-09-17T06:20:09.995Z",
+                      "cache": {
+                        "status": "hit",
+                        "observedAt": "2026-09-17T06:21:54.406Z",
+                        "storedAt": "2026-09-17T06:20:09.995Z",
+                        "ageMs": 104411,
+                        "ttlMs": 300000
+                      },
+                      "asOf": "2026-09",
+                      "asOfGranularity": "month"
+                    }
+                  ],
+                  "workBudget": {
+                    "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+                    "calendarLogicalLoads": 1,
+                    "sessionMarkerLogicalLoads": 1,
+                    "actualTotal": 2,
+                    "maximumTotal": 2
+                  }
+                }
+              ],
+              "workBudget": {
+                "scope": "freshness_meta_layer",
+                "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+                "marketCount": 1,
+                "calendarLogicalLoads": 1,
+                "sessionMarkerLogicalLoads": 1,
+                "actualTotal": 2,
+                "maximumTotal": 2
+              }
+            }
+          }
+        ],
+        "issues": [
+          {
+            "refs": {
+              "companyCodes": [],
+              "fields": [],
+              "periods": [],
+              "sourceUrls": []
+            },
+            "code": "RESEARCH_UNIVERSE_HEURISTIC",
+            "severity": "info",
+            "scope": "universe",
+            "message": "current master 通過 heuristic 門檻；沒有官方 declared row count，不能宣稱 verified 全市場。"
+          }
+        ]
+      },
+      "resolved": {
+        "granularity": "date",
+        "from": "2026-09-17",
+        "through": "2026-09-17"
+      },
+      "sourceCount": 2,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "2330 2026-09-17 日線技術指標，完整性 complete。"
+          }
+        ],
+        "structuredContent": {
+          "ok": true,
+          "meta": {
+            "contractVersion": "mopsfin.result.v1",
+            "asOf": {
+              "selector": "latest",
+              "resolved": {
+                "granularity": "date",
+                "from": "2026-09-17",
+                "through": "2026-09-17"
+              },
+              "timezone": "Asia/Taipei",
+              "servedAt": "2026-09-17T06:21:54.767Z",
+              "assembledAt": "2026-09-17T06:21:54.767Z",
+              "snapshotId": "1be20a9f9c509499ede6bb5d",
+              "sourceCutoffs": [
+                {
+                  "sourceUrl": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?queryYear=115&response=json",
+                  "resolved": {
+                    "granularity": "date",
+                    "from": "2026-01-01",
+                    "through": "2026-12-31"
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:09.873Z",
+                  "cache": {
+                    "status": "hit",
+                    "observedAt": "2026-09-17T06:21:54.406Z",
+                    "storedAt": "2026-09-17T06:20:09.873Z",
+                    "ageMs": 104533,
+                    "ttlMs": 300000
+                  }
+                },
+                {
+                  "sourceUrl": "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json",
+                  "resolved": {
+                    "granularity": "month",
+                    "from": "2026-09",
+                    "through": "2026-09"
+                  },
+                  "publishedAt": null,
+                  "retrievedAt": "2026-09-17T06:20:09.995Z",
+                  "cache": {
+                    "status": "hit",
+                    "observedAt": "2026-09-17T06:21:54.406Z",
+                    "storedAt": "2026-09-17T06:20:09.995Z",
+                    "ageMs": 104411,
+                    "ttlMs": 300000
+                  }
+                }
+              ]
+            },
+            "quality": {
+              "status": "partial",
+              "source": "complete",
+              "universe": "unverified",
+              "selection": "complete",
+              "values": "complete",
+              "freshness": "within_expected_window",
+              "freshnessDetails": [
+                {
+                  "status": "within_expected_window",
+                  "lag": {
+                    "value": 0,
+                    "unit": "trading_session"
+                  },
+                  "reasonCode": "MATCHES_EXPECTED_AS_OF",
+                  "reason": "observed as-of 與 expected as-of 相符。",
+                  "policyId": "official.completed-session.v1",
+                  "observedAsOf": "2026-09-17",
+                  "expectedAsOf": "2026-09-17",
+                  "sourceUrls": [
+                    "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json"
+                  ],
+                  "resolverEvidence": {
+                    "resolverId": "taiwan-equity.completed-session.v1",
+                    "status": "resolved",
+                    "evaluatedAt": "2026-09-17T06:21:54.404Z",
+                    "timezone": "Asia/Taipei",
+                    "completionGuardTaipei": "13:33:00",
+                    "markets": [
+                      "listed"
+                    ],
+                    "expectedAsOf": "2026-09-17",
+                    "reasonCode": "COMPLETED_SESSION_RESOLVED",
+                    "reason": "各市場 scheduled calendar candidate 已由該市場官方 exact benchmark session 確認。",
+                    "marketResolutions": [
+                      {
+                        "market": "listed",
+                        "status": "resolved",
+                        "scheduledCandidate": "2026-09-17",
+                        "expectedAsOf": "2026-09-17",
+                        "reasonCode": "COMPLETED_SESSION_RESOLVED",
+                        "reason": "scheduled candidate 已由該市場官方 exact benchmark session 確認。",
+                        "sources": [
+                          {
+                            "role": "calendar",
+                            "market": "listed",
+                            "exchange": "TWSE",
+                            "sourceName": "臺灣證券交易所－有價證券集中交易市場開休市日期",
+                            "sourceUrl": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?queryYear=115&response=json",
+                            "retrievedAt": "2026-09-17T06:20:09.873Z",
+                            "cache": {
+                              "status": "hit",
+                              "observedAt": "2026-09-17T06:21:54.406Z",
+                              "storedAt": "2026-09-17T06:20:09.873Z",
+                              "ageMs": 104533,
+                              "ttlMs": 300000
+                            },
+                            "asOf": "2026",
+                            "asOfGranularity": "year"
+                          },
+                          {
+                            "role": "session_marker",
+                            "market": "listed",
+                            "exchange": "TWSE",
+                            "sourceName": "臺灣證券交易所－發行量加權股價指數歷史資料",
+                            "sourceUrl": "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json",
+                            "retrievedAt": "2026-09-17T06:20:09.995Z",
+                            "cache": {
+                              "status": "hit",
+                              "observedAt": "2026-09-17T06:21:54.406Z",
+                              "storedAt": "2026-09-17T06:20:09.995Z",
+                              "ageMs": 104411,
+                              "ttlMs": 300000
+                            },
+                            "asOf": "2026-09",
+                            "asOfGranularity": "month"
+                          }
+                        ],
+                        "workBudget": {
+                          "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+                          "calendarLogicalLoads": 1,
+                          "sessionMarkerLogicalLoads": 1,
+                          "actualTotal": 2,
+                          "maximumTotal": 2
+                        }
+                      }
+                    ],
+                    "workBudget": {
+                      "scope": "freshness_meta_layer",
+                      "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+                      "marketCount": 1,
+                      "calendarLogicalLoads": 1,
+                      "sessionMarkerLogicalLoads": 1,
+                      "actualTotal": 2,
+                      "maximumTotal": 2
+                    }
+                  }
+                }
+              ],
+              "issues": [
+                {
+                  "refs": {
+                    "companyCodes": [],
+                    "fields": [],
+                    "periods": [],
+                    "sourceUrls": []
+                  },
+                  "code": "RESEARCH_UNIVERSE_HEURISTIC",
+                  "severity": "info",
+                  "scope": "universe",
+                  "message": "current master 通過 heuristic 門檻；沒有官方 declared row count，不能宣稱 verified 全市場。"
+                }
+              ]
+            },
+            "page": {
+              "mode": "none",
+              "unit": "none",
+              "limit": null,
+              "returned": null,
+              "total": null,
+              "next": null
+            }
+          },
+          "query": {
+            "companyCode": "2330",
+            "asOf": "latest",
+            "priceBasis": "raw_unadjusted",
+            "indicators": [
+              "sma"
+            ],
+            "smaPeriods": [
+              5
+            ]
+          },
+          "evaluatedAt": "2026-09-17T06:21:54.404Z",
+          "asOf": "2026-09-17",
+          "timezone": "Asia/Taipei",
+          "interval": "1d",
+          "company": {
+            "code": "2330",
+            "name": "台灣積體電路製造股份有限公司",
+            "shortName": "台積電",
+            "market": "listed",
+            "exchange": "TWSE",
+            "industryCode": "24",
+            "listingDate": "1994-09-05",
+            "incorporationDate": "1987-02-21",
+            "paidInCapitalTwd": 259323700670,
+            "issuedCommonShares": 25932370067,
+            "parValueText": "新台幣 10.0000元",
+            "financialReportTypeCode": "1",
+            "profileValueStatus": {
+              "incorporationDate": "reported",
+              "paidInCapitalTwd": "reported",
+              "issuedCommonShares": "reported",
+              "parValueText": "reported",
+              "financialReportTypeCode": "reported"
+            },
+            "domicileCode": "TW",
+            "isKy": false,
+            "isFinancial": false
+          },
+          "priceBasis": "raw_unadjusted",
+          "isTotalReturn": false,
+          "asOfEvidence": {
+            "resolverId": "taiwan-equity.completed-session.v1",
+            "status": "resolved",
+            "evaluatedAt": "2026-09-17T06:21:54.404Z",
+            "timezone": "Asia/Taipei",
+            "completionGuardTaipei": "13:33:00",
+            "markets": [
+              "listed"
+            ],
+            "expectedAsOf": "2026-09-17",
+            "reasonCode": "COMPLETED_SESSION_RESOLVED",
+            "reason": "各市場 scheduled calendar candidate 已由該市場官方 exact benchmark session 確認。",
+            "marketResolutions": [
+              {
+                "market": "listed",
+                "status": "resolved",
+                "scheduledCandidate": "2026-09-17",
+                "expectedAsOf": "2026-09-17",
+                "reasonCode": "COMPLETED_SESSION_RESOLVED",
+                "reason": "scheduled candidate 已由該市場官方 exact benchmark session 確認。",
+                "sources": [
+                  {
+                    "role": "calendar",
+                    "market": "listed",
+                    "exchange": "TWSE",
+                    "sourceName": "臺灣證券交易所－有價證券集中交易市場開休市日期",
+                    "sourceUrl": "https://www.twse.com.tw/holidaySchedule/holidaySchedule?queryYear=115&response=json",
+                    "retrievedAt": "2026-09-17T06:20:09.873Z",
+                    "cache": {
+                      "status": "hit",
+                      "observedAt": "2026-09-17T06:21:54.406Z",
+                      "storedAt": "2026-09-17T06:20:09.873Z",
+                      "ageMs": 104533,
+                      "ttlMs": 300000
+                    },
+                    "asOf": "2026",
+                    "asOfGranularity": "year"
+                  },
+                  {
+                    "role": "session_marker",
+                    "market": "listed",
+                    "exchange": "TWSE",
+                    "sourceName": "臺灣證券交易所－發行量加權股價指數歷史資料",
+                    "sourceUrl": "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json",
+                    "retrievedAt": "2026-09-17T06:20:09.995Z",
+                    "cache": {
+                      "status": "hit",
+                      "observedAt": "2026-09-17T06:21:54.406Z",
+                      "storedAt": "2026-09-17T06:20:09.995Z",
+                      "ageMs": 104411,
+                      "ttlMs": 300000
+                    },
+                    "asOf": "2026-09",
+                    "asOfGranularity": "month"
+                  }
+                ],
+                "workBudget": {
+                  "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+                  "calendarLogicalLoads": 1,
+                  "sessionMarkerLogicalLoads": 1,
+                  "actualTotal": 2,
+                  "maximumTotal": 2
+                }
+              }
+            ],
+            "workBudget": {
+              "scope": "freshness_meta_layer",
+              "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+              "marketCount": 1,
+              "calendarLogicalLoads": 1,
+              "sessionMarkerLogicalLoads": 1,
+              "actualTotal": 2,
+              "maximumTotal": 2
+            }
+          },
+          "identity": {
+            "status": "verified_current_master",
+            "companyCode": "2330",
+            "companyName": "台積電",
+            "resolvedMarket": "listed",
+            "currentMasterMarket": "listed",
+            "currentMasterName": "台積電",
+            "masterSnapshotId": "listed-2026-09-16+otc-2026-09-16",
+            "observedNames": [
+              "台積電"
+            ],
+            "observedMarkets": [
+              "listed"
+            ],
+            "reasons": []
+          },
+          "indicators": {
+            "sma_5": {
+              "value": 2396,
+              "status": "available",
+              "reason": null,
+              "unit": "TWD",
+              "priceBasis": "raw_unadjusted",
+              "calculationVersion": "mopsfin.technicals.v1",
+              "window": {
+                "from": "2026-09-11",
+                "through": "2026-09-17",
+                "expectedSessions": 5,
+                "observedSessions": 5
+              },
+              "details": {
+                "period": 5,
+                "distancePct": 1.210350584307185
+              }
+            }
+          },
+          "coverage": {
+            "requiredSessions": 5,
+            "observedMarketSessions": 5,
+            "marketWindowComplete": true,
+            "priceSeries": {
+              "requestedStart": "2026-09-11",
+              "requestedEnd": "2026-09-17",
+              "rawPrice": {
+                "status": "complete",
+                "coverageComplete": true,
+                "coveredThrough": "2026-09-17",
+                "pageCount": 1,
+                "barCount": 5,
+                "dataQualityComplete": true
+              },
+              "corporateActions": {
+                "status": "not_requested",
+                "coverage": null,
+                "failure": null
+              },
+              "adjustment": {
+                "status": "not_requested",
+                "completeBarCount": 0,
+                "unknownBarCount": 0
+              }
+            },
+            "indicatorsComplete": true
+          },
+          "adjustment": {
+            "status": "not_requested",
+            "adjustmentDirection": "not_applicable",
+            "anchorDate": "2026-09-17",
+            "factorAtWindowStart": null,
+            "cashDividendTreatment": "not_applicable",
+            "isAdjustedClose": false,
+            "isTotalReturn": false,
+            "volumeAdjusted": false,
+            "volumeBasis": "raw_shares",
+            "unknownReasons": [],
+            "officialChangeMarkers": [],
+            "unmatchedOfficialChangeMarkers": [],
+            "marketTransitionDetected": false
+          },
+          "eventLedger": [],
+          "sources": {
+            "master": [
+              {
+                "market": "listed",
+                "exchange": "TWSE",
+                "sourceName": "臺灣證券交易所－上市公司基本資料",
+                "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:09.771Z",
+                "rawCount": 1094,
+                "excludedTdrCount": 10,
+                "companyCount": 1084,
+                "minimumExpectedCount": 1000,
+                "cache": {
+                  "status": "hit",
+                  "observedAt": "2026-09-17T06:21:54.404Z",
+                  "storedAt": "2026-09-17T06:20:09.777Z",
+                  "ageMs": 104627,
+                  "ttlMs": 21600000
+                }
+              },
+              {
+                "market": "otc",
+                "exchange": "TPEx",
+                "sourceName": "證券櫃檯買賣中心－上櫃股票基本資料",
+                "sourceUrl": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:25.031Z",
+                "rawCount": 892,
+                "excludedTdrCount": 0,
+                "companyCount": 892,
+                "minimumExpectedCount": 800,
+                "cache": {
+                  "status": "hit",
+                  "observedAt": "2026-09-17T06:21:54.404Z",
+                  "storedAt": "2026-09-17T06:20:25.036Z",
+                  "ageMs": 89368,
+                  "ttlMs": 21600000
+                }
+              }
+            ],
+            "benchmark": [
+              {
+                "market": "listed",
+                "exchange": "TWSE",
+                "benchmarkCode": "TAIEX",
+                "benchmarkName": "發行量加權股價指數",
+                "sourceName": "臺灣證券交易所－發行量加權股價指數歷史資料",
+                "sourceUrl": "https://www.twse.com.tw/indicesReport/MI_5MINS_HIST?date=20260901&response=json",
+                "dataMonth": "2026-09",
+                "retrievedAt": "2026-09-17T06:21:54.744Z",
+                "cache": {
+                  "status": "miss",
+                  "observedAt": "2026-09-17T06:21:54.744Z",
+                  "storedAt": "2026-09-17T06:21:54.744Z",
+                  "ageMs": 0,
+                  "ttlMs": 300000
+                },
+                "rowCount": 13
+              }
+            ],
+            "prices": [
+              {
+                "market": "listed",
+                "exchange": "TWSE",
+                "sourceName": "臺灣證券交易所－上市公司基本資料",
+                "sourceUrl": "https://openapi.twse.com.tw/v1/opendata/t187ap03_L",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:09.771Z",
+                "rawCount": 1094,
+                "excludedTdrCount": 10,
+                "companyCount": 1084,
+                "minimumExpectedCount": 1000,
+                "cache": {
+                  "status": "hit",
+                  "observedAt": "2026-09-17T06:21:54.744Z",
+                  "storedAt": "2026-09-17T06:20:09.777Z",
+                  "ageMs": 104967,
+                  "ttlMs": 21600000
+                },
+                "stage": "company_master"
+              },
+              {
+                "market": "otc",
+                "exchange": "TPEx",
+                "sourceName": "證券櫃檯買賣中心－上櫃股票基本資料",
+                "sourceUrl": "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap03_O",
+                "reportDate": "2026-09-16",
+                "retrievedAt": "2026-09-17T06:20:25.031Z",
+                "rawCount": 892,
+                "excludedTdrCount": 0,
+                "companyCount": 892,
+                "minimumExpectedCount": 800,
+                "cache": {
+                  "status": "hit",
+                  "observedAt": "2026-09-17T06:21:54.744Z",
+                  "storedAt": "2026-09-17T06:20:25.036Z",
+                  "ageMs": 89708,
+                  "ttlMs": 21600000
+                },
+                "stage": "company_master"
+              },
+              {
+                "market": "listed",
+                "sourceName": "臺灣證券交易所－個股日成交資訊",
+                "sourceUrl": "https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=20260901&stockNo=2330&response=json",
+                "retrievedAt": "2026-09-17T06:21:54.766Z",
+                "cache": {
+                  "status": "miss",
+                  "observedAt": "2026-09-17T06:21:54.766Z",
+                  "storedAt": "2026-09-17T06:21:54.766Z",
+                  "ageMs": 0,
+                  "ttlMs": 300000
+                },
+                "snapshotIdentity": "verified",
+                "dataMonth": "2026-09",
+                "normalization": {
+                  "volumeShares": {
+                    "sourceUnit": "share",
+                    "outputUnit": "share",
+                    "multiplier": 1
+                  },
+                  "turnoverTwd": {
+                    "sourceUnit": "TWD",
+                    "outputUnit": "TWD",
+                    "multiplier": 1
+                  },
+                  "tradeCount": {
+                    "sourceUnit": "trade",
+                    "outputUnit": "trade",
+                    "multiplier": 1
+                  }
+                },
+                "stage": "raw_price"
+              }
+            ]
+          },
+          "workBudget": {
+            "orchestrationMasterCalls": 1,
+            "resolver": {
+              "scope": "freshness_meta_layer",
+              "unitDefinition": "one logical load of one official market source; transport retries do not add units",
+              "marketCount": 1,
+              "calendarLogicalLoads": 1,
+              "sessionMarkerLogicalLoads": 1,
+              "actualTotal": 2,
+              "maximumTotal": 2
+            },
+            "benchmarkMonths": [
+              "2026-09"
+            ],
+            "benchmarkLogicalLoads": 1,
+            "maximumBenchmarkLogicalLoads": 18,
+            "stockCalendarMonths": 1,
+            "priceSeriesCalls": 1,
+            "priceSeries": {
+              "orchestrationCompanyMasterCalls": 1,
+              "rawPriceDependencyMasterLookupPolicy": "dependency_managed_per_cursor_page_not_counted_as_orchestration_call",
+              "rawPricePageLimit": 3,
+              "rawPricePageCount": 1,
+              "rawPricePageUnitDefinition": "one_get_stock_ohlc_cursor_page",
+              "corporateActionHistoryCalls": 0,
+              "corporateActionOfficialRequestCount": 0,
+              "corporateActionRequestUnitDefinition": "one_official_range_or_selected_event_detail_request"
+            },
+            "note": "各 dependency 的 master、raw pages、公司行動 range/detail 成本另列；logical loads 不等於 HTTP 重試次數。"
+          },
+          "warnings": [
+            "價格為官方原始未還原權值日線，不含 adjusted close；不可直接視為含公司行動調整的報酬率。",
+            "只回實際官方交易日期；週末、休市與停牌日期不補合成 bar。",
+            "raw OHLC 與成交量永遠保留官方未還原值；null 不會改寫成 0。",
+            "本次 price_basis=raw_unadjusted，未查詢公司行動，也未產生任何調整後價格。",
+            "現金除息效果保留；此價格指數相容口徑並非含息總報酬。",
+            "raw 模式未驗證股數變動，跨事件技術數字與量比可比性未確認。"
+          ]
+        }
+      }
+    }
+  ],
+  "server": {
+    "name": "mopsfin-taiwan-equities",
+    "version": "0.11.0"
+  },
+  "finishedAt": "2026-09-17T06:21:54.776Z",
+  "allToolContractsPassed": false,
+  "allDataQualityComplete": false
+}

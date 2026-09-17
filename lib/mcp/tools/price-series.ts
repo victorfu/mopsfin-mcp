@@ -1,3 +1,5 @@
+import { priceSeriesSummaryClient } from "@/lib/research/price-summary";
+import { buildResultMeta, type ResultMetaHints } from "../result-contract";
 import { stockPriceSeriesClient } from "@/lib/price-series/client";
 
 import {
@@ -16,7 +18,7 @@ export const getStockPriceSeriesTool = defineTool(
   {
     title: "查詢台股 raw 或公司行動調整價格序列",
     description:
-      "查詢單一四碼台股在含頭含尾 YYYY-MM-DD 範圍內的完整日線序列，最多 36 個日曆月份。price_basis=raw_unadjusted 只收集官方原始未還原權值 OHLC，完全不查公司行動；price_index_compatible_corporate_action_adjusted 則使用 TWSE／TPEx official actual-result 公司行動，以最後一根實際 raw bar 為 factor=1 的 backward anchor，並同時保留 raw 與 adjusted OHLC。現金股利價格效果刻意保留且 cash-only factor=1，因此不是 adjusted close、股息再投資、total return 或 TSR；成交量永遠維持 raw shares。include_event_ledger 只控制 adjusted basis 是否輸出逐事件 factor、prior-close 與 marker reconciliation，不能讓 raw basis觸發公司行動查詢。公司 identity、官方 history coverage、factor、prior close、同日多事件或 change marker 任一證據不足時，受影響 adjusted 值固定為 null，絕不回退 raw。單次呼叫內最多安全收齊 3 個既有 get_stock_ohlc cursor pages，adjusted basis 至多再執行一次公司行動 history dependency；workBudget、coverage、sources 與 fingerprint 揭露完整 lineage。若要自行控制較長 raw 歷史的逐頁讀取，仍使用原有 get_stock_ohlc；本工具不改變其契約。",
+      "查詢單一四碼台股在含頭含尾 YYYY-MM-DD 範圍內的完整日線序列，最多 36 個日曆月份。price_basis=raw_unadjusted 只收集官方原始未還原權值 OHLC，完全不查公司行動；price_index_compatible_corporate_action_adjusted 則使用 TWSE／TPEx official actual-result 公司行動，以最後一根實際 raw bar 為 factor=1 的 backward anchor，並同時保留 raw 與 adjusted OHLC。現金股利價格效果刻意保留且 cash-only factor=1，因此不是 adjusted close、股息再投資、total return 或 TSR；成交量永遠維持 raw shares。include_event_ledger 只控制 adjusted basis 是否輸出逐事件 factor、prior-close 與 marker reconciliation，不能讓 raw basis觸發公司行動查詢。公司 identity、官方 history coverage、factor、prior close、同日多事件或 change marker 任一證據不足時，受影響 adjusted 值固定為 null，絕不回退 raw。單次呼叫內最多安全收齊 3 個既有 get_stock_ohlc cursor pages，adjusted basis 至多再執行一次公司行動 history dependency；workBudget、coverage、sources 與 fingerprint 揭露完整 lineage。若要自行控制較長 raw 歷史的逐頁讀取，仍使用原有 get_stock_ohlc；本工具不改變其契約。output_mode 省略或 full 維持原 bars；summary 省略 bars，對完整已收集 requested window 計算端點報酬、收盤最大回撤與未年化每日對數報酬樣本標準差，保留 ledger／coverage／來源。每日統計另查最多 36 月官方 benchmark session grid，缺交易日或 adjusted close 時不計算、不回退；端點報酬只描述觀察到的首末價格。",
     inputSchema: stockPriceSeriesInputSchema,
     outputSchema: stockPriceSeriesOutputSchema,
     annotations,
@@ -27,6 +29,7 @@ export const getStockPriceSeriesTool = defineTool(
     end_date,
     price_basis,
     include_event_ledger,
+    output_mode,
   }) => {
       const data = await stockPriceSeriesClient.getStockPriceSeries({
         companyCode: company_code,
@@ -54,7 +57,7 @@ export const getStockPriceSeriesTool = defineTool(
       const identityUnverified =
         data.identity.status !== "verified_current_master";
 
-      return success(
+      const response = success(
         `${company_code}：完成 ${data.bars.length} 根日線；priceBasis=${data.requestedPriceBasis}、adjustment=${data.adjustment.status}、dataQualityComplete=${data.dataQualityComplete}。`,
         data,
         {
@@ -238,6 +241,31 @@ export const getStockPriceSeriesTool = defineTool(
           ],
         },
       );
+      if (output_mode !== "summary") return response;
+      const summaryData = await priceSeriesSummaryClient.summarize(data);
+      const { bars: omittedBars, ...retained } = data;
+      void omittedBars;
+      const payload = { ...retained, outputMode: "summary" as const, barsOmitted: true as const, ...summaryData };
+      const original = response.structuredContent.meta;
+      const hints: ResultMetaHints = {
+        selector: original.asOf.selector, resolved: original.asOf.resolved,
+        snapshotId: original.asOf.snapshotId, page: original.page,
+        source: summaryData.summaryFailure ? "partial" : original.quality.source,
+        universe: original.quality.universe, selection: original.quality.selection,
+        values: summaryData.summary.complete ? original.quality.values : "partial",
+        freshnessDetails: [
+          ...original.quality.freshnessDetails,
+          ...selectorFreshness({ selector: "range", observedAsOf: summaryData.summary.lastDate, sources: summaryData.summarySources }),
+        ],
+        issues: [
+          ...original.quality.issues.filter((issue) => issue.code !== "RAW_UNADJUSTED_OHLC_RETAINED"),
+          { code: "PRICE_SERIES_BARS_OMITTED", severity: "info", scope: "value", message: "摘要明確省略 bars；保留原始 coverage、公司行動 ledger 與來源。端點報酬不代表逐日資料完整。", refs: { companyCodes: [company_code], fields: ["summary", "barsOmitted"], periods: [start_date, end_date], sourceUrls: [] } },
+          ...(!summaryData.summary.complete ? [{ code: "PRICE_SUMMARY_INCOMPLETE", severity: "warning" as const, scope: "value" as const, message: "至少一項摘要統計無法驗證；請查看 summary 各統計 reason 與 summaryFailure，不得將 null 當成零。", refs: { companyCodes: [company_code], fields: ["summary", "summaryFailure"], periods: [start_date, end_date], sourceUrls: summaryData.summarySources.map((source) => source.sourceUrl) } }] : []),
+        ],
+      };
+      const summaryResponse = success(`${company_code}：完整 requested window 共 ${data.bars.length} 根日線的摘要；bars 已省略，summary.complete=${summaryData.summary.complete}。`, payload, hints);
+      summaryResponse.structuredContent.meta = buildResultMeta({ ...payload, sources: [...data.sources, ...summaryData.summarySources] }, hints);
+      return summaryResponse;
   },
 );
 

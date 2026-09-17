@@ -89,3 +89,13 @@ export {
   listCatalogInputSchema,
   listCatalogOutputSchema,
 } from "./schema/financials";
+export {
+  screenCompaniesInputSchema,
+  compareCompaniesInputSchema,
+  stockTechnicalsInputSchema,
+} from "./schema/research-inputs";
+export {
+  screenCompaniesOutputSchema,
+  compareCompaniesOutputSchema,
+  stockTechnicalsOutputSchema,
+} from "./schema/research-outputs";

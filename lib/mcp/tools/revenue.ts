@@ -1,3 +1,4 @@
+import { marketProjectionColumns, projectMarketResponse } from "@/lib/research/market-projection";
 import { defineTool } from "./definition";
 import {
   FRESHNESS_POLICIES,
@@ -18,12 +19,13 @@ export const getMonthlyRevenueTool = defineTool(
     {
       title: "查詢台股單月營收",
       description:
-        "查詢上市、上櫃或全部公司在 latest 或 2013-01 起指定 YYYY-MM 的官方單月營收、月增率、年增率與累計營收年增率。latest 以 TWSE／TPEx OpenAPI 發現月份，再與同月或前一月 MOPS archive 核對共同有效月份；若同月不同出表日僅少量重疊公司數值不同，視為官方修訂、採較新 snapshot 並 warning，同出表日或大範圍衝突則報錯。meta freshness 的 within_expected_window 只證明本次 selected month 等於兩市場協調出的 latest common official month，不代表每家公司已完成法定申報；仍須讀 filingCoverage。explicit month 採 exact archive，不退回其他月份。歷史 archive 是目前可取得的修訂後檔案，不是 point-in-time vintage，current master 的 industryCode／reconciliation 只能輔助，應以該月 sourceIndustryName 辨識歷史產業。官方金額原始單位為仟元，本工具固定乘以 1,000 輸出 TWD；每欄 valueStatus 區分 reported、missing、invalid_upstream，null 不可當 0。latest 省略 universe_policy 時使用 strict_current_master，歷史月份使用 compatible 且不允許 strict。coverageComplete 是相容欄位：latest 成功完成必要來源、格式與 snapshot identity 核對時為 true，歷史 archive 因無 declared row count 固定為 false；另以 sourceCoverage 說明 rowset 是否能由目前 master 核對，filingCoverage 則只讓 latest 輔助判讀申報進度，歷史值固定是跨時點不可驗證。company_codes 最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt；省略 page_size/cursor 維持完整回傳。",
+        "查詢上市、上櫃或全部公司在 latest 或 2013-01 起指定 YYYY-MM 的官方單月營收、月增率、年增率與累計營收年增率。latest 以 TWSE／TPEx OpenAPI 發現月份，再與同月或前一月 MOPS archive 核對共同有效月份；若同月不同出表日僅少量重疊公司數值不同，視為官方修訂、採較新 snapshot 並 warning，同出表日或大範圍衝突則報錯。meta freshness 的 within_expected_window 只證明本次 selected month 等於兩市場協調出的 latest common official month，不代表每家公司已完成法定申報；仍須讀 filingCoverage。explicit month 採 exact archive，不退回其他月份。歷史 archive 是目前可取得的修訂後檔案，不是 point-in-time vintage，current master 的 industryCode／reconciliation 只能輔助，應以該月 sourceIndustryName 辨識歷史產業。官方金額原始單位為仟元，本工具固定乘以 1,000 輸出 TWD；每欄 valueStatus 區分 reported、missing、invalid_upstream，null 不可當 0。latest 省略 universe_policy 時使用 strict_current_master，歷史月份使用 compatible 且不允許 strict。coverageComplete 是相容欄位：latest 成功完成必要來源、格式與 snapshot identity 核對時為 true，歷史 archive 因無 declared row count 固定為 false；另以 sourceCoverage 說明 rowset 是否能由目前 master 核對，filingCoverage 則只讓 latest 輔助判讀申報進度，歷史值固定是跨時點不可驗證。company_codes 最多 500 家，sourceReportDate 是資料集出表日，不是個別公司 filedAt；省略 page_size/cursor 維持完整回傳。 columns 限本工具 domain 與 company.code/name/market；output_mode=compact 回壓縮欄位表，summary 統計未分頁前完整 selected rowset。原始 rows/bars 以 rawRowsOmitted 明確標示，由 presentation 取代；來源、品質與 meta.page 保留。未帶新參數時維持原完整回應。",
       inputSchema: monthlyRevenueInputSchema,
       outputSchema: monthlyRevenueOutputSchema,
       annotations,
     },
-    async ({ market, data_month, company_codes, universe_policy, page_size, cursor }) => {
+    async ({ market, data_month, company_codes, universe_policy, page_size, cursor, columns, output_mode }) => {
+        if (columns) marketProjectionColumns("revenue", columns);
         const resolvedUniversePolicy =
           universe_policy ??
           (data_month === "latest" ? "strict_current_master" : "compatible");
@@ -77,7 +79,7 @@ export const getMonthlyRevenueTool = defineTool(
                 returned: pageRows.length,
               },
             };
-        return success(
+        const response = success(
           `${pageData.dataMonth} ${market} 市場：本頁回傳 ${pageData.counts.returned} 家公司月營收，申報覆蓋 ${pageData.filingCoverage.reportedCompanyCount}/${pageData.filingCoverage.expectedCompanyCount}、selectionComplete=${pageData.selectionComplete}。`,
           pageData,
           {
@@ -145,6 +147,7 @@ export const getMonthlyRevenueTool = defineTool(
             ],
           },
         );
+        return projectMarketResponse(response, data, "revenue", { columns, outputMode: output_mode });
     },
 );
 

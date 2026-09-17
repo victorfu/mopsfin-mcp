@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { marketOutputModeInputShape, marketProjectionOutputShape } from "./output-modes";
 
 import {
   calendarDateSchema,
@@ -34,6 +35,7 @@ export const monthlyRevenueInputSchema = z
       .describe(
         "月營收公司母體政策；省略時 latest 使用 strict_current_master、歷史 YYYY-MM 使用 compatible",
       ),
+    ...marketOutputModeInputShape,
     ...optionalCompanyPageShape,
   })
   .strict()
@@ -209,7 +211,7 @@ const revenueSourceCoverageSchema = z
   .strict()
   .describe("來源檔案 rowset 完整性；與公司申報進度 filingCoverage 分開");
 
-export const monthlyRevenueOutputSchema = z
+export const monthlyRevenueFullOutputSchema = z
   .object({
     ...successResultShape,
     query: latestMarketQueryOutputSchema
@@ -499,3 +501,8 @@ export const monthlyRevenueTrendOutputSchema = z
   })
   .strict();
 
+
+export const monthlyRevenueOutputSchema = z.union([
+  monthlyRevenueFullOutputSchema,
+  z.object({ ...monthlyRevenueFullOutputSchema.omit({ rows: true }).shape, ...marketProjectionOutputShape }).strict(),
+]).describe("原完整回應或明確標示的欄位投影／壓縮／摘要回應");

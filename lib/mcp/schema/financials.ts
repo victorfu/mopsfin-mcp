@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { outputModeInput } from "./output-modes";
+import { batchPresentationSchema } from "./batch-presentation";
+import { researchFieldSchema } from "./research-fields";
 
 import {
   companyCodesSchema,
@@ -24,6 +27,7 @@ export const listCatalogInputSchema = z
         "industries",
         "financial_institutions",
         "periods",
+        "research_fields",
       ])
       .default("all")
       .describe("要列出的目錄類型；all 同時回傳指標、產業、金融機構與期間"),
@@ -111,6 +115,7 @@ export const companyMetricInputSchema = z
 
 export const companyMetricsBatchInputSchema = z
   .object({
+    output_mode: outputModeInput,
     company_codes: z
       .array(z.string().regex(/^[0-9A-Za-z]{1,10}$/))
       .min(1)
@@ -331,7 +336,7 @@ const officialGuidanceSchema = z
   .strict()
   .describe("Mopsfin 官方使用說明的機器可讀摘要；LLM 回答資料問題前應遵守");
 
-export const listCatalogOutputSchema = z
+const legacyListCatalogOutputSchema = z
   .object({
     ...successResultShape,
     ...sourceShape,
@@ -385,9 +390,26 @@ export const listCatalogOutputSchema = z
       .describe("符合篩選的即時金控、銀行與票券業機構清單"),
     periods: z.array(periodSchema).describe("首頁目前提供選擇的期別組合；不保證每家公司都有每一期"),
     officialGuidance: officialGuidanceSchema,
+    researchFields: z.array(researchFieldSchema).optional().describe("kind=all 同時回傳固定研究欄位與動態財務欄位"),
+    researchFieldsVersion: z.string().optional().describe("研究欄位定義版本"),
+    researchFieldsCount: z.number().int().optional().describe("研究欄位篩選前總數"),
     ...warningShape,
   })
   .strict();
+
+export const listCatalogOutputSchema = z.union([
+  legacyListCatalogOutputSchema,
+  z.object({
+    ...successResultShape,
+    query: z.object({ kind: z.literal("research_fields").describe("只讀取本服務固定研究欄位"), query: z.string().optional().describe("文字篩選"), limit: z.number().int().describe("回傳上限") }).strict().describe("實際目錄查詢"),
+    scope: z.literal("static_fields").describe("不查上游的靜態研究欄位；財務動態欄位可查 kind=all"),
+    researchFields: z.array(researchFieldSchema).describe("符合文字篩選與上限的固定欄位"),
+    researchFieldsVersion: z.string().describe("欄位 registry 版本"),
+    researchFieldsCount: z.number().int().describe("篩選前固定欄位總數"),
+    financialFieldsIncluded: z.literal(false).describe("本模式不呼叫上游以發現財務欄位"),
+    ...warningShape,
+  }).strict(),
+]).describe("動態官方目錄或不需上游的固定研究欄位目錄");
 
 export const companyMetricOutputSchema = z
   .object({
@@ -576,7 +598,7 @@ const batchFailureSchema = z
   ])
   .describe("未阻斷本頁其他公司或指標的結構化 item failure");
 
-export const companyMetricsBatchOutputSchema = z
+export const companyMetricsBatchFullOutputSchema = z
   .object({
     ...successResultShape,
     query: z
@@ -852,3 +874,13 @@ export const financialInstitutionOutputSchema = z
     ...warningShape,
   })
   .strict();
+
+export const companyMetricsBatchOutputSchema = z.union([
+  companyMetricsBatchFullOutputSchema,
+  z.object({
+    ...companyMetricsBatchFullOutputSchema.omit({ companies: true }).shape,
+    outputMode: z.enum(["compact", "summary"]).describe("財務批次明確輸出模式"),
+    rawCompaniesOmitted: z.literal(true).describe("原始 companies 已由 presentation 取代，不代表無資料"),
+    presentation: batchPresentationSchema,
+  }).strict(),
+]).describe("原完整財務批次或本頁壓縮／摘要，保留 coverage、failures、sources、workBudget 與分頁");

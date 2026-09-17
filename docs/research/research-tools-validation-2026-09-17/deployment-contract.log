@@ -1,0 +1,58 @@
+
+> mopsfin-mcp@0.12.0 test:client
+> node scripts/test-client.mjs http://127.0.0.1:3000/api/mcp
+
+{
+  "check": "deployment_contract",
+  "endpoint": "http://127.0.0.1:3000/api/mcp",
+  "healthEndpoint": "http://127.0.0.1:3000/api/health",
+  "timeoutMs": 60000,
+  "server": {
+    "name": "mopsfin-taiwan-equities",
+    "version": "0.12.0"
+  },
+  "resultContractVersion": "mopsfin.result.v1",
+  "health": {
+    "status": "ok",
+    "liveness": "ok",
+    "applicationReadiness": "ready",
+    "readiness": {
+      "status": "ready",
+      "upstreamChecks": "not_run",
+      "note": "這是 shallow application readiness；深度官方來源契約由低頻 synthetic workflow 驗證，此端點不放大上游流量。"
+    },
+    "upstreamContracts": {
+      "status": "not_checked",
+      "lastCheckedAt": null
+    },
+    "toolCount": 24
+  },
+  "toolNames": [
+    "screen_companies",
+    "compare_companies",
+    "get_stock_technicals",
+    "find_companies",
+    "get_stock_ohlc",
+    "get_stock_price_series",
+    "get_daily_market_ohlc",
+    "analyze_observed_price",
+    "get_stock_reaction_signals",
+    "get_company_catalyst_events",
+    "get_company_catalyst_snapshots",
+    "get_daily_market_valuation",
+    "get_valuation_model_inputs",
+    "run_reverse_dcf",
+    "get_monthly_revenue",
+    "get_monthly_revenue_trend",
+    "list_companies",
+    "list_catalog",
+    "get_company_metric",
+    "get_company_metrics_batch",
+    "get_financial_statement",
+    "get_financial_note",
+    "get_industry_data",
+    "get_financial_institution_metric"
+  ],
+  "toolContractSha256": "1611bc2dc7eb479fc455733a76391d76bc309ee78bf4aae46b721b1c064955c3",
+  "serverInstructionsSha256": "78e1f0d4be5adf6fe1860dd9df24248c2e59825b3aa6e31424edb06ade88d81f"
+}

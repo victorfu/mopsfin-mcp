@@ -14,10 +14,12 @@ import { marketTools } from "./tools/market";
 import { observedPriceTools } from "./tools/observed-price";
 import { priceSeriesTools } from "./tools/price-series";
 import { revenueTools } from "./tools/revenue";
+import { researchTools } from "./tools/research";
 import { reverseDcfTools } from "./tools/reverse-dcf";
 import { valuationModelTools } from "./tools/valuation-model";
 
 const definitions = [
+  ...researchTools,
   ...companiesTools,
   ...marketTools,
   ...priceSeriesTools,
